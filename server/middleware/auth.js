@@ -31,7 +31,7 @@ function attachUser(req, res, next) {
     const secret = getOrCreateSessionSecret();
     const payload = verifyToken(token, secret);
     if (payload && payload.sub) {
-      const user = db.prepare('SELECT user_id, username FROM app_users WHERE user_id = ?').get(payload.sub);
+      const user = db.prepare('SELECT user_id, username, role FROM app_users WHERE user_id = ?').get(payload.sub);
       if (user) req.user = user;
     }
   }
@@ -43,4 +43,13 @@ function requireAuth(req, res, next) {
   next();
 }
 
-module.exports = { attachUser, requireAuth, COOKIE_NAME, SESSION_MS };
+// Admin/User roles: a plain "user" can view everything but can't add/edit/delete anything.
+// Apply this to individual mutating routes (POST/PUT/DELETE), not whole routers, so GET
+// routes on the same router stay open to read-only users.
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Login required.' });
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'This action requires an admin account.' });
+  next();
+}
+
+module.exports = { attachUser, requireAuth, requireAdmin, COOKIE_NAME, SESSION_MS };

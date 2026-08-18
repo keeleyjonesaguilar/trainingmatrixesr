@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { EXPIRATION_UNITS } = require('../lib/statusEngine');
 const repo = require('../lib/repo');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -54,7 +55,7 @@ router.get('/:id', (req, res) => {
 // Future Expansion (spec section 16): allow adding new trainings to the catalog without
 // rebuilding the app. New Training IDs should follow the TRN-### convention but aren't enforced
 // here, since the catalog may need to grow past TRN-052.
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
   const { training_id, training_name, category, training_type, default_expiration, active = 1, display_order } = req.body;
   if (!training_id || !training_name || !category || !training_type) {
     return res.status(400).json({ error: 'training_id, training_name, category, training_type are required' });
@@ -74,7 +75,7 @@ router.post('/', (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(training_id));
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Training not found' });
   const merged = { ...existing, ...req.body };

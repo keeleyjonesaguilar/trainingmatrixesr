@@ -7,8 +7,14 @@ const router = express.Router();
 // Training Matrix Screen (spec section 7/8): rows = employees, columns = the 52 Master
 // Training IDs, cells show status/completion/expiration. Supports client/department/job
 // title/search/status filtering, plus an implicit "All Clients" view when client_id is omitted.
+//
+// training_ids (repeatable query param, e.g. ?training_ids=TRN-001&training_ids=TRN-006):
+// job-site placement filter (Keeley's request) - only return employees who currently hold
+// EVERY listed training (status Current or No Expiration - an expired one doesn't count),
+// so she can quickly find someone who has, say, OSHA 30 AND First Aid AND Fall Protection.
 router.get('/', (req, res) => {
   const { client_id, department, job_title, search, status } = req.query;
+  const trainingIdsFilter = [req.query.training_ids || []].flat().filter(Boolean);
 
   const clauses = ['e.active = 1'];
   const params = [];
@@ -73,7 +79,15 @@ router.get('/', (req, res) => {
     };
   });
 
-  const filteredRows = status ? rows.filter((r) => Object.values(r.cells).some((c) => c.status === status)) : rows;
+  let filteredRows = status ? rows.filter((r) => Object.values(r.cells).some((c) => c.status === status)) : rows;
+  if (trainingIdsFilter.length) {
+    filteredRows = filteredRows.filter((r) =>
+      trainingIdsFilter.every((tid) => {
+        const cell = r.cells[tid];
+        return cell && (cell.status === 'Current' || cell.status === 'No Expiration');
+      })
+    );
+  }
 
   res.json({
     masterTrainings,

@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ router.get('/:id', (req, res) => {
   res.json(row);
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
   const { client_name, active = 1, notes = null } = req.body;
   if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'client_name is required' });
   const client_id = uuidv4();
@@ -28,7 +29,7 @@ router.post('/', (req, res) => {
   res.status(201).json(db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id));
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Client not found' });
   const client_name = req.body.client_name ?? existing.client_name;

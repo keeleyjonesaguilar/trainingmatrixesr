@@ -15,6 +15,10 @@ require('./seed/seed').seedIfEmpty();
 // Manage Users screen from then on.
 require('./seed/seedAdmin').seedAdminIfEmpty();
 
+// One-time data fixes (each runs exactly once, guarded by an app_settings flag - see
+// server/lib/oneTimeFixes.js for what they do and why).
+require('./lib/oneTimeFixes').runOneTimeFixes();
+
 const { attachUser, requireAuth } = require('./middleware/auth');
 
 const app = express();

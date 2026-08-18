@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useIsAdmin } from '../authContext.jsx';
 
 const REQUIREMENT_OPTIONS = ['Required', 'Not Required', 'Optional', 'Not Applicable'];
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
 
-function RequirementRow({ clientId, row, onSaved }) {
+function RequirementRow({ clientId, row, onSaved, isAdmin }) {
   const [requirementStatus, setRequirementStatus] = useState(row.requirement_status);
   const [expirationUnit, setExpirationUnit] = useState(row.client_expiration_unit || '');
-  const [trainingName, setTrainingName] = useState(row.client_training_name || '');
   const [notes, setNotes] = useState(row.client_notes || '');
-  const [effectiveDate, setEffectiveDate] = useState(row.effective_date || '');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -21,11 +20,9 @@ function RequirementRow({ clientId, row, onSaved }) {
       await api.setClientRequirement(clientId, row.training_id, {
         requirement_status: requirementStatus,
         client_expiration_unit: expirationUnit || null,
-        client_training_name: trainingName || null,
         client_notes: notes || null,
-        // Leave blank to apply immediately (today) - only backdate if correcting a mistake.
+        // effective_date intentionally omitted - the backend defaults it to today.
         // Rule 9: records completed before this date keep whatever they already had.
-        effective_date: effectiveDate || undefined,
       });
       setDirty(false);
       onSaved();
@@ -33,6 +30,22 @@ function RequirementRow({ clientId, row, onSaved }) {
       setSaving(false);
     }
   };
+
+  if (!isAdmin) {
+    return (
+      <tr>
+        <td>{row.training_id}</td>
+        <td>{row.master_training_name}</td>
+        <td>{requirementStatus}</td>
+        <td>
+          {expirationUnit || `Master Default (${row.master_default_expiration})`}
+          {' '}
+          <span className="badge badge-notapplicable" style={{ marginLeft: 4 }}>{row.expiration_source}</span>
+        </td>
+        <td>{notes || '—'}</td>
+      </tr>
+    );
+  }
 
   return (
     <tr>
@@ -52,17 +65,6 @@ function RequirementRow({ clientId, row, onSaved }) {
         <span className="badge badge-notapplicable" style={{ marginLeft: 4 }}>{row.expiration_source}</span>
       </td>
       <td>
-        <input
-          type="date"
-          title="Effective date - records completed before this date won't be rewritten by this change"
-          value={effectiveDate}
-          onChange={(e) => markDirty(setEffectiveDate)(e.target.value)}
-        />
-      </td>
-      <td>
-        <input type="text" placeholder="(optional override)" value={trainingName} onChange={(e) => markDirty(setTrainingName)(e.target.value)} />
-      </td>
-      <td>
         <input type="text" placeholder="Client notes" value={notes} onChange={(e) => markDirty(setNotes)(e.target.value)} />
       </td>
       <td>
@@ -73,6 +75,7 @@ function RequirementRow({ clientId, row, onSaved }) {
 }
 
 export default function ClientSettings() {
+  const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [rows, setRows] = useState([]);
@@ -119,8 +122,12 @@ export default function ClientSettings() {
             <option value="">Select a client...</option>
             {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
           </select>
-          <input type="text" placeholder="New client name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} />
-          <button onClick={addClient} disabled={!newClientName.trim() || addingClient}>{addingClient ? 'Adding...' : 'Add Client'}</button>
+          {isAdmin && (
+            <>
+              <input type="text" placeholder="New client name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} />
+              <button onClick={addClient} disabled={!newClientName.trim() || addingClient}>{addingClient ? 'Adding...' : 'Add Client'}</button>
+            </>
+          )}
         </div>
       </div>
 
@@ -135,15 +142,13 @@ export default function ClientSettings() {
                   <th>Master Training</th>
                   <th>Requirement</th>
                   <th>Expiration</th>
-                  <th>Effective Date</th>
-                  <th>Client Name Override</th>
                   <th>Client Notes</th>
-                  <th></th>
+                  {isAdmin && <th></th>}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <RequirementRow key={row.training_id} clientId={selectedClientId} row={row} onSaved={() => loadRequirements(selectedClientId)} />
+                  <RequirementRow key={row.training_id} clientId={selectedClientId} row={row} isAdmin={isAdmin} onSaved={() => loadRequirements(selectedClientId)} />
                 ))}
               </tbody>
             </table>

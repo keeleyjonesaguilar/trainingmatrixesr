@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { useIsAdmin } from '../authContext.jsx';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Fit Test', 'Certification', 'License', 'Orientation'];
 
-function TrainingRow({ row, onSaved }) {
+function TrainingRow({ row, onSaved, isAdmin }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(row);
   const [saving, setSaving] = useState(false);
@@ -36,8 +37,7 @@ function TrainingRow({ row, onSaved }) {
         <td>{row.training_type}</td>
         <td>{row.default_expiration}</td>
         <td><span className={`badge ${row.active ? 'badge-current' : 'badge-notapplicable'}`}>{row.active ? 'Active' : 'Inactive'}</span></td>
-        <td>{row.display_order}</td>
-        <td><button className="secondary" onClick={() => setEditing(true)}>Edit</button></td>
+        {isAdmin && <td><button className="secondary" onClick={() => setEditing(true)}>Edit</button></td>}
       </tr>
     );
   }
@@ -63,7 +63,6 @@ function TrainingRow({ row, onSaved }) {
           <option value="0">Inactive</option>
         </select>
       </td>
-      <td><input type="number" style={{ width: 64 }} value={form.display_order} onChange={(e) => setForm({ ...form, display_order: Number(e.target.value) })} /></td>
       <td>
         <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
         <button className="secondary" onClick={() => { setEditing(false); setForm(row); }}>Cancel</button>
@@ -139,6 +138,7 @@ function AddTrainingForm({ nextOrder, onAdded }) {
 }
 
 export default function MasterTrainings() {
+  const isAdmin = useIsAdmin();
   const [summary, setSummary] = useState(null);
   const [trainings, setTrainings] = useState([]);
   const [activeCategory, setActiveCategory] = useState('All');
@@ -204,21 +204,22 @@ export default function MasterTrainings() {
                 <th>Type</th>
                 <th>Default Expiration</th>
                 <th>Active</th>
-                <th>Order</th>
-                <th></th>
+                {isAdmin && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {visible.map((row) => <TrainingRow key={row.training_id} row={row} onSaved={load} />)}
-              {visible.length === 0 && <tr><td colSpan={8} className="empty-state">No trainings in this category.</td></tr>}
+              {visible.map((row) => <TrainingRow key={row.training_id} row={row} isAdmin={isAdmin} onSaved={load} />)}
+              {visible.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="empty-state">No trainings in this category.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <AddTrainingForm nextOrder={maxOrder + 1} onAdded={load} />
-      </div>
+      {isAdmin && (
+        <div style={{ marginBottom: 16 }}>
+          <AddTrainingForm nextOrder={maxOrder + 1} onAdded={load} />
+        </div>
+      )}
 
       {summary && (
         <div className="card">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import { useIsAdmin } from '../authContext.jsx';
 
 const STAT_ORDER = ['Current', 'Expired', 'Missing', 'Not Applicable', 'No Expiration', 'Pending Review'];
 
@@ -19,6 +20,7 @@ function timeAgo(dateStr) {
 }
 
 export default function Dashboard() {
+  const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState('');
   const [data, setData] = useState(null);
@@ -84,7 +86,7 @@ export default function Dashboard() {
         </div>
         <div className="page-header-actions">
           <button onClick={() => navigate('/matrix')}>Open Training Matrix</button>
-          <button className="secondary" onClick={() => navigate('/import')}>Import Client Roster</button>
+          {isAdmin && <button className="secondary" onClick={() => navigate('/import')}>Import Client Roster</button>}
         </div>
       </div>
       {error && <div className="error-banner">{error}</div>}
@@ -92,25 +94,15 @@ export default function Dashboard() {
       {data && data.scope === 'all' && (
         <>
           <div className="stat-grid">
-            <div className="stat-tile">
+            <div className="stat-tile clickable" onClick={() => navigate('/clients')}>
               <div className="stat-label">Client Companies</div>
               <div className="value">{data.totalClients}</div>
-              <span className="caption">Across all industries</span>
+              <span className="caption">View Clients</span>
             </div>
-            <div className="stat-tile">
+            <div className="stat-tile clickable" onClick={() => navigate('/matrix')}>
               <div className="stat-label">Active Employees</div>
               <div className="value">{data.totalActiveEmployees}</div>
-              <span className="caption">All clients</span>
-            </div>
-            <div className="stat-tile">
-              <div className="stat-label">Average Compliance</div>
-              <div className="value">{data.averageCompliance}%</div>
-              <span className={`caption ${data.averageCompliance >= 90 ? 'good' : 'warn'}`}>Target 90%+</span>
-            </div>
-            <div className="stat-tile">
-              <div className="stat-label">Expired / Missing Certs</div>
-              <div className="value">{data.expiredOrMissing}</div>
-              <span className="caption warn">Requires audit</span>
+              <span className="caption">Open Training Matrix</span>
             </div>
           </div>
 
@@ -146,7 +138,7 @@ export default function Dashboard() {
 
             <div>
               <div className="card">
-                <h2>Urgent Training Gaps</h2>
+                <h2>Recently Expired Trainings</h2>
                 <div className="activity-feed">
                   {data.urgentGaps.map((g, i) => (
                     <div key={i} className="activity-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/employees/${g.employee_id}`)}>
@@ -155,11 +147,11 @@ export default function Dashboard() {
                         <div className="activity-item-desc">{g.training_id} {g.training_name}</div>
                       </div>
                       <div className="activity-item-time">
-                        {g.status === 'Missing' ? 'Missing' : `Expired ${timeAgo(g.expiration_date)}`}
+                        {`Expired ${timeAgo(g.expiration_date)}`}
                       </div>
                     </div>
                   ))}
-                  {data.urgentGaps.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No expired or missing trainings right now.</p>}
+                  {data.urgentGaps.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>Nothing expired right now.</p>}
                 </div>
               </div>
 

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-
-const TABS = ['All Assigned', 'Action Required', 'Master Catalog', 'Elective / Supplemental'];
+import { useIsAdmin } from '../authContext.jsx';
 
 function statusBadgeClass(status) {
   switch (status) {
@@ -16,10 +15,19 @@ function statusBadgeClass(status) {
   }
 }
 
+// Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
+// Keeley wants - Employee Phone Number is now how employees are tracked/identified.
+function formatPhoneInput(value) {
+  const digits = value.replace(/\D/g, '').slice(0, 10);
+  if (digits.length === 0) return '';
+  if (digits.length < 4) return `(${digits}`;
+  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
   const [form, setForm] = useState({
     job_title: employee.job_title || '',
-    department: employee.department || '',
     employee_number: employee.employee_number || '',
     active: employee.active,
   });
@@ -44,16 +52,17 @@ function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
       {error && <div className="error-banner">{error}</div>}
       <div className="toolbar">
         <div className="field-row">
-          <label>Employee Number</label>
-          <input type="text" value={form.employee_number} onChange={(e) => setForm({ ...form, employee_number: e.target.value })} />
+          <label>Employee Phone Number</label>
+          <input
+            type="text"
+            placeholder="(xxx) xxx-xxxx"
+            value={form.employee_number}
+            onChange={(e) => setForm({ ...form, employee_number: formatPhoneInput(e.target.value) })}
+          />
         </div>
         <div className="field-row">
           <label>Role / Trade</label>
           <input type="text" value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} />
-        </div>
-        <div className="field-row">
-          <label>Department</label>
-          <input type="text" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
         </div>
         <div className="field-row">
           <label>Status</label>
@@ -69,7 +78,7 @@ function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
   );
 }
 
-function DuplicateReviewPanel({ employeeId, trainingId, onResolved, onClose }) {
+function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onClose }) {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
   const [resolving, setResolving] = useState('');
@@ -111,7 +120,7 @@ function DuplicateReviewPanel({ employeeId, trainingId, onResolved, onClose }) {
               <th>Completion Date</th>
               <th>Source</th>
               <th>Status</th>
-              <th></th>
+              {isAdmin && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -124,11 +133,13 @@ function DuplicateReviewPanel({ employeeId, trainingId, onResolved, onClose }) {
                   <span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span>{' '}
                   {r.is_active_record ? <span className="badge badge-current">Active</span> : null}
                 </td>
-                <td>
-                  <button disabled={!!r.is_active_record || resolving === r.record_id} onClick={() => resolve(r.record_id)}>
-                    {resolving === r.record_id ? 'Saving...' : 'Set as Active'}
-                  </button>
-                </td>
+                {isAdmin && (
+                  <td>
+                    <button disabled={!!r.is_active_record || resolving === r.record_id} onClick={() => resolve(r.record_id)}>
+                      {resolving === r.record_id ? 'Saving...' : 'Set as Active'}
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -141,9 +152,9 @@ function DuplicateReviewPanel({ employeeId, trainingId, onResolved, onClose }) {
 export default function EmployeeDetail() {
   const { employeeId } = useParams();
   const navigate = useNavigate();
+  const isAdmin = useIsAdmin();
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('All Assigned');
   const [editingProfile, setEditingProfile] = useState(false);
   const [reviewingTrainingId, setReviewingTrainingId] = useState('');
   const formRef = useRef(null);
@@ -166,26 +177,17 @@ export default function EmployeeDetail() {
 
   const { employee, client, trainings } = detail;
 
-  const applicable = trainings.filter((t) => t.status !== 'Not Applicable');
-  const validCount = applicable.filter((t) => t.status === 'Current' || t.status === 'No Expiration').length;
-  const expiringSoonCount = trainings.filter((t) => t.expiring_soon).length;
-  const expiredCount = trainings.filter((t) => t.status === 'Expired').length;
-  const missingCount = trainings.filter((t) => t.status === 'Missing').length;
-  const requirementMetPercent = applicable.length > 0 ? Math.round((validCount / applicable.length) * 100) : 100;
-
-  const assigned = trainings.filter((t) => t.requirement_status === 'Required');
-  const actionRequired = trainings.filter((t) => t.status === 'Expired' || t.status === 'Missing');
-  const elective = trainings.filter((t) => t.requirement_status === 'Optional' || t.requirement_status === 'Not Required');
-
-  const visibleTrainings = activeTab === 'All Assigned' ? assigned
-    : activeTab === 'Action Required' ? actionRequired
-    : activeTab === 'Elective / Supplemental' ? elective
-    : trainings;
-
-  const history = trainings
+  // Keeley's call: only completed trainings are shown - an unfinished training just isn't
+  // relevant here and shouldn't take up table space. Sorted most-recently-completed first.
+  const completed = trainings
     .filter((t) => t.completion_date)
-    .sort((a, b) => (b.completion_date || '').localeCompare(a.completion_date || ''))
-    .slice(0, 6);
+    .sort((a, b) => (b.completion_date || '').localeCompare(a.completion_date || ''));
+
+  const expiringSoonCount = completed.filter((t) => t.expiring_soon).length;
+  const expiredCount = completed.filter((t) => t.status === 'Expired').length;
+  const validCount = completed.filter((t) => t.status === 'Current' || t.status === 'No Expiration').length;
+
+  const history = completed.slice(0, 6);
 
   const submitRecord = async (e) => {
     e.preventDefault();
@@ -222,7 +224,7 @@ export default function EmployeeDetail() {
         </div>
         <div className="page-header-actions">
           <button className="secondary" onClick={() => navigate('/matrix')}>Back to Matrix</button>
-          <button onClick={() => formRef.current?.scrollIntoView({ behavior: 'smooth' })}>+ Add Training Record</button>
+          {isAdmin && <button onClick={() => formRef.current?.scrollIntoView({ behavior: 'smooth' })}>+ Add Training Record</button>}
         </div>
       </div>
       {formError && <div className="error-banner">{formError}</div>}
@@ -235,24 +237,20 @@ export default function EmployeeDetail() {
             <div className="detail-avatar">{employee.full_name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}</div>
             <div>
               <div className="detail-name">{employee.full_name}</div>
-              <div className="detail-sub">{employee.job_title || 'Role not set'} · {client?.client_name} · {employee.department || 'No department'}</div>
+              <div className="detail-sub">{employee.job_title || 'Role not set'} · {client?.client_name}</div>
             </div>
           </div>
           <div className="detail-meta">
             <div className="detail-meta-item">
-              <div className="detail-meta-label">Employee Number</div>
+              <div className="detail-meta-label">Employee Phone Number</div>
               <div className="detail-meta-value">{employee.employee_number || '—'}</div>
-            </div>
-            <div className="detail-meta-item">
-              <div className="detail-meta-label">Department</div>
-              <div className="detail-meta-value">{employee.department || '—'}</div>
             </div>
             <div className="detail-meta-item">
               <div className="detail-meta-label">Status</div>
               <div className="detail-meta-value">{employee.active ? 'Active' : 'Inactive'}</div>
             </div>
           </div>
-          <button className="secondary" onClick={() => setEditingProfile(true)}>Edit Profile</button>
+          {isAdmin && <button className="secondary" onClick={() => setEditingProfile(true)}>Edit Profile</button>}
         </div>
       )}
 
@@ -260,7 +258,6 @@ export default function EmployeeDetail() {
         <div className="stat-tile">
           <div className="stat-label">Valid / Compliant</div>
           <div className="value">{validCount}</div>
-          <span className="caption good">{requirementMetPercent}% requirement met</span>
         </div>
         <div className="stat-tile">
           <div className="stat-label">Expiring Soon (30d)</div>
@@ -272,17 +269,13 @@ export default function EmployeeDetail() {
           <div className="value">{expiredCount}</div>
           <span className={`caption ${expiredCount > 0 ? 'warn' : ''}`}>{expiredCount > 0 ? 'Site access blocked' : 'None expired'}</span>
         </div>
-        <div className="stat-tile">
-          <div className="stat-label">Missing Required</div>
-          <div className="value">{missingCount}</div>
-          <span className={`caption ${missingCount > 0 ? 'warn' : 'good'}`}>{missingCount > 0 ? 'Action required' : 'All assigned enrolled'}</span>
-        </div>
       </div>
 
       {reviewingTrainingId && (
         <DuplicateReviewPanel
           employeeId={employee.employee_id}
           trainingId={reviewingTrainingId}
+          isAdmin={isAdmin}
           onClose={() => setReviewingTrainingId('')}
           onResolved={() => { setReviewingTrainingId(''); load(); }}
         />
@@ -290,15 +283,8 @@ export default function EmployeeDetail() {
 
       <div className="layout-2col">
         <div>
-          <div className="tab-row">
-            {TABS.map((t) => (
-              <button key={t} type="button" className={activeTab === t ? 'active' : ''} onClick={() => setActiveTab(t)}>
-                {t} ({t === 'All Assigned' ? assigned.length : t === 'Action Required' ? actionRequired.length : t === 'Master Catalog' ? trainings.length : elective.length})
-              </button>
-            ))}
-          </div>
-
           <div className="card">
+            <h2>Completed Trainings ({completed.length})</h2>
             <div className="table-scroll">
               <table>
                 <thead>
@@ -312,7 +298,7 @@ export default function EmployeeDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTrainings.map((t) => (
+                  {completed.map((t) => (
                     <tr key={t.training_id}>
                       <td>{t.training_id}</td>
                       <td>{t.training_name}</td>
@@ -328,8 +314,8 @@ export default function EmployeeDetail() {
                       </td>
                     </tr>
                   ))}
-                  {visibleTrainings.length === 0 && (
-                    <tr><td colSpan={6} className="empty-state">Nothing in this view.</td></tr>
+                  {completed.length === 0 && (
+                    <tr><td colSpan={6} className="empty-state">No trainings completed yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -338,34 +324,36 @@ export default function EmployeeDetail() {
         </div>
 
         <div>
-          <div className="card" ref={formRef}>
-            <h2>Record Training Completion</h2>
-            <form onSubmit={submitRecord}>
-              <div className="field-row">
-                <label>Select Training Course</label>
-                <select value={selectedTrainingId} onChange={(e) => setSelectedTrainingId(e.target.value)} required>
-                  <option value="">Select...</option>
-                  {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
-                </select>
-              </div>
-              <div className="field-row">
-                <label>Completion Date</label>
-                <input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} />
-              </div>
-              <div className="field-row">
-                <label>Expiration Date (leave blank to use client/master default)</label>
-                <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} />
-              </div>
-              <div className="field-row">
-                <label>Notes</label>
-                <input type="text" placeholder="Optional" value={recordNotes} onChange={(e) => setRecordNotes(e.target.value)} />
-              </div>
-              <button type="submit" disabled={saving || !selectedTrainingId}>{saving ? 'Saving...' : 'Save Record'}</button>
-            </form>
-          </div>
+          {isAdmin && (
+            <div className="card" ref={formRef}>
+              <h2>Record Training Completion</h2>
+              <form onSubmit={submitRecord}>
+                <div className="field-row">
+                  <label>Select Training Course</label>
+                  <select value={selectedTrainingId} onChange={(e) => setSelectedTrainingId(e.target.value)} required>
+                    <option value="">Select...</option>
+                    {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <label>Completion Date</label>
+                  <input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} />
+                </div>
+                <div className="field-row">
+                  <label>Expiration Date (optional &mdash; leave blank if this training doesn&apos;t expire)</label>
+                  <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} />
+                </div>
+                <div className="field-row">
+                  <label>Notes</label>
+                  <input type="text" placeholder="Optional" value={recordNotes} onChange={(e) => setRecordNotes(e.target.value)} />
+                </div>
+                <button type="submit" disabled={saving || !selectedTrainingId}>{saving ? 'Saving...' : 'Save Record'}</button>
+              </form>
+            </div>
+          )}
 
           <div className="card">
-            <h2>Compliance History &amp; Flags</h2>
+            <h2>Recent Completions</h2>
             <div className="activity-feed">
               {history.map((t) => (
                 <div key={t.training_id} className="activity-item">

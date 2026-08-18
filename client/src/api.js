@@ -35,6 +35,7 @@ export const api = {
   listUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: JSON.stringify(data) }),
   resetUserPassword: (userId, password) => request(`/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ password }) }),
+  updateUserRole: (userId, role) => request(`/users/${userId}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
 
   // Clients

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const repo = require('../lib/repo');
 const { parseSourceValue } = require('../lib/statusEngine');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ router.get('/employee/:employeeId/training/:trainingId', (req, res) => {
 // Manual add/correct of a training record (spec section 9). Preserves whatever original
 // wording/date is supplied rather than overwriting silently - each save is a new row unless
 // record_id is passed to update an existing one, so history isn't lost (spec section 12).
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
   const {
     record_id, // if present, update in place; otherwise insert
     client_id,
@@ -101,14 +102,14 @@ router.post('/', (req, res) => {
 // Duplicate resolution (Rule 15 / spec sections 18, 33): nothing is ever deleted - this just
 // marks which record in a duplicate group is the active/current one. The rest stay visible in
 // history but stop competing for "latest" in the matrix/dashboard/employee detail.
-router.put('/:id/resolve-duplicate', (req, res) => {
+router.put('/:id/resolve-duplicate', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
   const updated = repo.resolveDuplicateGroup(req.params.id);
   res.json(updated);
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
   db.prepare('DELETE FROM employee_training_records WHERE record_id = ?').run(req.params.id);

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const repo = require('../lib/repo');
 const { EXPIRATION_UNITS } = require('../lib/statusEngine');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -36,7 +37,7 @@ router.get('/client/:clientId', (req, res) => {
 
 // Upsert a client's override for one training. Overrides apply only to this client - the
 // Master Trainings table and other clients' requirements are never touched (spec section 19).
-router.put('/client/:clientId/training/:trainingId', (req, res) => {
+router.put('/client/:clientId/training/:trainingId', requireAdmin, (req, res) => {
   const { clientId, trainingId } = req.params;
   const client = db.prepare('SELECT client_id FROM clients WHERE client_id = ?').get(clientId);
   if (!client) return res.status(404).json({ error: 'Client not found' });

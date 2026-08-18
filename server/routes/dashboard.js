@@ -76,8 +76,9 @@ router.get('/', (req, res) => {
     };
   });
 
-  // Urgent Training Gaps: every Expired/Missing (employee, training) pair, most urgent first
-  // (Expired sorted by how long ago it lapsed; Missing has no date so it sorts after).
+  // Urgent Training Gaps: expired (employee, training) pairs, most recently lapsed first.
+  // "Missing" is intentionally excluded here - Keeley's call: the app tracks completions, it
+  // doesn't flag every training nobody's done as a gap, since most trainings aren't required.
   const gaps = [];
   for (const emp of allEmployees) {
     for (const mt of masterTrainings) {
@@ -87,7 +88,7 @@ router.get('/', (req, res) => {
         trainingId: mt.training_id,
         masterTraining: mt,
       });
-      if (status === 'Expired' || status === 'Missing') {
+      if (status === 'Expired') {
         gaps.push({
           employee_id: emp.employee_id,
           full_name: emp.full_name,

@@ -23,7 +23,7 @@ router.post('/login', (req, res) => {
     secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
     maxAge: SESSION_MS,
   });
-  res.json({ ok: true, username: user.username });
+  res.json({ ok: true, username: user.username, role: user.role });
 });
 
 router.post('/logout', (req, res) => {
@@ -33,7 +33,7 @@ router.post('/logout', (req, res) => {
 
 router.get('/me', (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not logged in.' });
-  res.json({ username: req.user.username });
+  res.json({ username: req.user.username, role: req.user.role });
 });
 
 module.exports = router;

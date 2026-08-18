@@ -4,6 +4,14 @@ import { api } from '../api';
 
 const REPORT_TABS = ['Client Compliance', 'Employee Training', 'Training Compliance', 'Expiring Soon', 'Client Exceptions'];
 
+// Dates display as MM/DD/YYYY everywhere else in the app (Matrix, Employee Detail) -
+// reports match that convention instead of showing raw ISO strings.
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(`${dateStr}T00:00:00`);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
 function statusBadgeClass(status) {
   switch (status) {
     case 'Current': return 'badge-current';
@@ -65,8 +73,8 @@ function ClientComplianceReport({ clientId }) {
                 <td>{r.client_name}</td>
                 <td>{r.training_id} - {r.training_name}</td>
                 <td><span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span></td>
-                <td>{r.completion_date || '—'}</td>
-                <td>{r.expiration_date || '—'}</td>
+                <td>{formatDate(r.completion_date)}</td>
+                <td>{formatDate(r.expiration_date)}</td>
               </tr>
             ))}
             {data.rows.length === 0 && <tr><td colSpan={6} className="empty-state">No required trainings in scope.</td></tr>}
@@ -109,8 +117,8 @@ function EmployeeTrainingReport() {
                   <td>{r.training_id} - {r.master_training_name}</td>
                   <td>{r.original_client_training_name || '—'}</td>
                   <td><span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span></td>
-                  <td>{r.completion_date || '—'}</td>
-                  <td>{r.expiration_date || '—'}</td>
+                  <td>{formatDate(r.completion_date)}</td>
+                  <td>{formatDate(r.expiration_date)}</td>
                   <td>{r.source || '—'}</td>
                   <td>{r.duplicate_status !== 'none' ? r.duplicate_status : '—'}{r.is_active_record ? '' : ' (superseded)'}</td>
                 </tr>
@@ -162,7 +170,7 @@ function TrainingComplianceReport({ clientId }) {
             <thead><tr><th>Employee</th><th>Expiration</th></tr></thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.employee_id}><td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td><td>{r.expiration_date || '—'}</td></tr>
+                <tr key={r.employee_id}><td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td><td>{formatDate(r.expiration_date)}</td></tr>
               ))}
             </tbody>
           </table>
@@ -202,7 +210,7 @@ function ExpiringSoonReport({ clientId }) {
                   <td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td>
                   <td>{r.client_name}</td>
                   <td>{r.training_id} - {r.training_name}</td>
-                  <td>{r.expiration_date}</td>
+                  <td>{formatDate(r.expiration_date)}</td>
                 </tr>
               ))}
               {data.rows.length === 0 && <tr><td colSpan={4} className="empty-state">Nothing expiring in this window.</td></tr>}
@@ -232,7 +240,7 @@ function ClientExceptionReport({ clientId }) {
         <thead><tr><th>Client</th><th>Training</th><th>Override</th><th>Effective Date</th></tr></thead>
         <tbody>
           {data.expirationOverrides.map((r) => (
-            <tr key={r.requirement_id}><td>{r.client_name}</td><td>{r.training_name}</td><td>{r.client_expiration_unit}</td><td>{r.effective_date || '—'}</td></tr>
+            <tr key={r.requirement_id}><td>{r.client_name}</td><td>{r.training_name}</td><td>{r.client_expiration_unit}</td><td>{formatDate(r.effective_date)}</td></tr>
           ))}
           {data.expirationOverrides.length === 0 && <tr><td colSpan={4} className="empty-state">None.</td></tr>}
         </tbody>
@@ -254,7 +262,7 @@ function ClientExceptionReport({ clientId }) {
         <thead><tr><th>Employee</th><th>Client</th><th>Training</th><th>Completed</th></tr></thead>
         <tbody>
           {data.duplicateRecords.map((r) => (
-            <tr key={r.record_id}><td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td><td>{r.client_name}</td><td>{r.training_name}</td><td>{r.completion_date || '—'}</td></tr>
+            <tr key={r.record_id}><td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td><td>{r.client_name}</td><td>{r.training_name}</td><td>{formatDate(r.completion_date)}</td></tr>
           ))}
           {data.duplicateRecords.length === 0 && <tr><td colSpan={4} className="empty-state">None.</td></tr>}
         </tbody>

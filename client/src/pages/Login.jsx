@@ -14,7 +14,7 @@ export default function Login({ onLogin }) {
     setSubmitting(true);
     try {
       const result = await api.login(username.trim(), password);
-      onLogin(result.username);
+      onLogin(result.username, result.role);
     } catch (err) {
       setError(err.message || 'Login failed.');
     } finally {

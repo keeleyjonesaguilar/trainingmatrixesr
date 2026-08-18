@@ -12,47 +12,52 @@ import Reports from './pages/Reports.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
 import Login from './pages/Login.jsx';
 import { api } from './api';
+import { AuthContext } from './authContext.jsx';
 
 export default function App() {
   const [status, setStatus] = useState('loading'); // loading | signed-out | signed-in
   const [username, setUsername] = useState('');
+  const [role, setRole] = useState('user');
 
   useEffect(() => {
     api.me()
-      .then((res) => { setUsername(res.username); setStatus('signed-in'); })
+      .then((res) => { setUsername(res.username); setRole(res.role || 'user'); setStatus('signed-in'); })
       .catch(() => setStatus('signed-out'));
   }, []);
 
   if (status === 'loading') return null;
 
   if (status === 'signed-out') {
-    return <Login onLogin={(name) => { setUsername(name); setStatus('signed-in'); }} />;
+    return <Login onLogin={(name, userRole) => { setUsername(name); setRole(userRole || 'user'); setStatus('signed-in'); }} />;
   }
 
   const logout = async () => {
     try { await api.logout(); } catch { /* clear client state regardless */ }
     setStatus('signed-out');
     setUsername('');
+    setRole('user');
   };
 
   return (
-    <div className="shell">
-      <Sidebar username={username} onLogout={logout} />
-      <div className="main-content">
-        <main className="app-body">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/matrix" element={<Matrix />} />
-            <Route path="/employees/:employeeId" element={<EmployeeDetail />} />
-            <Route path="/trainings/:trainingId" element={<TrainingDetail />} />
-            <Route path="/clients" element={<ClientSettings />} />
-            <Route path="/master-trainings" element={<MasterTrainings />} />
-            <Route path="/import" element={<Import />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/admin/users" element={<AdminUsers currentUsername={username} />} />
-          </Routes>
-        </main>
+    <AuthContext.Provider value={{ username, role }}>
+      <div className="shell">
+        <Sidebar username={username} role={role} onLogout={logout} />
+        <div className="main-content">
+          <main className="app-body">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/matrix" element={<Matrix />} />
+              <Route path="/employees/:employeeId" element={<EmployeeDetail />} />
+              <Route path="/trainings/:trainingId" element={<TrainingDetail />} />
+              <Route path="/clients" element={<ClientSettings />} />
+              <Route path="/master-trainings" element={<MasterTrainings />} />
+              <Route path="/import" element={<Import />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/admin/users" element={<AdminUsers currentUsername={username} />} />
+            </Routes>
+          </main>
+        </div>
       </div>
-    </div>
+    </AuthContext.Provider>
   );
 }

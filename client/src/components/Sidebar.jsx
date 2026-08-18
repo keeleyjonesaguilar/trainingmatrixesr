@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { to: '/admin/users', label: 'Manage Users' },
 ];
 
-export default function Sidebar({ username, onLogout }) {
+export default function Sidebar({ username, role, onLogout }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -26,7 +26,7 @@ export default function Sidebar({ username, onLogout }) {
       <div className="sidebar-footer">
         <div className="sidebar-user-avatar">{username ? username[0].toUpperCase() : '?'}</div>
         <div className="sidebar-user-info">
-          <div className="sidebar-user-name" title={username}>{username}</div>
+          <div className="sidebar-user-name" title={username}>{username}{role ? ` (${role})` : ''}</div>
           <button type="button" className="link-button" onClick={onLogout}>Log Out</button>
         </div>
       </div>

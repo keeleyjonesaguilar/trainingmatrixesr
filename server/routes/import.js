@@ -12,12 +12,14 @@ const { parse } = require('csv-parse/sync');
 const db = require('../db');
 const repo = require('../lib/repo');
 const { parseSourceValue } = require('../lib/statusEngine');
+const { requireAdmin } = require('../middleware/auth');
+const { formatPhoneNumber } = require('../lib/phone');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const IDENTITY_COLUMN_PATTERNS = {
-  employee_number: [/^emp(loyee)?\s*#?\s*(number|no|id)$/i, /^emp\s*#$/i, /^id$/i],
+  employee_number: [/^emp(loyee)?\s*#?\s*(number|no|id)$/i, /^emp\s*#$/i, /^id$/i, /^(employee\s*)?phone(\s*number)?$/i, /^cell(\s*(phone|number))?$/i, /^mobile(\s*(phone|number))?$/i],
   full_name: [/^(employee\s*)?(full\s*)?name$/i, /^employee$/i],
   job_title: [/^(job\s*)?title$/i, /^position$/i],
   department: [/^dept\.?$/i, /^department$/i],
@@ -47,7 +49,7 @@ function matchTrainingColumn(header) {
 }
 
 // Step 1: upload + preview. Parses headers, auto-matches what it can, stages every raw row.
-router.post('/:clientId/preview', upload.single('file'), (req, res) => {
+router.post('/:clientId/preview', requireAdmin, upload.single('file'), (req, res) => {
   const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(req.params.clientId);
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (!req.file) return res.status(400).json({ error: 'CSV file is required (field name "file")' });
@@ -134,7 +136,7 @@ router.get('/batches/:batchId', (req, res) => {
 
 // Step 2: manually resolve an ambiguous/unmatched column. Remembers the choice as a new alias
 // so the same client terminology auto-matches next time (spec section 5).
-router.put('/batches/:batchId/column-map/:mapId', (req, res) => {
+router.put('/batches/:batchId/column-map/:mapId', requireAdmin, (req, res) => {
   const map = db.prepare('SELECT * FROM import_column_map WHERE map_id = ? AND batch_id = ?').get(req.params.mapId, req.params.batchId);
   if (!map) return res.status(404).json({ error: 'Column mapping not found' });
 
@@ -165,7 +167,7 @@ router.put('/batches/:batchId/column-map/:mapId', (req, res) => {
 
 // Step 3: commit. Every training column must be resolved (mapped or ignored) first - nothing
 // ambiguous is ever silently written in.
-router.post('/batches/:batchId/commit', (req, res) => {
+router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
   const batch = db.prepare('SELECT * FROM import_batches WHERE batch_id = ?').get(req.params.batchId);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   if (batch.status !== 'pending_review') return res.status(409).json({ error: `Batch already ${batch.status}` });
@@ -199,7 +201,7 @@ router.post('/batches/:batchId/commit', (req, res) => {
         db.prepare(
           `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
            VALUES (?, ?, ?, ?, ?, ?, 1, ?)`
-        ).run(employeeId, batch.client_id, row.employee_number_raw, fullName, row.job_title_raw, row.department_raw, `Created by import: ${batch.filename}`);
+        ).run(employeeId, batch.client_id, formatPhoneNumber(row.employee_number_raw), fullName, row.job_title_raw, row.department_raw, `Created by import: ${batch.filename}`);
         employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employeeId);
         employeesCreated += 1;
       }
@@ -263,7 +265,7 @@ router.post('/batches/:batchId/commit', (req, res) => {
   });
 });
 
-router.delete('/batches/:batchId', (req, res) => {
+router.delete('/batches/:batchId', requireAdmin, (req, res) => {
   const batch = db.prepare('SELECT * FROM import_batches WHERE batch_id = ?').get(req.params.batchId);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   db.prepare('UPDATE import_batches SET status = ? WHERE batch_id = ?').run('cancelled', req.params.batchId);

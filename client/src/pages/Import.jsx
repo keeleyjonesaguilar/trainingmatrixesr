@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useIsAdmin } from '../authContext.jsx';
 
 export default function Import() {
+  const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState('');
   const [file, setFile] = useState(null);
@@ -71,7 +73,15 @@ export default function Import() {
       </p>
       {error && <div className="error-banner">{error}</div>}
 
-      {!preview && (
+      {!isAdmin && (
+        <div className="card">
+          <p className="page-subtitle" style={{ margin: 0 }}>
+            Your account has view-only access. Ask an admin to import client rosters.
+          </p>
+        </div>
+      )}
+
+      {isAdmin && !preview && (
         <div className="card">
           {clients.length === 0 ? (
             <p className="page-subtitle">
@@ -87,7 +97,7 @@ export default function Import() {
                 <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
                 <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
               </div>
-              <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Number, Full Name, Job Title, Department, plus one column per training.</p>
+              <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Phone Number, Full Name, Job Title, Department, plus one column per training.</p>
             </>
           )}
         </div>

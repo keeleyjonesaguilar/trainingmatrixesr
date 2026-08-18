@@ -2,6 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const repo = require('../lib/repo');
+const { requireAdmin } = require('../middleware/auth');
+const { formatPhoneNumber } = require('../lib/phone');
 
 const router = express.Router();
 
@@ -75,7 +77,7 @@ router.get('/:id/full-detail', (req, res) => {
   res.json({ employee, client, trainings });
 });
 
-router.post('/', (req, res) => {
+router.post('/', requireAdmin, (req, res) => {
   const {
     client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null,
   } = req.body;
@@ -88,18 +90,18 @@ router.post('/', (req, res) => {
   db.prepare(
     `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(employee_id, client_id, employee_number, full_name.trim(), job_title, department, active ? 1 : 0, notes);
+  ).run(employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes);
   res.status(201).json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id));
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   const merged = { ...existing, ...req.body };
   db.prepare(
     `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`
   ).run(
-    merged.employee_number, merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes,
+    formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes,
     req.params.id
   );
   res.json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id));
