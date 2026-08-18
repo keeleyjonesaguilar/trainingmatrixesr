@@ -156,15 +156,23 @@ export default function Dashboard() {
               </div>
 
               <div className="card">
-                <h2>High-Priority Catalog Modules</h2>
-                <div className="bar-chart">
-                  {data.moduleStats.map((m) => (
-                    <div key={m.training_id} className="bar-chart-col" title={`${m.training_name}: ${m.percent_current}% current`}>
-                      <div className="bar-chart-bar" style={{ height: `${Math.max(m.percent_current, 2)}%` }} />
-                      <div className="bar-chart-label">{m.training_id.replace('TRN-', '')}</div>
+                <h2>Most Popular Trainings</h2>
+                <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many employees have completed each one.</p>
+                {(() => {
+                  const maxCount = Math.max(1, ...data.mostPopularTrainings.map((m) => m.completed_count));
+                  return (
+                    <div className="bar-chart">
+                      {data.mostPopularTrainings.map((m) => (
+                        <div key={m.training_id} className="bar-chart-col" title={`${m.training_name}: ${m.completed_count} employee${m.completed_count === 1 ? '' : 's'} completed`}>
+                          <div className="bar-chart-bar" style={{ height: `${Math.max((m.completed_count / maxCount) * 100, 2)}%` }} />
+                          <div className="bar-chart-label">{m.completed_count}</div>
+                          <div className="bar-chart-label">{m.training_id.replace('TRN-', '')}</div>
+                        </div>
+                      ))}
+                      {data.mostPopularTrainings.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             </div>
           </div>

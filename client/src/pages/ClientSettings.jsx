@@ -66,7 +66,13 @@ export default function ClientSettings() {
   const [addingOpen, setAddingOpen] = useState(false);
 
   const load = () => api.listClients().then(setClients).catch((e) => setError(e.message));
-  useEffect(load, []);
+  // NOTE: useEffect(load, []) directly (load as the effect callback) was the bug here - load()
+  // returns the Promise from .catch(), and React tries to call that returned value as the
+  // effect's cleanup function on unmount, which throws "destroy is not a function" and crashes
+  // the whole app (blank screen until a hard refresh) every time you navigate away from this
+  // page. Wrapping it in a block body discards that return value so there's nothing for React
+  // to mistake for a cleanup function.
+  useEffect(() => { load(); }, []);
 
   return (
     <div>

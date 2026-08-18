@@ -97,8 +97,14 @@ router.put('/:id', requireAdmin, (req, res) => {
   res.json(db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id));
 });
 
-// Training Detail Page (spec section 10): this training's catalog info plus employees who are
-// current / expired / missing for it, optionally scoped to one client.
+// Training Detail Page (spec section 10): this training's catalog info plus every employee
+// who has some real status for it, optionally scoped to one client.
+//
+// Bug fix (2026-08-18): this used to only bucket Current/Expired/Missing, silently dropping
+// anyone whose status was No Expiration or Pending Review - which is most completed records,
+// since most trainings in this catalog don't expire. That made the page look empty even when
+// employees had actually completed the training. Not Applicable is still excluded on purpose
+// (that means the training doesn't apply to that employee at all - nothing to show).
 router.get('/:id/detail', (req, res) => {
   const mt = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id);
   if (!mt) return res.status(404).json({ error: 'Training not found' });
@@ -109,20 +115,33 @@ router.get('/:id/detail', (req, res) => {
   if (client_id) { clauses.push('client_id = ?'); params.push(client_id); }
   const employees = db.prepare(`SELECT * FROM employees WHERE ${clauses.join(' AND ')}`).all(...params);
 
-  const buckets = { Current: [], Expired: [], Missing: [] };
+  const buckets = { Current: [], Expired: [], 'No Expiration': [], 'Pending Review': [], Missing: [] };
   for (const emp of employees) {
-    const { status, expirationDate } = repo.computeCell({
+    const { status, expirationDate, record } = repo.computeCell({
       employeeId: emp.employee_id,
       clientId: emp.client_id,
       trainingId: mt.training_id,
       masterTraining: mt,
     });
     if (buckets[status]) {
-      buckets[status].push({ employee_id: emp.employee_id, full_name: emp.full_name, client_id: emp.client_id, expiration_date: expirationDate });
+      buckets[status].push({
+        employee_id: emp.employee_id,
+        full_name: emp.full_name,
+        client_id: emp.client_id,
+        completion_date: record ? record.completion_date : null,
+        expiration_date: expirationDate,
+      });
     }
   }
 
-  res.json({ training: mt, current: buckets.Current, expired: buckets.Expired, missing: buckets.Missing });
+  res.json({
+    training: mt,
+    current: buckets.Current,
+    expired: buckets.Expired,
+    noExpiration: buckets['No Expiration'],
+    pendingReview: buckets['Pending Review'],
+    missing: buckets.Missing,
+  });
 });
 
 module.exports = router;

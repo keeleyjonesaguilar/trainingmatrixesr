@@ -102,28 +102,23 @@ router.get('/', (req, res) => {
   }
   gaps.sort((a, b) => (a.expiration_date || '9999').localeCompare(b.expiration_date || '9999'));
 
-  // High-Priority Catalog Modules: first 6 active trainings by catalog order, with the percent
-  // of enrolled (non-N/A) employees who are Current/No Expiration on each.
-  const moduleStats = masterTrainings.slice(0, 6).map((mt) => {
-    let current = 0;
-    let applicable = 0;
-    for (const emp of allEmployees) {
-      const { status } = repo.computeCell({
-        employeeId: emp.employee_id,
-        clientId: emp.client_id,
-        trainingId: mt.training_id,
-        masterTraining: mt,
-      });
-      if (status === 'Not Applicable') continue;
-      applicable += 1;
-      if (status === 'Current' || status === 'No Expiration') current += 1;
-    }
-    return {
-      training_id: mt.training_id,
-      training_name: mt.training_name,
-      percent_current: applicable > 0 ? Math.round((current / applicable) * 100) : 0,
-    };
-  });
+  // Most Popular Trainings (Keeley's request, 2026-08-18 - replaces the old "High-Priority
+  // Catalog Modules" tile, which just showed the first 6 trainings by catalog order and a
+  // percent-current figure): the trainings with the most employees who have actually
+  // completed them, by headcount - a distinct-employee count of active records with a
+  // completion date on file, ranked highest first, top 6 shown.
+  const mostPopularTrainings = masterTrainings
+    .map((mt) => {
+      const completedCount = db
+        .prepare(
+          `SELECT COUNT(DISTINCT employee_id) AS n FROM employee_training_records
+           WHERE training_id = ? AND completion_date IS NOT NULL AND is_active_record = 1`
+        )
+        .get(mt.training_id).n;
+      return { training_id: mt.training_id, training_name: mt.training_name, completed_count: completedCount };
+    })
+    .sort((a, b) => b.completed_count - a.completed_count)
+    .slice(0, 6);
 
   res.json({
     scope: 'all',
@@ -135,7 +130,7 @@ router.get('/', (req, res) => {
     expiredOrMissing: (counts.Expired || 0) + (counts.Missing || 0),
     perClient,
     urgentGaps: gaps.slice(0, 8),
-    moduleStats,
+    mostPopularTrainings,
   });
 });
 

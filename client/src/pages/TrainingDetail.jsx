@@ -22,7 +22,7 @@ export default function TrainingDetail() {
   if (error) return <div className="error-banner">{error}</div>;
   if (!data) return <div className="empty-state">Loading...</div>;
 
-  const { training, current, expired, missing } = data;
+  const { training, current, expired, noExpiration, pendingReview, missing } = data;
 
   return (
     <div>
@@ -43,12 +43,20 @@ export default function TrainingDetail() {
         <EmployeeList rows={expired} />
       </div>
       <div className="card">
-        <h2>Missing ({missing.length})</h2>
-        <EmployeeList rows={missing} />
-      </div>
-      <div className="card">
         <h2>Current ({current.length})</h2>
         <EmployeeList rows={current} />
+      </div>
+      <div className="card">
+        <h2>Completed, No Expiration ({noExpiration.length})</h2>
+        <EmployeeList rows={noExpiration} />
+      </div>
+      <div className="card">
+        <h2>Pending Review ({pendingReview.length})</h2>
+        <EmployeeList rows={pendingReview} />
+      </div>
+      <div className="card">
+        <h2>Missing ({missing.length})</h2>
+        <EmployeeList rows={missing} />
       </div>
     </div>
   );
@@ -58,11 +66,12 @@ function EmployeeList({ rows }) {
   if (!rows.length) return <div className="empty-state">None</div>;
   return (
     <table>
-      <thead><tr><th>Employee</th><th>Expiration Date</th></tr></thead>
+      <thead><tr><th>Employee</th><th>Completed</th><th>Expiration Date</th></tr></thead>
       <tbody>
         {rows.map((r) => (
           <tr key={r.employee_id}>
             <td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td>
+            <td>{r.completion_date || '—'}</td>
             <td>{r.expiration_date || '—'}</td>
           </tr>
         ))}
