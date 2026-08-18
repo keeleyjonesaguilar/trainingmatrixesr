@@ -5,8 +5,16 @@ const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Client directory (Keeley's request, 2026-08-18): the main Clients page now shows a running
+// list of clients first, so this includes a quick employee_count per client for that list -
+// clicking into a client is what shows/edits their training requirement settings.
 router.get('/', (req, res) => {
-  const rows = db.prepare('SELECT * FROM clients ORDER BY client_name ASC').all();
+  const rows = db
+    .prepare(
+      `SELECT c.*, (SELECT COUNT(*) FROM employees e WHERE e.client_id = c.client_id AND e.active = 1) AS employee_count
+       FROM clients c ORDER BY c.client_name ASC`
+    )
+    .all();
   res.json(rows);
 });
 

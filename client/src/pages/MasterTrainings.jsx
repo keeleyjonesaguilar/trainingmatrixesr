@@ -175,15 +175,6 @@ export default function MasterTrainings() {
             <div className="value">{summary.clientCoverage}</div>
             <span className="caption">Active client accounts</span>
           </div>
-          <div className="stat-tile">
-            <div className="stat-label">Client Aliases Mapped</div>
-            <div className="value">{summary.aliasesMapped}</div>
-            <span className="caption">Terminology variants recognized on import</span>
-          </div>
-          <div className="stat-tile">
-            <div className="stat-label">High-Risk Protocols</div>
-            <div className="value">{summary.highRisk}</div>
-          </div>
         </div>
       )}
 
@@ -218,22 +209,6 @@ export default function MasterTrainings() {
       {isAdmin && (
         <div style={{ marginBottom: 16 }}>
           <AddTrainingForm nextOrder={maxOrder + 1} onAdded={load} />
-        </div>
-      )}
-
-      {summary && (
-        <div className="card">
-          <h2>Recent Ingestion Aliases</h2>
-          <p className="page-subtitle">Client terminology recently mapped to a Master Training via the import review queue.</p>
-          <table>
-            <thead><tr><th>Client Wording</th><th>Mapped To</th></tr></thead>
-            <tbody>
-              {summary.recentAliases.map((a) => (
-                <tr key={a.alias_text}><td>{a.alias_text}</td><td>{a.training_id} - {a.training_name}</td></tr>
-              ))}
-              {summary.recentAliases.length === 0 && <tr><td colSpan={2} className="empty-state">No aliases mapped yet.</td></tr>}
-            </tbody>
-          </table>
         </div>
       )}
     </div>

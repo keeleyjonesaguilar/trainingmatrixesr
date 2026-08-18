@@ -63,7 +63,7 @@ router.get('/:id/full-detail', (req, res) => {
       master_training_name: mt.training_name,
       category: mt.category,
       training_type: mt.training_type,
-      requirement_status: requirement ? requirement.requirement_status : 'Required',
+      requirement_status: requirement ? requirement.requirement_status : 'Not Required',
       original_client_training_name: record ? record.original_client_training_name : null,
       completion_date: record ? record.completion_date : null,
       expiration_date: expirationDate,
@@ -72,6 +72,7 @@ router.get('/:id/full-detail', (req, res) => {
       notes: record ? record.notes : null,
       record_id: record ? record.record_id : null,
       duplicate_status: record ? record.duplicate_status : 'none',
+      certificate_filename: record ? record.certificate_filename : null,
     };
   });
   res.json({ employee, client, trainings });

@@ -70,6 +70,20 @@ export const api = {
   resolveDuplicateRecord: (recordId) => request(`/training-records/${recordId}/resolve-duplicate`, { method: 'PUT' }),
   getRecordHistory: (employeeId, trainingId) => request(`/training-records/employee/${employeeId}/training/${trainingId}`),
 
+  // Certificate of completion (optional, attachable at creation or later)
+  uploadCertificate: (recordId, file) => {
+    const formData = new FormData();
+    formData.append('certificate', file);
+    return fetch(`${BASE}/training-records/${recordId}/certificate`, { method: 'POST', body: formData, credentials: 'include' }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Certificate upload failed (${res.status})`);
+      }
+      return res.json();
+    });
+  },
+  getCertificateUrl: (recordId) => `${BASE}/training-records/${recordId}/certificate`,
+
   // Matrix
   getMatrix: (params = {}) => request(`/matrix?${new URLSearchParams(params).toString()}`),
 
@@ -94,11 +108,10 @@ export const api = {
   commitImport: (batchId) => request(`/import/batches/${batchId}/commit`, { method: 'POST' }),
   cancelImport: (batchId) => request(`/import/batches/${batchId}`, { method: 'DELETE' }),
 
-  // Reports
-  getClientComplianceReport: (clientId) => request(`/reports/client-compliance${clientId ? `?client_id=${clientId}` : ''}`),
-  getEmployeeTrainingReport: (employeeId) => request(`/reports/employee/${employeeId}`),
-  getTrainingComplianceReport: (trainingId, clientId) => request(`/reports/training/${trainingId}${clientId ? `?client_id=${clientId}` : ''}`),
-  getExpiringSoonReport: (days, clientId) =>
-    request(`/reports/expiring-soon?${new URLSearchParams({ days: days || 30, ...(clientId ? { client_id: clientId } : {}) }).toString()}`),
-  getClientExceptionReport: (clientId) => request(`/reports/exceptions${clientId ? `?client_id=${clientId}` : ''}`),
+  // Reports - single unified "trainings actually completed" report (2026-08-18 rebuild)
+  getCompletedTrainingsReport: (params = {}) => {
+    const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v));
+    const qs = new URLSearchParams(filtered).toString();
+    return request(`/reports/completed-trainings${qs ? `?${qs}` : ''}`);
+  },
 };

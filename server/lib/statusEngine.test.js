@@ -5,8 +5,10 @@ const { computeStatus, resolveExpiration, addPeriod, parseSourceValue } = requir
 const masterNone = { default_expiration: 'None' };
 const master1yr = { default_expiration: '1 Year' };
 
-// 1. No record, Required -> Missing
-assert.strictEqual(computeStatus({ record: null, requirement: null, masterTraining: master1yr, today: '2026-08-13' }).status, 'Missing');
+// 1. No record, no requirement row on file -> Not Required by default (Keeley's call,
+// 2026-08-18) -> Not Applicable, not Missing. Explicitly setting Required is what produces Missing.
+assert.strictEqual(computeStatus({ record: null, requirement: null, masterTraining: master1yr, today: '2026-08-13' }).status, 'Not Applicable');
+assert.strictEqual(computeStatus({ record: null, requirement: { requirement_status: 'Required' }, masterTraining: master1yr, today: '2026-08-13' }).status, 'Missing');
 
 // 2. No record, client requirement Not Applicable -> Not Applicable
 assert.strictEqual(computeStatus({ record: null, requirement: { requirement_status: 'Not Applicable' }, masterTraining: master1yr, today: '2026-08-13' }).status, 'Not Applicable');

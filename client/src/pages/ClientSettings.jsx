@@ -1,160 +1,122 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
-const REQUIREMENT_OPTIONS = ['Required', 'Not Required', 'Optional', 'Not Applicable'];
-const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
-
-function RequirementRow({ clientId, row, onSaved, isAdmin }) {
-  const [requirementStatus, setRequirementStatus] = useState(row.requirement_status);
-  const [expirationUnit, setExpirationUnit] = useState(row.client_expiration_unit || '');
-  const [notes, setNotes] = useState(row.client_notes || '');
-  const [dirty, setDirty] = useState(false);
+// Nicer "add a client" UI (Keeley's request, 2026-08-18): a small "+ Add Client" button that
+// expands into a proper form card, instead of a plain inline text-input-and-button toolbar.
+function AddClientForm({ onAdded, onCancel }) {
+  const [name, setName] = useState('');
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const markDirty = (setter) => (value) => { setter(value); setDirty(true); };
-
-  const save = async () => {
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
     setSaving(true);
+    setError('');
     try {
-      await api.setClientRequirement(clientId, row.training_id, {
-        requirement_status: requirementStatus,
-        client_expiration_unit: expirationUnit || null,
-        client_notes: notes || null,
-        // effective_date intentionally omitted - the backend defaults it to today.
-        // Rule 9: records completed before this date keep whatever they already had.
-      });
-      setDirty(false);
-      onSaved();
+      await api.createClient({ client_name: name.trim(), notes: notes.trim() || null });
+      onAdded();
+    } catch (e2) {
+      setError(e2.message);
     } finally {
       setSaving(false);
     }
   };
 
-  if (!isAdmin) {
-    return (
-      <tr>
-        <td>{row.training_id}</td>
-        <td>{row.master_training_name}</td>
-        <td>{requirementStatus}</td>
-        <td>
-          {expirationUnit || `Master Default (${row.master_default_expiration})`}
-          {' '}
-          <span className="badge badge-notapplicable" style={{ marginLeft: 4 }}>{row.expiration_source}</span>
-        </td>
-        <td>{notes || '—'}</td>
-      </tr>
-    );
-  }
-
   return (
-    <tr>
-      <td>{row.training_id}</td>
-      <td>{row.master_training_name}</td>
-      <td>
-        <select value={requirementStatus} onChange={(e) => markDirty(setRequirementStatus)(e.target.value)}>
-          {REQUIREMENT_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </td>
-      <td>
-        <select value={expirationUnit} onChange={(e) => markDirty(setExpirationUnit)(e.target.value)}>
-          <option value="">Master Default ({row.master_default_expiration})</option>
-          {EXPIRATION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-        {' '}
-        <span className="badge badge-notapplicable" style={{ marginLeft: 4 }}>{row.expiration_source}</span>
-      </td>
-      <td>
-        <input type="text" placeholder="Client notes" value={notes} onChange={(e) => markDirty(setNotes)(e.target.value)} />
-      </td>
-      <td>
-        <button disabled={!dirty || saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
-      </td>
-    </tr>
+    <form className="card add-client-card" onSubmit={submit}>
+      <h2>Add a New Client</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field-row">
+        <label>Client Name</label>
+        <input
+          type="text"
+          autoFocus
+          placeholder="e.g. Resolute Builders"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </div>
+      <div className="field-row">
+        <label>Notes (optional)</label>
+        <input
+          type="text"
+          placeholder="Internal notes about this client"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+      </div>
+      <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Adding...' : 'Add Client'}</button>{' '}
+      <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+    </form>
   );
 }
 
+// Main Client Settings page (restructured 2026-08-18 per Keeley's request): this is now a
+// running directory of clients. Click into one to view/edit that client's training
+// requirements and expiration overrides on its own page (see ClientDetail.jsx).
 export default function ClientSettings() {
   const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
-  const [selectedClientId, setSelectedClientId] = useState('');
-  const [rows, setRows] = useState([]);
-  const [newClientName, setNewClientName] = useState('');
   const [error, setError] = useState('');
+  const [addingOpen, setAddingOpen] = useState(false);
 
-  const loadClients = () => api.listClients().then(setClients).catch((e) => setError(e.message));
-  useEffect(() => { loadClients(); }, []);
-
-  const loadRequirements = (clientId) => {
-    if (!clientId) return;
-    api.getClientRequirements(clientId).then(setRows).catch((e) => setError(e.message));
-  };
-
-  useEffect(() => { loadRequirements(selectedClientId); }, [selectedClientId]);
-
-  const [addingClient, setAddingClient] = useState(false);
-
-  const addClient = async () => {
-    if (!newClientName.trim()) return;
-    setError('');
-    setAddingClient(true);
-    try {
-      const client = await api.createClient({ client_name: newClientName.trim() });
-      setNewClientName('');
-      await loadClients();
-      setSelectedClientId(client.client_id);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setAddingClient(false);
-    }
-  };
+  const load = () => api.listClients().then(setClients).catch((e) => setError(e.message));
+  useEffect(load, []);
 
   return (
     <div>
-      <h1>Client Settings</h1>
-      <p className="page-subtitle">Per-client training requirements and expiration overrides. Overrides never affect the Master Catalog or other clients.</p>
+      <div className="page-header">
+        <div>
+          <h1>Clients</h1>
+          <p className="page-subtitle">Every client on the Training Matrix. Click a client to view or edit their training requirements and expiration overrides.</p>
+        </div>
+        {isAdmin && !addingOpen && (
+          <div className="page-header-actions">
+            <button onClick={() => setAddingOpen(true)}>+ Add Client</button>
+          </div>
+        )}
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
+      {addingOpen && (
+        <AddClientForm
+          onAdded={() => { setAddingOpen(false); load(); }}
+          onCancel={() => setAddingOpen(false)}
+        />
+      )}
+
       <div className="card">
-        <div className="toolbar">
-          <select value={selectedClientId} onChange={(e) => setSelectedClientId(e.target.value)}>
-            <option value="">Select a client...</option>
-            {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
-          </select>
-          {isAdmin && (
-            <>
-              <input type="text" placeholder="New client name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} />
-              <button onClick={addClient} disabled={!newClientName.trim() || addingClient}>{addingClient ? 'Adding...' : 'Add Client'}</button>
-            </>
-          )}
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Client Name</th>
+                <th>Employees</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {clients.map((c) => (
+                <tr key={c.client_id}>
+                  <td><Link to={`/clients/${c.client_id}`}>{c.client_name}</Link></td>
+                  <td>{c.employee_count ?? 0}</td>
+                  <td><span className={`badge ${c.active ? 'badge-current' : 'badge-notapplicable'}`}>{c.active ? 'Active' : 'Inactive'}</span></td>
+                  <td><Link to={`/clients/${c.client_id}`}>View Settings &rarr;</Link></td>
+                </tr>
+              ))}
+              {clients.length === 0 && (
+                <tr><td colSpan={4} className="empty-state">No clients yet{isAdmin ? ' — add one above.' : '.'}</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
-
-      {selectedClientId && (
-        <div className="card">
-          <h2>Training Requirements</h2>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Training ID</th>
-                  <th>Master Training</th>
-                  <th>Requirement</th>
-                  <th>Expiration</th>
-                  <th>Client Notes</th>
-                  {isAdmin && <th></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <RequirementRow key={row.training_id} clientId={selectedClientId} row={row} isAdmin={isAdmin} onSaved={() => loadRequirements(selectedClientId)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

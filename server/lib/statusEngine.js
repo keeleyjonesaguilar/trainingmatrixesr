@@ -57,8 +57,11 @@ function resolveExpiration({ record, requirement, masterTraining }) {
 }
 
 function effectiveRequirementStatus(requirement) {
-  // Absence of a client_training_requirements row means "Required, use Master default" (spec section 18/19).
-  return requirement ? requirement.requirement_status : 'Required';
+  // Absence of a client_training_requirements row means "Not Required" by default (Keeley's
+  // call, 2026-08-18: a client starts with nothing required until an admin explicitly sets a
+  // training to Required on that client's Settings page - flips the original spec-45 default
+  // of "no override row = Required, use Master default").
+  return requirement ? requirement.requirement_status : 'Not Required';
 }
 
 /**

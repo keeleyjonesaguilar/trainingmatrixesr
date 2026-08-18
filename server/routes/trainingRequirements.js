@@ -23,7 +23,9 @@ router.get('/client/:clientId', (req, res) => {
       master_training_name: mt.training_name,
       category: mt.category,
       master_default_expiration: mt.default_expiration,
-      requirement_status: req_ ? req_.requirement_status : 'Required',
+      // No override row yet -> Not Required by default (Keeley's call, 2026-08-18): a client
+      // starts with nothing required until an admin explicitly flips a training to Required.
+      requirement_status: req_ ? req_.requirement_status : 'Not Required',
       client_expiration_unit: req_ ? req_.client_expiration_unit : null,
       client_training_name: req_ ? req_.client_training_name : null,
       client_notes: req_ ? req_.client_notes : null,
@@ -44,7 +46,7 @@ router.put('/client/:clientId/training/:trainingId', requireAdmin, (req, res) =>
   const mt = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(trainingId);
   if (!mt) return res.status(404).json({ error: 'Training not found' });
 
-  const { requirement_status = 'Required', client_expiration_unit = null, client_training_name = null, client_notes = null, effective_date } = req.body;
+  const { requirement_status = 'Not Required', client_expiration_unit = null, client_training_name = null, client_notes = null, effective_date } = req.body;
 
   if (!['Required', 'Not Required', 'Optional', 'Not Applicable'].includes(requirement_status)) {
     return res.status(400).json({ error: 'Invalid requirement_status' });

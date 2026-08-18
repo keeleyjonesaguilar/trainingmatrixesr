@@ -78,6 +78,58 @@ function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
   );
 }
 
+// Certificate of completion cell (Keeley's request): shows a View link if one's on file,
+// otherwise an inline "Attach Certificate" control so it can be added later too - not just
+// at the moment the training record is first created.
+function CertificateCell({ record, isAdmin, onUploaded }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef(null);
+
+  if (!record.record_id) return <>—</>;
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      await api.uploadCertificate(record.record_id, file);
+      onUploaded();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      {record.certificate_filename && (
+        <a href={api.getCertificateUrl(record.record_id)} target="_blank" rel="noreferrer">View</a>
+      )}
+      {isAdmin && (
+        <>
+          {record.certificate_filename ? ' · ' : null}
+          <button
+            type="button"
+            className="secondary"
+            style={{ padding: '2px 8px', fontSize: 12 }}
+            disabled={uploading}
+            onClick={() => inputRef.current?.click()}
+          >
+            {uploading ? 'Uploading...' : record.certificate_filename ? 'Replace' : 'Attach'}
+          </button>
+          <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={handleFile} />
+        </>
+      )}
+      {!record.certificate_filename && !isAdmin && '—'}
+      {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+
 function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onClose }) {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
@@ -163,6 +215,7 @@ export default function EmployeeDetail() {
   const [completionDate, setCompletionDate] = useState('');
   const [expirationDate, setExpirationDate] = useState('');
   const [recordNotes, setRecordNotes] = useState('');
+  const [certificateFile, setCertificateFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -195,7 +248,7 @@ export default function EmployeeDetail() {
     setSaving(true);
     setFormError('');
     try {
-      await api.saveTrainingRecord({
+      const saved = await api.saveTrainingRecord({
         client_id: employee.client_id,
         employee_id: employee.employee_id,
         training_id: selectedTrainingId,
@@ -204,10 +257,21 @@ export default function EmployeeDetail() {
         notes: recordNotes || null,
         source: 'Manual Entry',
       });
+      // Certificate upload is optional - if one was chosen, attach it to the record we just
+      // saved. A failure here shouldn't undo the record itself, just surface as a form error
+      // so Keeley knows to attach it from the completed-trainings list instead.
+      if (certificateFile) {
+        try {
+          await api.uploadCertificate(saved.record_id, certificateFile);
+        } catch (certErr) {
+          setFormError(`Record saved, but the certificate upload failed: ${certErr.message}`);
+        }
+      }
       setSelectedTrainingId('');
       setCompletionDate('');
       setExpirationDate('');
       setRecordNotes('');
+      setCertificateFile(null);
       load();
     } catch (err) {
       setFormError(err.message);
@@ -294,6 +358,7 @@ export default function EmployeeDetail() {
                     <th>Status</th>
                     <th>Completed</th>
                     <th>Expires</th>
+                    <th>Certificate</th>
                     <th>Flag</th>
                   </tr>
                 </thead>
@@ -305,6 +370,7 @@ export default function EmployeeDetail() {
                       <td><span className={`badge ${statusBadgeClass(t.status)}`}>{t.status}</span></td>
                       <td>{t.completion_date || '—'}</td>
                       <td>{t.expiration_date || '—'}</td>
+                      <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={load} /></td>
                       <td>
                         {t.duplicate_status === 'flagged' ? (
                           <button type="button" className="secondary" onClick={() => setReviewingTrainingId(t.training_id)}>
@@ -315,7 +381,7 @@ export default function EmployeeDetail() {
                     </tr>
                   ))}
                   {completed.length === 0 && (
-                    <tr><td colSpan={6} className="empty-state">No trainings completed yet.</td></tr>
+                    <tr><td colSpan={7} className="empty-state">No trainings completed yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -346,6 +412,15 @@ export default function EmployeeDetail() {
                 <div className="field-row">
                   <label>Notes</label>
                   <input type="text" placeholder="Optional" value={recordNotes} onChange={(e) => setRecordNotes(e.target.value)} />
+                </div>
+                <div className="field-row">
+                  <label>Certificate of Completion (optional)</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => setCertificateFile(e.target.files?.[0] || null)}
+                  />
+                  {certificateFile && <span className="page-subtitle" style={{ margin: '4px 0 0' }}>{certificateFile.name}</span>}
                 </div>
                 <button type="submit" disabled={saving || !selectedTrainingId}>{saving ? 'Saving...' : 'Save Record'}</button>
               </form>

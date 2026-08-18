@@ -6,6 +6,7 @@ import Matrix from './pages/Matrix.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import TrainingDetail from './pages/TrainingDetail.jsx';
 import ClientSettings from './pages/ClientSettings.jsx';
+import ClientDetail from './pages/ClientDetail.jsx';
 import MasterTrainings from './pages/MasterTrainings.jsx';
 import Import from './pages/Import.jsx';
 import Reports from './pages/Reports.jsx';
@@ -50,6 +51,7 @@ export default function App() {
               <Route path="/employees/:employeeId" element={<EmployeeDetail />} />
               <Route path="/trainings/:trainingId" element={<TrainingDetail />} />
               <Route path="/clients" element={<ClientSettings />} />
+              <Route path="/clients/:clientId" element={<ClientDetail />} />
               <Route path="/master-trainings" element={<MasterTrainings />} />
               <Route path="/import" element={<Import />} />
               <Route path="/reports" element={<Reports />} />
