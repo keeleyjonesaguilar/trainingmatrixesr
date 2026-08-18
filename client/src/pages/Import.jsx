@@ -73,15 +73,23 @@ export default function Import() {
 
       {!preview && (
         <div className="card">
-          <div className="toolbar">
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              <option value="">Select client...</option>
-              {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
-            </select>
-            <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
-            <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
-          </div>
-          <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Number, Full Name, Job Title, Department, plus one column per training.</p>
+          {clients.length === 0 ? (
+            <p className="page-subtitle">
+              No clients yet. Add one on the <a href="/clients">Client Settings</a> page first, then come back here to import their data.
+            </p>
+          ) : (
+            <>
+              <div className="toolbar">
+                <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                  <option value="">Select client...</option>
+                  {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+                </select>
+                <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
+                <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
+              </div>
+              <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Number, Full Name, Job Title, Department, plus one column per training.</p>
+            </>
+          )}
         </div>
       )}
 

@@ -26,6 +26,7 @@ router.get('/client/:clientId', (req, res) => {
       client_expiration_unit: req_ ? req_.client_expiration_unit : null,
       client_training_name: req_ ? req_.client_training_name : null,
       client_notes: req_ ? req_.client_notes : null,
+      effective_date: req_ ? req_.effective_date : null,
       expiration_source: req_ && req_.client_expiration_unit ? 'Client Override' : 'Master Default',
       effective_expiration: req_ && req_.client_expiration_unit ? req_.client_expiration_unit : mt.default_expiration,
     };
@@ -42,7 +43,7 @@ router.put('/client/:clientId/training/:trainingId', (req, res) => {
   const mt = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(trainingId);
   if (!mt) return res.status(404).json({ error: 'Training not found' });
 
-  const { requirement_status = 'Required', client_expiration_unit = null, client_training_name = null, client_notes = null } = req.body;
+  const { requirement_status = 'Required', client_expiration_unit = null, client_training_name = null, client_notes = null, effective_date } = req.body;
 
   if (!['Required', 'Not Required', 'Optional', 'Not Applicable'].includes(requirement_status)) {
     return res.status(400).json({ error: 'Invalid requirement_status' });
@@ -51,24 +52,31 @@ router.put('/client/:clientId/training/:trainingId', (req, res) => {
     return res.status(400).json({ error: `client_expiration_unit must be one of: ${EXPIRATION_UNITS.join(', ')} or null` });
   }
 
+  // Rule 9: a requirement/override change must not silently rewrite historical records.
+  // Default the effective date to today (unless the caller explicitly supplies one, e.g.
+  // backdating for a correction) so recompute only reaches forward from this point on.
+  const resolvedEffectiveDate = effective_date === undefined ? new Date().toISOString().slice(0, 10) : (effective_date || null);
+
   const existing = repo.getRequirement(clientId, trainingId);
   if (existing) {
     db.prepare(
       `UPDATE client_training_requirements
-       SET requirement_status=?, client_expiration_unit=?, client_training_name=?, client_notes=?
+       SET requirement_status=?, client_expiration_unit=?, client_training_name=?, client_notes=?, effective_date=?
        WHERE requirement_id=?`
-    ).run(requirement_status, client_expiration_unit, client_training_name, client_notes, existing.requirement_id);
+    ).run(requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate, existing.requirement_id);
   } else {
     db.prepare(
       `INSERT INTO client_training_requirements
-       (requirement_id, client_id, training_id, requirement_status, client_expiration_unit, client_training_name, client_notes, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
-    ).run(uuidv4(), clientId, trainingId, requirement_status, client_expiration_unit, client_training_name, client_notes);
+       (requirement_id, client_id, training_id, requirement_status, client_expiration_unit, client_training_name, client_notes, effective_date, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    ).run(uuidv4(), clientId, trainingId, requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate);
   }
 
-  // Requirement changed - refresh every affected employee's computed status so the matrix
-  // never shows stale data (design principle: recompute, don't hand-maintain).
-  repo.recomputeAllForClientTraining(clientId, trainingId);
+  // Requirement changed - refresh affected employees' computed status so the matrix never
+  // shows stale data, but respect the effective date so records completed before the change
+  // keep whatever they were already given (design principle: recompute, don't hand-maintain -
+  // but never rewrite history either).
+  repo.recomputeAllForClientTraining(clientId, trainingId, resolvedEffectiveDate);
 
   res.json(repo.getRequirement(clientId, trainingId));
 });

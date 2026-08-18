@@ -73,12 +73,13 @@ router.post('/:clientId/preview', upload.single('file'), (req, res) => {
   }
 
   const batchId = uuidv4();
-  db.prepare('INSERT INTO import_batches (batch_id, client_id, filename, imported_at, status) VALUES (?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO import_batches (batch_id, client_id, filename, imported_at, status, imported_by) VALUES (?, ?, ?, ?, ?, ?)').run(
     batchId,
     req.params.clientId,
     req.file.originalname,
     new Date().toISOString(),
-    'pending_review'
+    'pending_review',
+    req.user ? req.user.username : null
   );
 
   const insertMap = db.prepare(
@@ -180,6 +181,8 @@ router.post('/batches/:batchId/commit', (req, res) => {
 
   let employeesCreated = 0;
   let recordsCreated = 0;
+  let duplicatesFlagged = 0;
+  let recordsNeedingReview = 0;
 
   const txn = db.transaction(() => {
     for (const row of stagedRows) {
@@ -206,12 +209,22 @@ router.post('/batches/:batchId/commit', (req, res) => {
         if (cellValue === undefined || cellValue === null || String(cellValue).trim() === '') continue; // spec 13: blank isn't proof of anything - skip, don't create a false "Missing" record
         const parsed = parseSourceValue(cellValue);
         const masterTraining = repo.getMasterTraining(col.matched_training_id);
+
+        // Rule 15 / duplicate handling: check before inserting whether this employee already
+        // has a record for this training (from an earlier import or manual entry). Never skip
+        // or overwrite - insert the new one too, then flag the whole group for human review.
+        const hadExistingRecord = !!db
+          .prepare('SELECT 1 FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
+          .get(employee.employee_id, col.matched_training_id);
+
         const recordId = uuidv4();
+        const now = new Date().toISOString();
         db.prepare(
           `INSERT INTO employee_training_records
            (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
-            completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'Pending Review', ?, ?, NULL)`
+            completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes,
+            created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'Pending Review', ?, ?, NULL, ?, ?)`
         ).run(
           recordId,
           batch.client_id,
@@ -221,18 +234,33 @@ router.post('/batches/:batchId/commit', (req, res) => {
           col.source_column_header,
           parsed.completion_date,
           parsed.raw_source_value,
-          `Import: ${batch.filename}`
+          `Import: ${batch.filename}`,
+          now,
+          now
         );
-        repo.recomputeAndPersistRecord(recordId);
+        if (hadExistingRecord) {
+          const flagged = repo.flagDuplicatesIfAny(employee.employee_id, col.matched_training_id);
+          if (flagged) duplicatesFlagged += 1;
+        }
+        const persisted = repo.recomputeAndPersistRecord(recordId);
+        if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
         recordsCreated += 1;
       }
     }
-    db.prepare('UPDATE import_batches SET status = ? WHERE batch_id = ?').run('committed', req.params.batchId);
+    db.prepare(
+      'UPDATE import_batches SET status = ?, records_imported = ?, records_needing_review = ? WHERE batch_id = ?'
+    ).run('committed', recordsCreated, recordsNeedingReview, req.params.batchId);
   });
 
   txn();
 
-  res.json({ batch_id: req.params.batchId, employees_created: employeesCreated, records_created: recordsCreated });
+  res.json({
+    batch_id: req.params.batchId,
+    employees_created: employeesCreated,
+    records_created: recordsCreated,
+    duplicates_flagged: duplicatesFlagged,
+    records_needing_review: recordsNeedingReview,
+  });
 });
 
 router.delete('/batches/:batchId', (req, res) => {

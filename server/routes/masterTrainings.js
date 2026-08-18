@@ -11,6 +11,40 @@ router.get('/', (req, res) => {
   res.json(db.prepare(sql).all());
 });
 
+// Summary stats + category breakdown for the Master Trainings screen. Registered before
+// /:id so the literal path "summary" doesn't get swallowed by the :id param route below.
+router.get('/summary', (req, res) => {
+  const active = db.prepare('SELECT * FROM master_trainings WHERE active = 1').all();
+  const clientCoverage = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1').get().n;
+  const aliasesMapped = db.prepare('SELECT COUNT(*) AS n FROM training_aliases').get().n;
+  // "High-risk" isn't a stored flag - it's every category besides the two lowest-risk ones
+  // (regulatory orientation/paperwork categories), based on this catalog's existing categories.
+  const highRisk = active.filter((t) => !['OSHA', 'Orientation'].includes(t.category)).length;
+
+  const categoryCounts = {};
+  for (const t of active) categoryCounts[t.category] = (categoryCounts[t.category] || 0) + 1;
+  const categories = Object.entries(categoryCounts)
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const recentAliases = db
+    .prepare(
+      `SELECT a.alias_text, a.training_id, m.training_name
+       FROM training_aliases a JOIN master_trainings m ON m.training_id = a.training_id
+       ORDER BY a.rowid DESC LIMIT 6`
+    )
+    .all();
+
+  res.json({
+    masterModules: active.length,
+    clientCoverage,
+    aliasesMapped,
+    highRisk,
+    categories,
+    recentAliases,
+  });
+});
+
 router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Training not found' });

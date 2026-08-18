@@ -1,6 +1,5 @@
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 
@@ -11,41 +10,35 @@ require('./db');
 // fresh cloud deploy works without needing shell/CLI access to run a seed command manually.
 require('./seed/seed').seedIfEmpty();
 
+// Auto-seed exactly one login account on first boot (from APP_USERNAME/APP_PASSWORD if set),
+// so there's always at least one way in. Additional accounts are managed from the in-app
+// Manage Users screen from then on.
+require('./seed/seedAdmin').seedAdminIfEmpty();
+
+const { attachUser, requireAuth } = require('./middleware/auth');
+
 const app = express();
+// Render sits in front of this app behind a proxy that terminates TLS - trust it so
+// req.secure and the client's real protocol are reported correctly (needed for secure cookies).
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
+app.use(attachUser);
 
-// Optional shared-password gate (spec explicitly deferred per-user logins, but this app
-// holds employee compliance data and may end up on a public URL - if APP_USERNAME/APP_PASSWORD
-// are set, every request must present them via HTTP Basic Auth. Leave both unset for local
-// development with no prompt at all.
-const GATE_USER = process.env.APP_USERNAME;
-const GATE_PASS = process.env.APP_PASSWORD;
-if (GATE_USER && GATE_PASS) {
-  app.use((req, res, next) => {
-    const header = req.headers.authorization || '';
-    const [scheme, encoded] = header.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const [user, pass] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
-      const userOk = user && user.length === GATE_USER.length && crypto.timingSafeEqual(Buffer.from(user), Buffer.from(GATE_USER));
-      const passOk = pass && pass.length === GATE_PASS.length && crypto.timingSafeEqual(Buffer.from(pass), Buffer.from(GATE_PASS));
-      if (userOk && passOk) return next();
-    }
-    res.set('WWW-Authenticate', 'Basic realm="Training Matrix"');
-    res.status(401).send('Authentication required.');
-  });
-}
-
-app.use('/api/clients', require('./routes/clients'));
-app.use('/api/master-trainings', require('./routes/masterTrainings'));
-app.use('/api/employees', require('./routes/employees'));
-app.use('/api/training-requirements', require('./routes/trainingRequirements'));
-app.use('/api/training-records', require('./routes/trainingRecords'));
-app.use('/api/matrix', require('./routes/matrix'));
-app.use('/api/dashboard', require('./routes/dashboard'));
-app.use('/api/import', require('./routes/import'));
-
+// Login/logout/session-check are public; everything else below requires a session.
+app.use('/api/auth', require('./routes/auth'));
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+app.use('/api/users', requireAuth, require('./routes/users'));
+app.use('/api/clients', requireAuth, require('./routes/clients'));
+app.use('/api/master-trainings', requireAuth, require('./routes/masterTrainings'));
+app.use('/api/employees', requireAuth, require('./routes/employees'));
+app.use('/api/training-requirements', requireAuth, require('./routes/trainingRequirements'));
+app.use('/api/training-records', requireAuth, require('./routes/trainingRecords'));
+app.use('/api/matrix', requireAuth, require('./routes/matrix'));
+app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
+app.use('/api/import', requireAuth, require('./routes/import'));
+app.use('/api/reports', requireAuth, require('./routes/reports'));
 
 // Serve the built React frontend in production (client/dist), so the whole app is one process.
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

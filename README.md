@@ -1,11 +1,13 @@
 # Safety Training Matrix Management App
 
 A custom-built replacement for the Glide-based Training Matrix, covering the full spec: a
-Master Training Catalog (52 trainings), multi-client/employee management, per-client
-requirement overrides, a six-status compliance engine (Current / Expired / Missing /
-Not Applicable / No Expiration / Pending Review), a full training matrix + dashboard +
-detail pages, and a guided CSV import flow that maps messy client spreadsheets onto the
-standardized catalog without guessing or discarding source data.
+Master Training Catalog (52 trainings, expandable without a schema rebuild), multi-client/
+employee management, per-client requirement overrides with effective dates, a six-status
+compliance engine (Current / Expired / Missing / Not Applicable / No Expiration / Pending
+Review), a full training matrix + dashboard + detail pages, a Reports screen (Client
+Compliance, Employee Training, Training Compliance, Expiring Soon, Client Exceptions), and a
+guided CSV import flow that maps messy client spreadsheets onto the standardized catalog
+without guessing, discarding source data, or silently overwriting a duplicate record.
 
 Training Sign-In is intentionally out of scope for this build - this app covers the
 Matrix side only, per your instructions.
@@ -21,7 +23,7 @@ training-matrix/
     routes/         REST API endpoints
   client/           React (Vite) frontend
     src/pages/      Dashboard, Training Matrix, Employee Detail, Training Detail,
-                    Client Settings, Import
+                    Client Settings, Master Trainings, Import, Reports, Manage Users
   data/             SQLite database file lives here (created on first run)
 ```
 
@@ -72,8 +74,9 @@ Quick reference once you have accounts set up:
 - Add a persistent disk (e.g. mounted at `/opt/render/project/src/data`), and set the
   environment variable `DATA_DIR` to that same path, so the SQLite database survives
   restarts and redeploys.
-- Set `APP_USERNAME` and `APP_PASSWORD` (see "Restricting access" below) so the public URL
-  isn't wide open.
+- Set `APP_USERNAME` and `APP_PASSWORD` (see "Restricting access" below) so there's an
+  initial account to log in with - after that, accounts are managed from the in-app
+  "Manage Users" screen.
 - No manual seed step needed - the app auto-populates the Master Training Catalog on first
   boot if it's empty.
 
@@ -83,14 +86,17 @@ make sure port 4000 (or whatever you set `PORT` to) is reachable by whoever need
 
 ## Restricting access
 
-There's no per-user login system (by design, for this first version), but since this holds
-employee compliance data and will be on a public URL, the server supports a simple
-shared-password gate: set both `APP_USERNAME` and `APP_PASSWORD` as environment variables and
-every request (browser and API alike) will require them via a standard browser login prompt
-(HTTP Basic Auth). Leave both unset - as they are for local development - and the app opens
-with no prompt at all. Share one username/password with your team rather than posting it
-publicly; this is a basic gate, not a substitute for real per-user accounts if that becomes
-a requirement later.
+The app has a real login screen backed by per-user accounts (stored in the same SQLite
+database as everything else, passwords hashed - never stored in plain text). On first boot,
+if no accounts exist yet, one is created automatically from the `APP_USERNAME`/`APP_PASSWORD`
+environment variables (or `admin` + a random generated password, logged to the server console,
+if those aren't set). From then on, log in and use the **Manage Users** screen in the app
+to add teammates, reset passwords, or remove access - `APP_USERNAME`/`APP_PASSWORD` are only
+ever read once, to create that first account.
+
+Sessions are a signed cookie (7-day expiry), not stored server-side, so restarts don't log
+everyone out. The app always keeps at least one account - the last remaining login can't be
+deleted, so no one can accidentally lock everyone out.
 
 ## Key design decisions worth knowing about
 
@@ -101,11 +107,22 @@ a requirement later.
 - **Expiration resolves in this order**: an individual record's own explicit expiration
   date, then a client-specific override, then the Master Training Catalog's default, then
   "no expiration" if the catalog says None.
+- **Changing a client's override never rewrites history.** Client Training Settings has an
+  Effective Date; a record completed before that date keeps whatever expiration it was
+  already given, even after the override changes. Only records completed on/after the
+  effective date pick up the new rule. This is enforced in `statusEngine.resolveExpiration`
+  itself (the single source of truth), not just at write time, since status is computed live
+  on every read.
 - **Nothing from a source import is discarded.** Original client wording, raw YES/NO/N/A
   values, and unmapped/ambiguous columns are all preserved and either mapped to the correct
   Training ID or queued for manual review - never silently guessed at or dropped.
-- **The Master Training Catalog can grow.** `POST /api/master-trainings` adds a new training
-  without any schema changes, so the catalog isn't locked to exactly 52 entries.
+- **Duplicate records are flagged, never deleted.** If an employee already has a record for a
+  training and another one comes in (import or manual entry), both are kept and marked
+  "flagged" for review; an authorized user picks which one is active from the Employee Detail
+  page or the Client Exceptions report.
+- **The Master Training Catalog can grow.** The Master Trainings admin page (and
+  `POST /api/master-trainings` underneath it) adds a new training without any schema changes,
+  so the catalog isn't locked to exactly 52 entries.
 
 ## One thing to double check with the catalog
 
@@ -117,11 +134,16 @@ in Client Settings to confirm that's right for your clients.
 
 ## Known gaps / next steps
 
-- No per-user authentication - just the optional shared-password gate described above. Fine
-  for a small team on a private link; worth adding real individual logins if this grows.
+- Accounts are all equal - there's no separate "admin" role. Anyone who can log in can also
+  add/remove other accounts from Manage Users. Fine for a small trusted team; worth adding
+  role-based permissions if this grows.
 - CSV import expects one row per employee with training columns across the top. If your
   client spreadsheets are shaped differently (e.g. one row per training completion), the
   import flow would need adjusting.
-- PDF export wasn't built (CSV wasn't requested either, since this build prompt didn't ask
-  for export at all) - only the on-screen Matrix, Dashboard, and detail pages exist.
+- PDF export wasn't built - Reports offers CSV export on the report tables that support it.
 - Training Sign-In integration is not part of this build, per your instruction to hold off.
+- A few fields from an earlier UI-mockup pass (client industry, employee work location/
+  safety clearance/last audit date, training record certificate ID/verified by/accredited
+  provider, and evidence file upload) were intentionally left out of this update to match
+  your master prompt exactly. None of that data existed anywhere live, so nothing was lost -
+  they're easy to re-add later if you still want them.

@@ -45,11 +45,12 @@ router.post('/', (req, res) => {
 
   const id = record_id || uuidv4();
   const existing = record_id ? db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(record_id) : null;
+  const now = new Date().toISOString();
 
   if (existing) {
     db.prepare(
       `UPDATE employee_training_records
-       SET original_client_training_name=?, completion_date=?, source_expiration_date=?, raw_source_value=?, source=?, notes=?
+       SET original_client_training_name=?, completion_date=?, source_expiration_date=?, raw_source_value=?, source=?, notes=?, updated_at=?
        WHERE record_id=?`
     ).run(
       original_client_training_name ?? existing.original_client_training_name,
@@ -58,14 +59,22 @@ router.post('/', (req, res) => {
       finalRawValue ?? existing.raw_source_value,
       source ?? existing.source,
       notes ?? existing.notes,
+      now,
       id
     );
   } else {
+    // Rule 15 / duplicate handling: check before inserting whether this employee already has
+    // a record for this training, so we know afterward whether to flag the group for review.
+    const hadExistingRecord = !!db
+      .prepare('SELECT 1 FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
+      .get(employee_id, training_id);
+
     db.prepare(
       `INSERT INTO employee_training_records
        (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
-        completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Pending Review', ?, ?, ?)`
+        completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Pending Review', ?, ?, ?, ?, ?)`
     ).run(
       id,
       client_id,
@@ -77,12 +86,26 @@ router.post('/', (req, res) => {
       source_expiration_date,
       finalRawValue,
       source,
-      notes
+      notes,
+      now,
+      now
     );
+
+    if (hadExistingRecord) repo.flagDuplicatesIfAny(employee_id, training_id);
   }
 
   const updated = repo.recomputeAndPersistRecord(id);
   res.status(existing ? 200 : 201).json(updated);
+});
+
+// Duplicate resolution (Rule 15 / spec sections 18, 33): nothing is ever deleted - this just
+// marks which record in a duplicate group is the active/current one. The rest stay visible in
+// history but stop competing for "latest" in the matrix/dashboard/employee detail.
+router.put('/:id/resolve-duplicate', (req, res) => {
+  const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Record not found' });
+  const updated = repo.resolveDuplicateGroup(req.params.id);
+  res.json(updated);
 });
 
 router.delete('/:id', (req, res) => {

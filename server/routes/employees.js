@@ -66,15 +66,19 @@ router.get('/:id/full-detail', (req, res) => {
       completion_date: record ? record.completion_date : null,
       expiration_date: expirationDate,
       status,
+      expiring_soon: repo.isExpiringSoon(status, expirationDate),
       notes: record ? record.notes : null,
       record_id: record ? record.record_id : null,
+      duplicate_status: record ? record.duplicate_status : 'none',
     };
   });
   res.json({ employee, client, trainings });
 });
 
 router.post('/', (req, res) => {
-  const { client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null } = req.body;
+  const {
+    client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null,
+  } = req.body;
   if (!client_id || !full_name || !full_name.trim()) {
     return res.status(400).json({ error: 'client_id and full_name are required' });
   }
@@ -94,7 +98,10 @@ router.put('/:id', (req, res) => {
   const merged = { ...existing, ...req.body };
   db.prepare(
     `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`
-  ).run(merged.employee_number, merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes, req.params.id);
+  ).run(
+    merged.employee_number, merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes,
+    req.params.id
+  );
   res.json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id));
 });
 

@@ -21,12 +21,28 @@ function addPeriod(isoDateStr, unit) {
  *   2. The Client Training Requirements override for this client+training, if set
  *   3. The Master Training Catalog default expiration
  *   4. If Master says "None", there is no expiration
+ *
+ * Rule 9 (historical protection): status/expiration is computed live on every read (matrix,
+ * dashboard, employee/training detail) rather than trusted from a cache, so a client override
+ * change must not silently change what a past record shows. If the requirement has an
+ * effective_date and this record was completed before it, AND this record already has a
+ * previously-resolved expiration_date on file, that frozen value wins over the requirement's
+ * *current* override/master default - the record keeps whatever it was correctly given at the
+ * time. Records completed on/after the effective date (or never resolved yet) use the current
+ * settings as normal.
  */
 function resolveExpiration({ record, requirement, masterTraining }) {
   if (record && record.source_expiration_date) {
     return { expirationDate: record.source_expiration_date, resolvedFrom: 'record_override' };
   }
+
   const completionDate = record && record.completion_date;
+  const predatesEffectiveChange =
+    requirement && requirement.effective_date && completionDate && completionDate < requirement.effective_date;
+  if (predatesEffectiveChange && record.expiration_date) {
+    return { expirationDate: record.expiration_date, resolvedFrom: 'frozen_pre_override_change' };
+  }
+
   if (requirement && requirement.client_expiration_unit) {
     if (requirement.client_expiration_unit === 'None') {
       return { expirationDate: null, resolvedFrom: 'client_override' };

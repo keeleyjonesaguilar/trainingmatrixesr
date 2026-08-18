@@ -9,6 +9,7 @@ function RequirementRow({ clientId, row, onSaved }) {
   const [expirationUnit, setExpirationUnit] = useState(row.client_expiration_unit || '');
   const [trainingName, setTrainingName] = useState(row.client_training_name || '');
   const [notes, setNotes] = useState(row.client_notes || '');
+  const [effectiveDate, setEffectiveDate] = useState(row.effective_date || '');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -22,6 +23,9 @@ function RequirementRow({ clientId, row, onSaved }) {
         client_expiration_unit: expirationUnit || null,
         client_training_name: trainingName || null,
         client_notes: notes || null,
+        // Leave blank to apply immediately (today) - only backdate if correcting a mistake.
+        // Rule 9: records completed before this date keep whatever they already had.
+        effective_date: effectiveDate || undefined,
       });
       setDirty(false);
       onSaved();
@@ -46,6 +50,14 @@ function RequirementRow({ clientId, row, onSaved }) {
         </select>
         {' '}
         <span className="badge badge-notapplicable" style={{ marginLeft: 4 }}>{row.expiration_source}</span>
+      </td>
+      <td>
+        <input
+          type="date"
+          title="Effective date - records completed before this date won't be rewritten by this change"
+          value={effectiveDate}
+          onChange={(e) => markDirty(setEffectiveDate)(e.target.value)}
+        />
       </td>
       <td>
         <input type="text" placeholder="(optional override)" value={trainingName} onChange={(e) => markDirty(setTrainingName)(e.target.value)} />
@@ -77,12 +89,22 @@ export default function ClientSettings() {
 
   useEffect(() => { loadRequirements(selectedClientId); }, [selectedClientId]);
 
+  const [addingClient, setAddingClient] = useState(false);
+
   const addClient = async () => {
     if (!newClientName.trim()) return;
-    const client = await api.createClient({ client_name: newClientName.trim() });
-    setNewClientName('');
-    await loadClients();
-    setSelectedClientId(client.client_id);
+    setError('');
+    setAddingClient(true);
+    try {
+      const client = await api.createClient({ client_name: newClientName.trim() });
+      setNewClientName('');
+      await loadClients();
+      setSelectedClientId(client.client_id);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAddingClient(false);
+    }
   };
 
   return (
@@ -98,7 +120,7 @@ export default function ClientSettings() {
             {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
           </select>
           <input type="text" placeholder="New client name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} />
-          <button onClick={addClient}>Add Client</button>
+          <button onClick={addClient} disabled={!newClientName.trim() || addingClient}>{addingClient ? 'Adding...' : 'Add Client'}</button>
         </div>
       </div>
 
@@ -113,6 +135,7 @@ export default function ClientSettings() {
                   <th>Master Training</th>
                   <th>Requirement</th>
                   <th>Expiration</th>
+                  <th>Effective Date</th>
                   <th>Client Name Override</th>
                   <th>Client Notes</th>
                   <th></th>

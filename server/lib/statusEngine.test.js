@@ -69,6 +69,27 @@ assert.strictEqual(computeStatus({ record: { raw_source_value: 'N/A', completion
   assert.strictEqual(res.resolvedFrom, 'master_default');
 }
 
+// 12b. Rule 9: a record completed before the requirement's effective_date, with an
+// already-persisted expiration_date, keeps that frozen value even though the *current*
+// override would compute something different.
+{
+  const record = { completion_date: '2020-01-01', expiration_date: '2021-01-01', raw_source_value: '2020-01-01' };
+  const requirement = { requirement_status: 'Required', client_expiration_unit: '3 Years', effective_date: '2026-08-18' };
+  const res = resolveExpiration({ record, requirement, masterTraining: master1yr });
+  assert.strictEqual(res.expirationDate, '2021-01-01');
+  assert.strictEqual(res.resolvedFrom, 'frozen_pre_override_change');
+}
+
+// 12c. Rule 9 (continued): a record completed on/after the effective_date uses the current
+// override as normal - the freeze only protects records from before the change.
+{
+  const record = { completion_date: '2026-09-01', raw_source_value: '2026-09-01' };
+  const requirement = { requirement_status: 'Required', client_expiration_unit: '3 Years', effective_date: '2026-08-18' };
+  const res = resolveExpiration({ record, requirement, masterTraining: master1yr });
+  assert.strictEqual(res.expirationDate, '2029-09-01');
+  assert.strictEqual(res.resolvedFrom, 'client_override');
+}
+
 // 13. addPeriod basic
 assert.strictEqual(addPeriod('2026-08-13', '3 Years'), '2029-08-13');
 assert.strictEqual(addPeriod('2026-08-13', 'None'), null);

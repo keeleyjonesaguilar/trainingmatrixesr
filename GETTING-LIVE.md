@@ -64,21 +64,23 @@ Without this step, your data would be erased every time the app restarts or rede
 3. Also in Advanced, add an environment variable:
    - `DATA_DIR` = `/opt/render/project/src/data` (same path as the disk above)
 
-## Part 5: Set a shared password for your team
+## Part 5: Set your first login
 
 This keeps the app from being wide open to anyone who finds the link, since it holds employee compliance data.
 
 In the same **Advanced** section, add two more environment variables:
 - `APP_USERNAME` = pick something simple, e.g. `advanceconcrete`
-- `APP_PASSWORD` = pick a real password your team will actually use
+- `APP_PASSWORD` = pick a real password
 
-Anyone opening the link will get a plain browser login box asking for these two values.
+These only create your *first* account. Once the app is live, log in with them and go to
+**Manage Users** in the app itself to add an account for each teammate (and you can change
+or remove the initial one from there too).
 
 ## Part 6: Create and get your link
 
 1. Click **Create Web Service**. Render will build and start the app — this takes a few minutes the first time.
 2. Watch the build log on screen; when it says the service is live, your URL is shown at the top of the page, something like `https://training-matrix.onrender.com`.
-3. Open that link. You'll be asked for the username/password from Part 5, then the app loads.
+3. Open that link. You'll see a branded sign-in screen — log in with the username/password from Part 5, then the app loads.
 
 The Master Training Catalog (all 52 trainings) populates itself automatically the first time the app starts — no extra step needed.
 
