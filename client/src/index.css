@@ -218,6 +218,31 @@ button.secondary {
 button.secondary:hover { background: var(--color-bg); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Native <input type="file"> ignores button styling entirely, so it's wrapped in a label styled
+   like button.secondary (Import page's "Choose File" - Keeley's request, 2026-08-19) and the
+   actual input is visually hidden but still present/clickable for the whole label area. */
+.file-picker-button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.file-picker-button:hover { background: var(--color-bg); }
+.file-picker-button input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.file-picker-name { font-size: 13px; color: var(--color-text-muted); }
+
 /* ---------- Stat tiles ---------- */
 
 .stat-grid {

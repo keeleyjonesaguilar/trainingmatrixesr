@@ -2,6 +2,60 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
+// Small inline "add a client" form, same pattern as ClientSettings.jsx's AddClientForm, so an
+// admin who doesn't yet have the client they're importing for can create it right here instead
+// of bouncing to the Clients page and back.
+function NewClientForm({ onCreated, onCancel }) {
+  const [name, setName] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const client = await api.createClient({ client_name: name.trim(), notes: notes.trim() || null });
+      onCreated(client);
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="card add-client-card" onSubmit={submit} style={{ marginBottom: 16 }}>
+      <h2>New Client</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field-row">
+        <label>Client Name</label>
+        <input
+          type="text"
+          autoFocus
+          placeholder="e.g. Resolute Builders"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </div>
+      <div className="field-row">
+        <label>Notes (optional)</label>
+        <input
+          type="text"
+          placeholder="Internal notes about this client"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+      </div>
+      <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Adding...' : 'Add Client'}</button>{' '}
+      <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+    </form>
+  );
+}
+
 export default function Import() {
   const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
@@ -12,6 +66,7 @@ export default function Import() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [addingClient, setAddingClient] = useState(false);
 
   useEffect(() => {
     api.listClients().then(setClients).catch((e) => setError(e.message));
@@ -81,25 +136,36 @@ export default function Import() {
         </div>
       )}
 
-      {isAdmin && !preview && (
+      {isAdmin && !preview && addingClient && (
+        <NewClientForm
+          onCreated={(client) => {
+            setClients((prev) => [...prev, client]);
+            setClientId(client.client_id);
+            setAddingClient(false);
+          }}
+          onCancel={() => setAddingClient(false)}
+        />
+      )}
+
+      {isAdmin && !preview && !addingClient && (
         <div className="card">
-          {clients.length === 0 ? (
-            <p className="page-subtitle">
-              No clients yet. Add one on the <a href="/clients">Client Settings</a> page first, then come back here to import their data.
-            </p>
-          ) : (
-            <>
-              <div className="toolbar">
-                <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                  <option value="">Select client...</option>
-                  {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
-                </select>
-                <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
-                <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
-              </div>
-              <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Phone Number, Full Name, Job Title, Department, plus one column per training.</p>
-            </>
+          <div className="toolbar">
+            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+              <option value="">Select client...</option>
+              {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+            </select>
+            <button type="button" className="secondary" onClick={() => setAddingClient(true)}>+ New Client</button>
+            <label className="file-picker-button">
+              Choose File
+              <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
+            </label>
+            {file && <span className="file-picker-name">{file.name}</span>}
+            <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
+          </div>
+          {clients.length === 0 && (
+            <p className="page-subtitle">No clients yet — use "+ New Client" above to add one.</p>
           )}
+          <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Phone Number, Full Name, Job Title, Department, plus one column per training.</p>
         </div>
       )}
 
