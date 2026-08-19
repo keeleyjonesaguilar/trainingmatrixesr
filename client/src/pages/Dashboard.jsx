@@ -17,6 +17,28 @@ function timeAgo(dateStr) {
   return `${days}d ago`;
 }
 
+// Shared between the org-wide dashboard and the per-client drilldown (Keeley's request,
+// 2026-08-19: "add the same table for Most Popular Trainings but only for that client") -
+// same ranked-bar rendering either way, just fed a different (already server-scoped) list.
+function PopularityList({ items }) {
+  const maxCount = Math.max(1, ...items.map((m) => m.completed_count));
+  return (
+    <div className="popularity-list">
+      {items.map((m) => (
+        <div key={m.training_id} className="popularity-row">
+          <div className="popularity-name">{m.training_id} &mdash; {m.training_name}</div>
+          <div className="popularity-track">
+            <div className="popularity-fill" style={{ width: `${Math.max((m.completed_count / maxCount) * 100, 12)}%` }}>
+              <span className="popularity-count">{m.completed_count}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+      {items.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const isAdmin = useIsAdmin();
   const [clientId, setClientId] = useState('');
@@ -66,6 +88,12 @@ export default function Dashboard() {
             <div className="stat-label">Training Records</div>
             <div className="value">{data.totalTrainingRecords}</div>
           </div>
+        </div>
+
+        <div className="card">
+          <h2>Most Popular Trainings</h2>
+          <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many of {data.client.client_name}'s employees have completed each one.</p>
+          <PopularityList items={data.mostPopularTrainings} />
         </div>
       </div>
     );
@@ -152,24 +180,7 @@ export default function Dashboard() {
               <div className="card">
                 <h2>Most Popular Trainings</h2>
                 <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many employees have completed each one.</p>
-                {(() => {
-                  const maxCount = Math.max(1, ...data.mostPopularTrainings.map((m) => m.completed_count));
-                  return (
-                    <div className="popularity-list">
-                      {data.mostPopularTrainings.map((m) => (
-                        <div key={m.training_id} className="popularity-row">
-                          <div className="popularity-name">{m.training_id} &mdash; {m.training_name}</div>
-                          <div className="popularity-track">
-                            <div className="popularity-fill" style={{ width: `${Math.max((m.completed_count / maxCount) * 100, 12)}%` }}>
-                              <span className="popularity-count">{m.completed_count}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      {data.mostPopularTrainings.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}
-                    </div>
-                  );
-                })()}
+                <PopularityList items={data.mostPopularTrainings} />
               </div>
             </div>
           </div>

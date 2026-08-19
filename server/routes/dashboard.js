@@ -93,6 +93,21 @@ function bulkComputeForEmployees(employees, masterTrainings, { collectGaps = fal
   return { counts, gaps, popularity, countsByClient };
 }
 
+// Most Popular Trainings (Keeley's request, 2026-08-18; extended to per-client scope
+// 2026-08-19): the trainings with the most employees who have actually completed them, by
+// headcount - ranked highest first, top 6. Shared by both the org-wide dashboard and the
+// per-client drilldown, since it's the same computation over a different employee set.
+function topPopularTrainings(masterTrainings, popularity) {
+  return masterTrainings
+    .map((mt) => ({
+      training_id: mt.training_id,
+      training_name: mt.training_name,
+      completed_count: popularity.get(mt.training_id)?.size || 0,
+    }))
+    .sort((a, b) => b.completed_count - a.completed_count)
+    .slice(0, 6);
+}
+
 // "Compliant" = Current or No Expiration (already satisfied, nothing more to do). Not Applicable
 // cells don't count against a client/org either way, so they're excluded from the denominator.
 function complianceRate(counts) {
@@ -117,13 +132,17 @@ router.get('/', (req, res) => {
     if (!client) return res.status(404).json({ error: 'Client not found' });
     const employees = db.prepare('SELECT * FROM employees WHERE client_id = ? AND active = 1').all(client_id);
     const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ?').get(client_id).n;
-    const { counts } = bulkComputeForEmployees(employees, masterTrainings);
+    const { counts, popularity } = bulkComputeForEmployees(employees, masterTrainings, { collectPopularity: true });
     return res.json({
       scope: 'client',
       client,
       totalActiveEmployees: employees.length,
       totalTrainingRecords: recordCount,
       counts,
+      // Most Popular Trainings, scoped to just this client's employees (Keeley's request,
+      // 2026-08-19) - "what does this client most often do," same ranking logic as the
+      // org-wide dashboard tile.
+      mostPopularTrainings: topPopularTrainings(masterTrainings, popularity),
     });
   }
 
@@ -160,16 +179,7 @@ router.get('/', (req, res) => {
     };
   });
 
-  // Most Popular Trainings (Keeley's request, 2026-08-18): the trainings with the most
-  // employees who have actually completed them, by headcount - ranked highest first, top 6.
-  const mostPopularTrainings = masterTrainings
-    .map((mt) => ({
-      training_id: mt.training_id,
-      training_name: mt.training_name,
-      completed_count: popularity.get(mt.training_id)?.size || 0,
-    }))
-    .sort((a, b) => b.completed_count - a.completed_count)
-    .slice(0, 6);
+  const mostPopularTrainings = topPopularTrainings(masterTrainings, popularity);
 
   res.json({
     scope: 'all',

@@ -48,7 +48,6 @@ function downloadCsv(filename, rows) {
 export default function Reports() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState([]);
-  const [employees, setEmployees] = useState([]);
   const [masterTrainings, setMasterTrainings] = useState([]);
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
@@ -56,32 +55,31 @@ export default function Reports() {
   const [sortDir, setSortDir] = useState('desc');
 
   const clientId = searchParams.get('client_id') || '';
-  const employeeId = searchParams.get('employee_id') || '';
   const trainingId = searchParams.get('training_id') || '';
+  // Employee search (Keeley's request, 2026-08-19): a free-text box instead of a dropdown -
+  // easier to use once there are more than a handful of employees. Matches against the
+  // employee name already present on each completed-training row, client-side, so there's
+  // no need to look up an employee_id first.
+  const employeeSearch = searchParams.get('employee_search') || '';
 
   useEffect(() => {
     api.listClients().then(setClients).catch((e) => setError(e.message));
-    api.listEmployees().then(setEmployees).catch((e) => setError(e.message));
     api.listMasterTrainings(true).then(setMasterTrainings).catch((e) => setError(e.message));
   }, []);
 
   useEffect(() => {
-    api.getCompletedTrainingsReport({ client_id: clientId, employee_id: employeeId, training_id: trainingId })
+    api.getCompletedTrainingsReport({ client_id: clientId, training_id: trainingId })
       .then((data) => setRows(data.rows))
       .catch((e) => setError(e.message));
-  }, [clientId, employeeId, trainingId]);
+  }, [clientId, trainingId]);
 
   // replace: true - filter changes shouldn't pile up separate browser-back-button stops,
   // same fix applied to Matrix.jsx after Keeley reported the back button misbehaving there.
   const updateParam = (key, value) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value); else next.delete(key);
-    // A client change invalidates an employee filter from a different client.
-    if (key === 'client_id') next.delete('employee_id');
     setSearchParams(next, { replace: true });
   };
-
-  const employeeOptions = clientId ? employees.filter((e) => e.client_id === clientId) : employees;
 
   const toggleSort = (field) => {
     if (sortField === field) {
@@ -96,8 +94,10 @@ export default function Reports() {
 
   const sortedRows = useMemo(() => {
     if (!rows) return rows;
+    const needle = employeeSearch.trim().toLowerCase();
+    const filtered = needle ? rows.filter((r) => (r.full_name || '').toLowerCase().includes(needle)) : rows;
     const accessor = SORT_ACCESSORS[sortField];
-    const copy = [...rows];
+    const copy = [...filtered];
     copy.sort((a, b) => {
       const av = accessor(a);
       const bv = accessor(b);
@@ -106,7 +106,7 @@ export default function Reports() {
       return 0;
     });
     return copy;
-  }, [rows, sortField, sortDir]);
+  }, [rows, sortField, sortDir, employeeSearch]);
 
   return (
     <div>
@@ -133,10 +133,13 @@ export default function Reports() {
         </div>
         <div className="field-row">
           <label>Employee</label>
-          <select value={employeeId} onChange={(e) => updateParam('employee_id', e.target.value)}>
-            <option value="">All Employees</option>
-            {employeeOptions.map((e) => <option key={e.employee_id} value={e.employee_id}>{e.full_name}</option>)}
-          </select>
+          <input
+            type="search"
+            placeholder="Search by name..."
+            defaultValue={employeeSearch}
+            onKeyDown={(e) => { if (e.key === 'Enter') updateParam('employee_search', e.target.value); }}
+            onBlur={(e) => updateParam('employee_search', e.target.value)}
+          />
         </div>
         <div className="field-row">
           <label>Training</label>
@@ -174,7 +177,7 @@ export default function Reports() {
                   <td>{r.certificate_filename ? <a href={api.getCertificateUrl(r.record_id)} target="_blank" rel="noreferrer">View</a> : '—'}</td>
                 </tr>
               ))}
-              {rows && rows.length === 0 && (
+              {sortedRows && sortedRows.length === 0 && (
                 <tr><td colSpan={7} className="empty-state">No completed trainings match these filters.</td></tr>
               )}
             </tbody>
