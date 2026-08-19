@@ -4,6 +4,9 @@
   "description": "Safety Training Matrix Management App - API server",
   "main": "server/index.js",
   "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server/index.js",
     "seed": "node server/seed/seed.js",
