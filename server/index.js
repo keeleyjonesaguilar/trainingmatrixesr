@@ -44,6 +44,12 @@ app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
 app.use('/api/import', requireAuth, require('./routes/import'));
 app.use('/api/reports', requireAuth, require('./routes/reports'));
 
+// Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
+// login as everything else above. /api/public is the trainee-facing side and is deliberately
+// NOT behind requireAuth - a trainee scanning a QR code never has a login.
+app.use('/api/training-sessions', requireAuth, require('./routes/trainingSessions'));
+app.use('/api/public', require('./routes/publicSessions'));
+
 // Serve the built React frontend in production (client/dist), so the whole app is one process.
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDist)) {

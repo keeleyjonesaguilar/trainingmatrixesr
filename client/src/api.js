@@ -6,7 +6,7 @@ async function request(path, options = {}) {
     credentials: 'include',
     ...options,
   });
-  if (res.status === 401 && !path.startsWith('/auth/')) {
+  if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/public/')) {
     // Session expired/invalid - reload so the app re-checks auth and falls back to the login screen.
     window.location.reload();
     throw new Error('Your session expired. Reloading...');
@@ -114,4 +114,31 @@ export const api = {
     const qs = new URLSearchParams(filtered).toString();
     return request(`/reports/completed-trainings${qs ? `?${qs}` : ''}`);
   },
+
+  // Training Sessions (merged in from the Training Sign-In app, 2026-08-19) - admin/staff side,
+  // same login as everything else above.
+  listTrainingSessions: (params = {}) => {
+    const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v));
+    const qs = new URLSearchParams(filtered).toString();
+    return request(`/training-sessions${qs ? `?${qs}` : ''}`);
+  },
+  getTrainingSession: (id) => request(`/training-sessions/${id}`),
+  createTrainingSession: (payload) => request('/training-sessions', { method: 'POST', body: JSON.stringify(payload) }),
+  updateSessionAttendee: (sessionId, attendeeId, payload) =>
+    request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteSessionAttendee: (sessionId, attendeeId) =>
+    request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'DELETE' }),
+  retryAttendeeProcessing: (sessionId, attendeeId) =>
+    request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
+  getTrainingSessionsSummaryByTraining: () => request('/training-sessions/summary-by-training'),
+  getSessionsByTraining: (trainingId, params = {}) => {
+    const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v));
+    const qs = new URLSearchParams(filtered).toString();
+    return request(`/training-sessions/by-training/${trainingId}${qs ? `?${qs}` : ''}`);
+  },
+
+  // Public sign-in (no auth) - reached only via a session's QR code at /s/:token.
+  publicSessionInfo: (token) => request(`/public/${token}`),
+  publicSignIn: (token, payload) => request(`/public/${token}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
+  publicCloseSession: (token, payload) => request(`/public/${token}/close`, { method: 'POST', body: JSON.stringify(payload) }),
 };

@@ -1,0 +1,63 @@
+/* Additional styles for the Training Sign-In pages merged into this app on 2026-08-19.
+   index.css already covers the sidebar/cards/tables/badges used everywhere else - this file
+   only adds the handful of classes those pages use that didn't previously exist here:
+   labeled .btn variants (index.css only styles the bare <button> element + .secondary),
+   .field (a labeled input wrapper, same shape as .field-row under a different name used by
+   the ported pages), success banners, the public (no-login) sign-in page shell, and a couple
+   of session-specific badge colors. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+  text-decoration: none;
+}
+.btn:hover { background: var(--color-primary-hover); text-decoration: none; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary { background: var(--color-surface); color: var(--color-text); border-color: var(--color-border); }
+.btn-secondary:hover { background: var(--color-bg); }
+
+.btn-accent { background: var(--esr-green); border-color: var(--esr-green); }
+.btn-accent:hover { background: #024f40; }
+
+.btn-danger { background: var(--status-expired-text); border-color: var(--status-expired-text); }
+.btn-danger:hover { background: #8f1d17; }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+
+.success-banner {
+  background: var(--status-current-bg);
+  color: var(--status-current-text);
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.badge-open { background: var(--status-noexp-bg); color: var(--status-noexp-text); }
+.badge-closed { background: var(--status-na-bg); color: var(--status-na-text); }
+
+/* Public, unauthenticated pages (trainee sign-in) - no sidebar, centered card. */
+.public-shell {
+  min-height: 100vh;
+  background: var(--color-bg);
+  display: flex;
+  justify-content: center;
+  padding: 28px 16px;
+}
+.public-card { width: 100%; max-width: 480px; }
+.public-header { text-align: center; margin-bottom: 18px; }
+.public-header img { height: 44px; margin: 0 auto 12px; display: block; }

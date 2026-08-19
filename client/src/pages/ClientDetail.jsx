@@ -102,6 +102,7 @@ export default function ClientDetail() {
           <p className="page-subtitle">Per-client training requirements and expiration overrides. Overrides never affect the Master Catalog or other clients.</p>
         </div>
         <div className="page-header-actions">
+          <button className="secondary" onClick={() => navigate(`/sessions?client_id=${clientId}`)}>Training Sessions</button>
           <button className="secondary" onClick={() => navigate('/clients')}>&larr; All Clients</button>
         </div>
       </div>

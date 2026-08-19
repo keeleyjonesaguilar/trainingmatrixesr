@@ -9,8 +9,11 @@ Compliance, Employee Training, Training Compliance, Expiring Soon, Client Except
 guided CSV import flow that maps messy client spreadsheets onto the standardized catalog
 without guessing, discarding source data, or silently overwriting a duplicate record.
 
-Training Sign-In is intentionally out of scope for this build - this app covers the
-Matrix side only, per your instructions.
+**Training Sign-In is merged into this same app (2026-08-19).** It started as a separate app/
+codebase on purpose, was verified end-to-end against this Matrix's real API, and - once you
+confirmed it was fine to lose the current database and re-upload your master files afterward -
+was folded directly into this codebase instead of staying two apps talking to each other over
+HTTP. One login, one database, one deploy. See "Training Sign-In" below for how it works now.
 
 ## What's inside
 
@@ -19,12 +22,15 @@ training-matrix/
   server/           Express API + SQLite database (better-sqlite3)
     migrations/     Schema (runs automatically on startup)
     seed/           Master Training Catalog (52 trainings) + terminology alias dictionary
-    lib/            Status calculation engine + shared data access - single source of truth
-    routes/         REST API endpoints
+    lib/            Status calculation engine + shared data access - single source of truth;
+                    also QR code / certificate / roster PDF generation for Training Sign-In
+    routes/         REST API endpoints, including training-sessions (admin) and public
+                    (unauthenticated - trainee sign-in) for Training Sign-In
   client/           React (Vite) frontend
     src/pages/      Dashboard, Training Matrix, Employee Detail, Training Detail,
-                    Client Settings, Master Trainings, Import, Reports, Manage Users
-  data/             SQLite database file lives here (created on first run)
+                    Client Settings, Master Trainings, Import, Reports, Manage Users,
+                    Training Sessions, Session Detail, Training Types, Public Sign-In
+  data/             SQLite database, certificates, and roster PDFs live here (created on first run)
 ```
 
 ## Running it locally
@@ -77,6 +83,9 @@ Quick reference once you have accounts set up:
 - Set `APP_USERNAME` and `APP_PASSWORD` (see "Restricting access" below) so there's an
   initial account to log in with - after that, accounts are managed from the in-app
   "Manage Users" screen.
+- Set `PUBLIC_APP_URL` to this service's real public URL (e.g.
+  `https://training-matrix-btgc.onrender.com`) - Training Sign-In QR codes are generated
+  from this, so it needs to be the actual address, not `localhost`.
 - No manual seed step needed - the app auto-populates the Master Training Catalog on first
   boot if it's empty.
 
@@ -124,6 +133,34 @@ deleted, so no one can accidentally lock everyone out.
   `POST /api/master-trainings` underneath it) adds a new training without any schema changes,
   so the catalog isn't locked to exactly 52 entries.
 
+## Training Sign-In
+
+A trainer displays a session's QR code; each trainee scans it on their own phone, enters
+their name/phone, and signs. At the end, the trainer opens the same link, switches to "I'm
+the trainer - close session," signs, and closes it. That locks the roster, generates a
+certificate PDF per trainee, generates a combined roster PDF, and - since this is now one
+app, one database - writes each attendee straight into the Matrix: find-or-create their
+Employee record (matched by name or phone within the client), create their Employee Training
+Record for whatever training the session was for, and attach their certificate to it. No
+separate app, no sync step, no second login.
+
+- **Training Sessions** (sidebar): create a session (client, training type from the same
+  catalog the rest of the app uses, trainer, date, outline), download/print its QR code,
+  watch the roster fill in live, and download the roster PDF/CSV once closed. Typing a new
+  client name here creates that client the same as adding one anywhere else in the app.
+- **Training Types** (sidebar): every catalog training with a completed-session count -
+  drill into one to see every closed session/roster for it, across every client (the
+  "master page per training type" from the original ask).
+- **A session that used a custom/uncatalogued training label** still creates the employee
+  record, but has nothing to attach a compliance record to until that training exists in the
+  Master Training Catalog - the attendee shows "Employee on file (no catalog match)" on the
+  session page, with a **Retry** button once the training's been added to the catalog.
+- **If linking an attendee to an employee record ever fails** (a database hiccup, say), that
+  attendee shows "Needs attention" with the same Retry button - nothing about closing the
+  session or generating certificates depends on it succeeding.
+- **`PUBLIC_APP_URL`** (env var) needs to be set to this service's real public URL for QR
+  codes to point somewhere trainees can actually reach - see "Deploying" above.
+
 ## One thing to double check with the catalog
 
 TRN-012 (First Aid / CPR / AED) was missing from the categorized expiration table in the
@@ -134,14 +171,13 @@ in Client Settings to confirm that's right for your clients.
 
 ## Known gaps / next steps
 
-- Accounts are all equal - there's no separate "admin" role. Anyone who can log in can also
-  add/remove other accounts from Manage Users. Fine for a small trusted team; worth adding
-  role-based permissions if this grows.
+- Accounts have an admin/user role (admins can add/edit/delete; a "user" account is
+  read-only everywhere, including Manage Users itself). The app always keeps at least one
+  admin account - the last one can't be demoted or deleted.
 - CSV import expects one row per employee with training columns across the top. If your
   client spreadsheets are shaped differently (e.g. one row per training completion), the
   import flow would need adjusting.
 - PDF export wasn't built - Reports offers CSV export on the report tables that support it.
-- Training Sign-In integration is not part of this build, per your instruction to hold off.
 - A few fields from an earlier UI-mockup pass (client industry, employee work location/
   safety clearance/last audit date, training record certificate ID/verified by/accredited
   provider, and evidence file upload) were intentionally left out of this update to match

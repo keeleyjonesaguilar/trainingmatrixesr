@@ -76,6 +76,10 @@ These only create your *first* account. Once the app is live, log in with them a
 **Manage Users** in the app itself to add an account for each teammate (and you can change
 or remove the initial one from there too).
 
+One more environment variable, for Training Sign-In's QR codes: add `PUBLIC_APP_URL` set to
+this service's real address (you won't know it until Part 6 gives you the URL - come back
+and add it once you do, then trigger a manual redeploy so it takes effect).
+
 ## Part 6: Create and get your link
 
 1. Click **Create Web Service**. Render will build and start the app — this takes a few minutes the first time.

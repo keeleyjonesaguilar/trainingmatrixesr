@@ -1,7 +1,8 @@
 // Shared data-access helpers used across routes, so the matrix/dashboard/detail pages all
 // read status the exact same way (single source of truth, per statusEngine.js).
+const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { computeStatus } = require('./statusEngine');
+const { computeStatus, parseSourceValue } = require('./statusEngine');
 
 function listMasterTrainings({ activeOnly = false } = {}) {
   const sql = `SELECT * FROM master_trainings ${activeOnly ? 'WHERE active = 1' : ''} ORDER BY display_order ASC`;
@@ -129,6 +130,118 @@ function isExpiringSoon(status, expirationDate, days = 30, today) {
   return diffDays >= 0 && diffDays <= days;
 }
 
+// Shared insert/update path for an Employee Training Record - used by the manual "add/correct
+// a record" route (trainingRecords.js) AND by a Training Sign-In session close-out (
+// sessionRecords.js), so both paths go through the exact same duplicate-detection/status
+// computation logic and can never drift out of sync with each other.
+function saveTrainingRecord(opts) {
+  const {
+    record_id, // if present, update in place; otherwise insert
+    client_id,
+    employee_id,
+    training_id,
+    original_client_training_name = null,
+    completion_date = null,
+    source_expiration_date = null,
+    raw_source_value = null,
+    source = 'Manual Entry',
+    notes = null,
+  } = opts;
+
+  if (!client_id || !employee_id || !training_id) {
+    throw new Error('client_id, employee_id, training_id are required');
+  }
+  const masterTraining = getMasterTraining(training_id);
+  if (!masterTraining) throw new Error('training_id does not exist in Master Trainings');
+
+  // If a raw value was given (e.g. "YES", "NO", a date) and no explicit completion_date,
+  // interpret it the same way an import would - never fabricate a date ourselves.
+  let finalCompletionDate = completion_date;
+  let finalRawValue = raw_source_value;
+  if (!completion_date && raw_source_value) {
+    const parsed = parseSourceValue(raw_source_value);
+    finalCompletionDate = parsed.completion_date;
+    finalRawValue = parsed.raw_source_value;
+  }
+
+  const id = record_id || uuidv4();
+  const existing = record_id ? db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(record_id) : null;
+  const now = new Date().toISOString();
+
+  if (existing) {
+    db.prepare(
+      `UPDATE employee_training_records
+       SET original_client_training_name=?, completion_date=?, source_expiration_date=?, raw_source_value=?, source=?, notes=?, updated_at=?
+       WHERE record_id=?`
+    ).run(
+      original_client_training_name ?? existing.original_client_training_name,
+      finalCompletionDate ?? existing.completion_date,
+      source_expiration_date ?? existing.source_expiration_date,
+      finalRawValue ?? existing.raw_source_value,
+      source ?? existing.source,
+      notes ?? existing.notes,
+      now,
+      id
+    );
+  } else {
+    // Rule 15 / duplicate handling: check before inserting whether this employee already has
+    // a record for this training, so we know afterward whether to flag the group for review.
+    const hadExistingRecord = !!db
+      .prepare('SELECT 1 FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
+      .get(employee_id, training_id);
+
+    db.prepare(
+      `INSERT INTO employee_training_records
+       (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
+        completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Pending Review', ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      client_id,
+      employee_id,
+      training_id,
+      masterTraining.training_name,
+      original_client_training_name,
+      finalCompletionDate,
+      source_expiration_date,
+      finalRawValue,
+      source,
+      notes,
+      now,
+      now
+    );
+
+    if (hadExistingRecord) flagDuplicatesIfAny(employee_id, training_id);
+  }
+
+  return recomputeAndPersistRecord(id);
+}
+
+// Attaches a certificate file that was generated/uploaded outside the normal multer upload
+// route (e.g. a Training Sign-In certificate PDF generated at session close-out) to a record.
+function attachCertificateFile(recordId, { filename, filePath }) {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE employee_training_records
+     SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, updated_at = ?
+     WHERE record_id = ?`
+  ).run(filename, filePath, now, now, recordId);
+}
+
+// Used when creating a Training Sign-In session: the admin just types a client name (same as
+// before the merge), and it resolves to a real client_id - creating the client if this is its
+// first session - rather than requiring them to first go add the client on the Clients page.
+function findOrCreateClientByName(clientName) {
+  const trimmed = String(clientName || '').trim();
+  if (!trimmed) throw new Error('client_name is required');
+  const existing = db.prepare('SELECT * FROM clients WHERE LOWER(client_name) = LOWER(?)').get(trimmed);
+  if (existing) return existing.client_id;
+  const client_id = uuidv4();
+  db.prepare('INSERT INTO clients (client_id, client_name, active) VALUES (?, ?, 1)').run(client_id, trimmed);
+  return client_id;
+}
+
 module.exports = {
   listMasterTrainings,
   getMasterTraining,
@@ -142,4 +255,7 @@ module.exports = {
   flagDuplicatesIfAny,
   resolveDuplicateGroup,
   isExpiringSoon,
+  saveTrainingRecord,
+  attachCertificateFile,
+  findOrCreateClientByName,
 };
