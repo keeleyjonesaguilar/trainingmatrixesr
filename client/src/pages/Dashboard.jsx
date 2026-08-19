@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
@@ -20,19 +20,26 @@ function timeAgo(dateStr) {
 // Shared between the org-wide dashboard and the per-client drilldown (Keeley's request,
 // 2026-08-19: "add the same table for Most Popular Trainings but only for that client") -
 // same ranked-bar rendering either way, just fed a different (already server-scoped) list.
-function PopularityList({ items }) {
+// Each row links to that training's own page (Keeley's request, 2026-08-19); when shown on a
+// client drilldown, the link carries client_id along so the Training page opens already
+// scoped to that client instead of showing everyone.
+function PopularityList({ items, forClientId }) {
   const maxCount = Math.max(1, ...items.map((m) => m.completed_count));
   return (
     <div className="popularity-list">
       {items.map((m) => (
-        <div key={m.training_id} className="popularity-row">
+        <Link
+          key={m.training_id}
+          to={`/trainings/${m.training_id}${forClientId ? `?client_id=${forClientId}` : ''}`}
+          className="popularity-row"
+        >
           <div className="popularity-name">{m.training_id} &mdash; {m.training_name}</div>
           <div className="popularity-track">
             <div className="popularity-fill" style={{ width: `${Math.max((m.completed_count / maxCount) * 100, 12)}%` }}>
               <span className="popularity-count">{m.completed_count}</span>
             </div>
           </div>
-        </div>
+        </Link>
       ))}
       {items.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}
     </div>
@@ -41,7 +48,11 @@ function PopularityList({ items }) {
 
 export default function Dashboard() {
   const isAdmin = useIsAdmin();
-  const [clientId, setClientId] = useState('');
+  // client_id lives in the URL, not local state (Keeley's request, 2026-08-19): the Clients
+  // directory links straight into a specific client's Compliance Overview
+  // (e.g. /?client_id=<id>), which only works if this page's drilldown is addressable by URL.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const clientId = searchParams.get('client_id') || '';
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -71,7 +82,11 @@ export default function Dashboard() {
             <p className="page-subtitle">Client compliance overview.</p>
           </div>
           <div className="page-header-actions">
-            <button className="secondary" onClick={() => setClientId('')}>Back to All Clients</button>
+            <button className="secondary" onClick={() => setSearchParams({})}>Back to All Clients</button>
+            {/* "Settings" (Keeley's request, 2026-08-19): takes you to this client's training
+                requirements/overrides page - renamed from "View Settings" for consistency with
+                the same link on the Clients directory. */}
+            <button className="secondary" onClick={() => navigate(`/clients/${clientId}`)}>Settings</button>
             <button onClick={() => goToMatrix(undefined, clientId)}>Open Training Matrix</button>
           </div>
         </div>
@@ -92,8 +107,8 @@ export default function Dashboard() {
 
         <div className="card">
           <h2>Most Popular Trainings</h2>
-          <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many of {data.client.client_name}'s employees have completed each one.</p>
-          <PopularityList items={data.mostPopularTrainings} />
+          <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many of {data.client.client_name}'s employees have completed each one. Click a training to view its page.</p>
+          <PopularityList items={data.mostPopularTrainings} forClientId={clientId} />
         </div>
       </div>
     );
@@ -143,7 +158,7 @@ export default function Dashboard() {
                   </thead>
                   <tbody>
                     {data.perClient.map((c) => (
-                      <tr key={c.client_id} style={{ cursor: 'pointer' }} onClick={() => setClientId(c.client_id)}>
+                      <tr key={c.client_id} style={{ cursor: 'pointer' }} onClick={() => setSearchParams({ client_id: c.client_id })}>
                         <td>{c.client_name}</td>
                         <td>{c.totalActiveEmployees}</td>
                         <td>{c.complianceRate}%</td>
@@ -179,7 +194,7 @@ export default function Dashboard() {
 
               <div className="card">
                 <h2>Most Popular Trainings</h2>
-                <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many employees have completed each one.</p>
+                <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many employees have completed each one. Click a training to view its page.</p>
                 <PopularityList items={data.mostPopularTrainings} />
               </div>
             </div>

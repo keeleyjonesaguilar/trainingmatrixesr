@@ -184,7 +184,7 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .filter-bar .field-row { margin-bottom: 0; }
 .filter-bar .reset-link { font-size: 13px; align-self: center; }
 
-select, input[type="text"], input[type="date"], input[type="search"], input[type="password"] {
+select, input[type="text"], input[type="date"], input[type="search"], input[type="password"], textarea {
   border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 7px 10px;
@@ -192,6 +192,12 @@ select, input[type="text"], input[type="date"], input[type="search"], input[type
   background: var(--color-surface);
   color: var(--color-text);
 }
+textarea { width: 100%; font-family: inherit; resize: vertical; box-sizing: border-box; }
+
+/* Small inline text-button (Keeley's request, 2026-08-19: "Edit outline" next to the Training
+   page's subtitle line) - looks like a link, behaves like a button. */
+.link-button { background: none; border: none; color: var(--color-primary); font-size: 13px; font-weight: 500; padding: 0; cursor: pointer; }
+.link-button:hover { text-decoration: underline; background: none; }
 
 button {
   border: 1px solid var(--color-primary);
@@ -349,7 +355,11 @@ tr:hover td { background: #fafbfc; }
 
 /* ---------- Dashboard "Most Popular Trainings" horizontal bars ---------- */
 .popularity-list { display: flex; flex-direction: column; gap: 10px; }
-.popularity-row { display: flex; flex-direction: column; gap: 4px; }
+/* Each row is now a Link (Keeley's request, 2026-08-19: clicking a training goes to its own
+   page) - override the default link color/underline so it still reads as plain text with an
+   obvious hover affordance, not a wall of blue links. */
+.popularity-row { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: inherit; }
+.popularity-row:hover .popularity-name { text-decoration: underline; color: var(--color-primary); }
 .popularity-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .popularity-track { background: var(--color-bg); border-radius: 6px; height: 22px; overflow: hidden; }
 .popularity-fill {
@@ -366,6 +376,10 @@ tr:hover td { background: #fafbfc; }
 .popularity-count { color: #fff; font-size: 12px; font-weight: 700; }
 
 .evidence-link { font-size: 13px; }
+
+/* ---------- Training page outline (Keeley's request, 2026-08-19) ---------- */
+.outline-card { margin-bottom: 16px; }
+.outline-text { margin: 0 0 8px; white-space: pre-wrap; color: var(--color-text); }
 
 /* ---------- Header buttons row (used with app-header-right-style pattern on pages, if needed) ---------- */
 .app-header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }

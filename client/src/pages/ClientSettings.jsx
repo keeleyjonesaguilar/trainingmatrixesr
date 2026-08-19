@@ -79,7 +79,7 @@ export default function ClientSettings() {
       <div className="page-header">
         <div>
           <h1>Clients</h1>
-          <p className="page-subtitle">Every client on the Training Matrix. Click a client to view or edit their training requirements and expiration overrides.</p>
+          <p className="page-subtitle">Every client on the Training Matrix. Click a client's name for their Compliance Overview, or Settings to edit training requirements and expiration overrides.</p>
         </div>
         {isAdmin && !addingOpen && (
           <div className="page-header-actions">
@@ -110,10 +110,14 @@ export default function ClientSettings() {
             <tbody>
               {clients.map((c) => (
                 <tr key={c.client_id}>
-                  <td><Link to={`/clients/${c.client_id}`}>{c.client_name}</Link></td>
+                  {/* Client name goes to the Client Compliance Overview (Dashboard's client
+                      drilldown, 2026-08-19 per Keeley's request) - "Settings" (renamed from
+                      "View Settings") is the only link that goes to the requirements/overrides
+                      page instead. */}
+                  <td><Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
                   <td>{c.employee_count ?? 0}</td>
                   <td><span className={`badge ${c.active ? 'badge-current' : 'badge-notapplicable'}`}>{c.active ? 'Active' : 'Inactive'}</span></td>
-                  <td><Link to={`/clients/${c.client_id}`}>View Settings &rarr;</Link></td>
+                  <td><Link to={`/clients/${c.client_id}`}>Settings &rarr;</Link></td>
                 </tr>
               ))}
               {clients.length === 0 && (
