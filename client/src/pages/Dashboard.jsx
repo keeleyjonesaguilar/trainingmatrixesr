@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
-const STAT_ORDER = ['Current', 'Expired', 'Missing', 'Not Applicable', 'No Expiration', 'Pending Review'];
-
 function healthPillClass(health) {
   if (health === 'Compliant') return 'pill-compliant';
   if (health === 'Review Pending') return 'pill-review-pending';
@@ -21,16 +19,15 @@ function timeAgo(dateStr) {
 
 export default function Dashboard() {
   const isAdmin = useIsAdmin();
-  const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    api.listClients().then(setClients).catch((e) => setError(e.message));
-  }, []);
-
+  // NOTE (2026-08-18): this used to also fetch the full client list here just to show a
+  // "clients.length" caption, but the dashboard already gets data.totalClients from the
+  // /api/dashboard response - the extra api.listClients() call was dead weight on every
+  // dashboard load and part of why it felt slow. Removed.
   useEffect(() => {
     setError('');
     api.getDashboard(clientId || undefined).then(setData).catch((e) => setError(e.message));
@@ -57,6 +54,9 @@ export default function Dashboard() {
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}
+        {/* Keeley's call, 2026-08-18: dropped the Current/Expired/Missing/Not Applicable/
+            No Expiration/Pending Review summary tiles here for now - she's going to spec out
+            what this client compliance overview should actually show next. */}
         <div className="stat-grid">
           <div className="stat-tile">
             <div className="stat-label">Active Employees</div>
@@ -66,12 +66,6 @@ export default function Dashboard() {
             <div className="stat-label">Training Records</div>
             <div className="value">{data.totalTrainingRecords}</div>
           </div>
-          {STAT_ORDER.map((status) => (
-            <div key={status} className="stat-tile clickable" onClick={() => goToMatrix(status, clientId)}>
-              <div className="stat-label">{status}</div>
-              <div className="value">{data.counts[status] ?? 0}</div>
-            </div>
-          ))}
         </div>
       </div>
     );
@@ -161,12 +155,15 @@ export default function Dashboard() {
                 {(() => {
                   const maxCount = Math.max(1, ...data.mostPopularTrainings.map((m) => m.completed_count));
                   return (
-                    <div className="bar-chart">
+                    <div className="popularity-list">
                       {data.mostPopularTrainings.map((m) => (
-                        <div key={m.training_id} className="bar-chart-col" title={`${m.training_name}: ${m.completed_count} employee${m.completed_count === 1 ? '' : 's'} completed`}>
-                          <div className="bar-chart-bar" style={{ height: `${Math.max((m.completed_count / maxCount) * 100, 2)}%` }} />
-                          <div className="bar-chart-label">{m.completed_count}</div>
-                          <div className="bar-chart-label">{m.training_id.replace('TRN-', '')}</div>
+                        <div key={m.training_id} className="popularity-row">
+                          <div className="popularity-name">{m.training_id} &mdash; {m.training_name}</div>
+                          <div className="popularity-track">
+                            <div className="popularity-fill" style={{ width: `${Math.max((m.completed_count / maxCount) * 100, 12)}%` }}>
+                              <span className="popularity-count">{m.completed_count}</span>
+                            </div>
+                          </div>
                         </div>
                       ))}
                       {data.mostPopularTrainings.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}

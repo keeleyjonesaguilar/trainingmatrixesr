@@ -116,10 +116,15 @@ export default function Matrix() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, search, trainingIds.join(',')]);
 
+  // replace: true (Keeley's report, 2026-08-18: the browser back button "took her to Matrix,
+  // not Dashboard") - without this, every filter tweak here pushed a brand-new history entry,
+  // so hitting the physical back button just stepped backwards through old filter states one
+  // at a time instead of actually leaving the page. Filter changes should update the URL in
+  // place, not pile up in history.
   const updateParam = (key, value) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value); else next.delete(key);
-    setSearchParams(next);
+    setSearchParams(next, { replace: true });
   };
 
   const setTrainingIds = (ids) => updateParam('trainings', ids.join(','));
@@ -163,7 +168,7 @@ export default function Matrix() {
           </select>
         </div>
         <TrainingFilterDropdown masterTrainings={allMasterTrainings} selected={trainingIds} onChange={setTrainingIds} />
-        <button type="button" className="secondary" onClick={() => setSearchParams({})}>Reset Filters</button>
+        <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
       </div>
 
       {trainingIds.length > 0 && (

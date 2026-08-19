@@ -32,7 +32,7 @@ export default function TrainingDetail() {
       </p>
 
       <div className="toolbar">
-        <select value={clientId} onChange={(e) => setSearchParams(e.target.value ? { client_id: e.target.value } : {})}>
+        <select value={clientId} onChange={(e) => setSearchParams(e.target.value ? { client_id: e.target.value } : {}, { replace: true })}>
           <option value="">All Clients</option>
           {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
         </select>

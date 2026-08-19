@@ -1,6 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+
+// Sortable column headers (Keeley's request, 2026-08-18): click a header to sort by it,
+// click again to reverse. Kept as plain component state rather than URL search params, since
+// there's no need for sort order to be bookmarkable/back-button-able the way filters are.
+const SORT_ACCESSORS = {
+  full_name: (r) => (r.full_name || '').toLowerCase(),
+  client_name: (r) => (r.client_name || '').toLowerCase(),
+  training_name: (r) => (r.training_name || '').toLowerCase(),
+  completion_date: (r) => r.completion_date || '',
+};
 
 // Reports (rebuilt 2026-08-18 per Keeley's request): one unified view of trainings employees
 // have actually completed - no report-type tabs, no Current/Missing/etc. summary tiles. If a
@@ -42,6 +52,8 @@ export default function Reports() {
   const [masterTrainings, setMasterTrainings] = useState([]);
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
+  const [sortField, setSortField] = useState('completion_date');
+  const [sortDir, setSortDir] = useState('desc');
 
   const clientId = searchParams.get('client_id') || '';
   const employeeId = searchParams.get('employee_id') || '';
@@ -59,15 +71,42 @@ export default function Reports() {
       .catch((e) => setError(e.message));
   }, [clientId, employeeId, trainingId]);
 
+  // replace: true - filter changes shouldn't pile up separate browser-back-button stops,
+  // same fix applied to Matrix.jsx after Keeley reported the back button misbehaving there.
   const updateParam = (key, value) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value); else next.delete(key);
     // A client change invalidates an employee filter from a different client.
     if (key === 'client_id') next.delete('employee_id');
-    setSearchParams(next);
+    setSearchParams(next, { replace: true });
   };
 
   const employeeOptions = clientId ? employees.filter((e) => e.client_id === clientId) : employees;
+
+  const toggleSort = (field) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const sortIndicator = (field) => (sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
+
+  const sortedRows = useMemo(() => {
+    if (!rows) return rows;
+    const accessor = SORT_ACCESSORS[sortField];
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const av = accessor(a);
+      const bv = accessor(b);
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return copy;
+  }, [rows, sortField, sortDir]);
 
   return (
     <div>
@@ -76,9 +115,9 @@ export default function Reports() {
           <h1>Reports</h1>
           <p className="page-subtitle">Every training an employee has actually completed, across all clients. Filter down as needed and export to CSV.</p>
         </div>
-        {rows && rows.length > 0 && (
+        {sortedRows && sortedRows.length > 0 && (
           <div className="page-header-actions">
-            <button className="secondary" onClick={() => downloadCsv('completed-trainings.csv', rows)}>Export CSV</button>
+            <button className="secondary" onClick={() => downloadCsv('completed-trainings.csv', sortedRows)}>Export CSV</button>
           </div>
         )}
       </div>
@@ -106,7 +145,7 @@ export default function Reports() {
             {masterTrainings.map((mt) => <option key={mt.training_id} value={mt.training_id}>{mt.training_id} - {mt.training_name}</option>)}
           </select>
         </div>
-        <button type="button" className="secondary" onClick={() => setSearchParams({})}>Reset Filters</button>
+        <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
       </div>
 
       <div className="card">
@@ -114,17 +153,17 @@ export default function Reports() {
           <table>
             <thead>
               <tr>
-                <th>Employee</th>
-                <th>Client</th>
-                <th>Training</th>
+                <th className="sortable" onClick={() => toggleSort('full_name')}>Employee{sortIndicator('full_name')}</th>
+                <th className="sortable" onClick={() => toggleSort('client_name')}>Client{sortIndicator('client_name')}</th>
+                <th className="sortable" onClick={() => toggleSort('training_name')}>Training{sortIndicator('training_name')}</th>
                 <th>Status</th>
-                <th>Completed</th>
+                <th className="sortable" onClick={() => toggleSort('completion_date')}>Completed{sortIndicator('completion_date')}</th>
                 <th>Expires</th>
                 <th>Certificate</th>
               </tr>
             </thead>
             <tbody>
-              {rows && rows.map((r) => (
+              {sortedRows && sortedRows.map((r) => (
                 <tr key={r.record_id}>
                   <td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td>
                   <td>{r.client_name}</td>

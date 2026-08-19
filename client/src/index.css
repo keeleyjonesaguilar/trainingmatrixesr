@@ -272,6 +272,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
 th { background: #fafbfc; font-weight: 600; color: var(--color-text-muted); position: sticky; top: 0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.02em; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--color-text); }
 tr:hover td { background: #fafbfc; }
 
 .table-scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--color-border); border-radius: 8px; }
@@ -344,6 +346,24 @@ tr:hover td { background: #fafbfc; }
 .bar-chart-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
 .bar-chart-bar { width: 100%; background: var(--color-primary); border-radius: 4px 4px 0 0; min-height: 2px; }
 .bar-chart-label { font-size: 10px; color: var(--color-text-muted); text-align: center; }
+
+/* ---------- Dashboard "Most Popular Trainings" horizontal bars ---------- */
+.popularity-list { display: flex; flex-direction: column; gap: 10px; }
+.popularity-row { display: flex; flex-direction: column; gap: 4px; }
+.popularity-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popularity-track { background: var(--color-bg); border-radius: 6px; height: 22px; overflow: hidden; }
+.popularity-fill {
+  background: var(--color-primary);
+  height: 100%;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 8px;
+  min-width: 28px;
+  box-sizing: border-box;
+}
+.popularity-count { color: #fff; font-size: 12px; font-weight: 700; }
 
 .evidence-link { font-size: 13px; }
 
