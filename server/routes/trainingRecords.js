@@ -80,14 +80,21 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 });
 
-// Duplicate resolution (Rule 15 / spec sections 18, 33): nothing is ever deleted - this just
-// marks which record in a duplicate group is the active/current one. The rest stay visible in
-// history but stop competing for "latest" in the matrix/dashboard/employee detail.
+// Duplicate resolution (Rule 15 / spec sections 18, 33): nothing is ever deleted - merges the
+// group into the chosen record (blank fields backfilled from the others, same as the employee/
+// client/trainer merges), the rest stay visible in history but stop competing for "latest".
 router.put('/:id/resolve-duplicate', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
-  const updated = repo.resolveDuplicateGroup(req.params.id);
+  const updated = repo.mergeRecordDuplicateGroup(req.params.id);
   res.json(updated);
+});
+
+// Dismiss a flagged duplicate group without merging (Keeley's request) - for two records that
+// really are separate completions of the same training on different dates, not a mistake.
+router.put('/employee/:employeeId/training/:trainingId/ignore-duplicate', requireAdmin, (req, res) => {
+  repo.ignoreRecordDuplicateGroup(req.params.employeeId, req.params.trainingId);
+  res.json({ ok: true });
 });
 
 // Soft-delete toggle: is_inactive = true hides a record from Matrix/Dashboard/Reports and the

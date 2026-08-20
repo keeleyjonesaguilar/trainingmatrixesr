@@ -83,6 +83,8 @@ export const api = {
   saveTrainingRecord: (data) => request('/training-records', { method: 'POST', body: JSON.stringify(data) }),
   deleteTrainingRecord: (id) => request(`/training-records/${id}`, { method: 'DELETE' }),
   resolveDuplicateRecord: (recordId) => request(`/training-records/${recordId}/resolve-duplicate`, { method: 'PUT' }),
+  ignoreDuplicateRecordGroup: (employeeId, trainingId) =>
+    request(`/training-records/employee/${employeeId}/training/${trainingId}/ignore-duplicate`, { method: 'PUT' }),
   getRecordHistory: (employeeId, trainingId) => request(`/training-records/employee/${employeeId}/training/${trainingId}`),
   setRecordInactive: (recordId, isInactive) =>
     request(`/training-records/${recordId}/inactive`, { method: 'PUT', body: JSON.stringify({ is_inactive: isInactive }) }),

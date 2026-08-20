@@ -13,6 +13,16 @@ export default function Sessions() {
   const clientIdFilter = searchParams.get('client_id') || '';
   const [sessions, setSessions] = useState([]);
   const [trainings, setTrainings] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [trainers, setTrainers] = useState([]);
+  // 'select' shows a dropdown of existing clients/trainers; 'new' swaps in a plain text field
+  // for a name that isn't in the system yet (Keeley's request) - the session-creation API
+  // already resolves/creates a client or trainer by name on its own, so typing a new one here
+  // needs no separate create step.
+  const [clientMode, setClientMode] = useState('select');
+  const [trainerMode, setTrainerMode] = useState('select');
+  const [selectedTrainerId, setSelectedTrainerId] = useState('');
+  const [outlineTouched, setOutlineTouched] = useState(false);
   const [filters, setFilters] = useState({ client_name: '', status: '' });
   // Auto-opens the create form when linked here from the Dashboard's "Create New Training
   // Session" button (?new=1).
@@ -23,8 +33,7 @@ export default function Sessions() {
   const [form, setForm] = useState({
     client_name: '',
     master_training_id: '',
-    trainer_first_name: '',
-    trainer_last_name: '',
+    trainer_name: '',
     trainer_phone: '',
     session_date: new Date().toISOString().slice(0, 10),
     location: '',
@@ -43,6 +52,8 @@ export default function Sessions() {
 
   useEffect(() => {
     api.listMasterTrainings(true).then(setTrainings).catch(() => {});
+    api.listClients().then(setClients).catch(() => {});
+    api.listTrainers().then(setTrainers).catch(() => {});
   }, []);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only the primitive filter values matter, not object identity
@@ -52,7 +63,7 @@ export default function Sessions() {
     e.preventDefault();
     setError('');
     if (
-      !form.client_name || !form.master_training_id || !form.trainer_first_name || !form.trainer_last_name ||
+      !form.client_name || !form.master_training_id || !form.trainer_name ||
       !form.trainer_phone || !form.session_date || !form.location || !form.duration || !form.outline
     ) {
       setError('Every field is required to create a session.');
@@ -66,7 +77,7 @@ export default function Sessions() {
         client_name: form.client_name,
         master_training_id: form.master_training_id,
         training_type_label,
-        trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+        trainer_name: form.trainer_name.trim(),
         trainer_phone: form.trainer_phone,
         session_date: form.session_date,
         location: form.location,
@@ -106,18 +117,61 @@ export default function Sessions() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div className="field">
                   <label>Client</label>
-                  <input
-                    value={form.client_name}
-                    onChange={(e) => setForm({ ...form, client_name: e.target.value })}
-                    placeholder="Resolute Builders"
-                    required
-                  />
+                  {clientMode === 'select' ? (
+                    <select
+                      value={form.client_name}
+                      onChange={(e) => {
+                        if (e.target.value === '__new__') {
+                          setClientMode('new');
+                          setForm({ ...form, client_name: '' });
+                        } else {
+                          setForm({ ...form, client_name: e.target.value });
+                        }
+                      }}
+                      required
+                    >
+                      <option value="">Select a client…</option>
+                      {clients.map((c) => <option key={c.client_id} value={c.client_name}>{c.client_name}</option>)}
+                      <option value="__new__">+ Add New Client</option>
+                    </select>
+                  ) : (
+                    <>
+                      <input
+                        value={form.client_name}
+                        onChange={(e) => setForm({ ...form, client_name: e.target.value })}
+                        placeholder="Resolute Builders"
+                        required
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => { setClientMode('select'); setForm({ ...form, client_name: '' }); }}
+                      >
+                        Choose an existing client instead
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="field">
                   <label>Training Type</label>
                   <select
                     value={form.master_training_id}
-                    onChange={(e) => setForm({ ...form, master_training_id: e.target.value })}
+                    onChange={(e) => {
+                      const t = trainings.find((x) => x.training_id === e.target.value);
+                      setForm((f) => ({
+                        ...f,
+                        master_training_id: e.target.value,
+                        // Seeds the outline from the catalog's current wording (Keeley's
+                        // request) - only while the admin hasn't typed their own yet, so
+                        // switching training types before touching that field keeps it in
+                        // sync, but never clobbers a manual edit once they've started one.
+                        // This is just a starting value for this one session - it's copied
+                        // onto the session at creation time, so a later catalog outline edit
+                        // never reaches back into sessions already created.
+                        outline: outlineTouched ? f.outline : (t?.outline || ''),
+                      }));
+                    }}
                     required
                   >
                     <option value="">Select a training…</option>
@@ -129,22 +183,45 @@ export default function Sessions() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Trainer First Name</label>
-                  <input
-                    value={form.trainer_first_name}
-                    onChange={(e) => setForm({ ...form, trainer_first_name: e.target.value })}
-                    placeholder="Jamie"
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label>Trainer Last Name</label>
-                  <input
-                    value={form.trainer_last_name}
-                    onChange={(e) => setForm({ ...form, trainer_last_name: e.target.value })}
-                    placeholder="Trainer"
-                    required
-                  />
+                  <label>Trainer</label>
+                  {trainerMode === 'select' ? (
+                    <select
+                      value={selectedTrainerId}
+                      onChange={(e) => {
+                        if (e.target.value === '__new__') {
+                          setTrainerMode('new');
+                          setSelectedTrainerId('');
+                          setForm({ ...form, trainer_name: '', trainer_phone: '' });
+                        } else {
+                          const t = trainers.find((x) => x.employee_id === e.target.value);
+                          setSelectedTrainerId(e.target.value);
+                          setForm({ ...form, trainer_name: t?.full_name || '', trainer_phone: t?.employee_number || '' });
+                        }
+                      }}
+                      required
+                    >
+                      <option value="">Select a trainer…</option>
+                      {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                      <option value="__new__">+ Add New Trainer</option>
+                    </select>
+                  ) : (
+                    <>
+                      <input
+                        value={form.trainer_name}
+                        onChange={(e) => setForm({ ...form, trainer_name: e.target.value })}
+                        placeholder="Jamie Trainer"
+                        required
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => { setTrainerMode('select'); setSelectedTrainerId(''); setForm({ ...form, trainer_name: '', trainer_phone: '' }); }}
+                      >
+                        Choose an existing trainer instead
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="field">
                   <label>Trainer Phone Number</label>
@@ -205,10 +282,13 @@ export default function Sessions() {
                 <textarea
                   rows={3}
                   value={form.outline}
-                  onChange={(e) => setForm({ ...form, outline: e.target.value })}
+                  onChange={(e) => { setOutlineTouched(true); setForm({ ...form, outline: e.target.value }); }}
                   placeholder="What will this session cover?"
                   required
                 />
+                <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                  Auto-filled from the training's catalog outline when you pick a Training Type above - edit freely, it only affects this session.
+                </p>
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button className="btn btn-accent" type="submit" disabled={creating}>

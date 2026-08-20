@@ -310,12 +310,13 @@ function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onC
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
   const [resolving, setResolving] = useState('');
+  const [ignoring, setIgnoring] = useState(false);
 
   useEffect(() => {
     api.getRecordHistory(employeeId, trainingId).then(setHistory).catch((e) => setError(e.message));
   }, [employeeId, trainingId]);
 
-  const resolve = async (recordId) => {
+  const merge = async (recordId) => {
     setResolving(recordId);
     setError('');
     try {
@@ -328,50 +329,72 @@ function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onC
     }
   };
 
+  const ignore = async () => {
+    if (!window.confirm('Ignore this group? Both records stay exactly as they are - use this when they really are separate completions (e.g. different dates), not a mistake.')) return;
+    setIgnoring(true);
+    setError('');
+    try {
+      await api.ignoreDuplicateRecordGroup(employeeId, trainingId);
+      onResolved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIgnoring(false);
+    }
+  };
+
   return (
     <div className="card">
       <div className="toolbar">
-        <h2 style={{ margin: 0 }}>Potential Duplicate &mdash; Choose the Active Record</h2>
+        <h2 style={{ margin: 0 }}>Potential Duplicate</h2>
         <button className="secondary" onClick={onClose}>Close</button>
       </div>
       <p className="page-subtitle">
-        More than one record exists for this employee and training. Nothing has been deleted &mdash; pick which one should drive the live status;
-        the rest stay here for history.
+        More than one record exists for this employee and training. If this is a mistaken double-entry, pick which one to keep - blank
+        fields are filled in from the other(s), nothing is lost. If these are genuinely separate completions (e.g. different dates), ignore
+        the group instead - both stay on file and the most recent one already drives the live status.
       </p>
       {error && <div className="error-banner">{error}</div>}
       {!history && <div className="empty-state">Loading...</div>}
       {history && (
-        <table>
-          <thead>
-            <tr>
-              <th>Original Client Wording</th>
-              <th>Completion Date</th>
-              <th>Source</th>
-              <th>Status</th>
-              {isAdmin && <th></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((r) => (
-              <tr key={r.record_id}>
-                <td>{r.original_client_training_name || '—'}</td>
-                <td>{r.completion_date || '—'}</td>
-                <td>{r.source || '—'}</td>
-                <td>
-                  <span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span>{' '}
-                  {r.is_active_record ? <span className="badge badge-current">Active</span> : null}
-                </td>
-                {isAdmin && (
-                  <td>
-                    <button disabled={!!r.is_active_record || resolving === r.record_id} onClick={() => resolve(r.record_id)}>
-                      {resolving === r.record_id ? 'Saving...' : 'Set as Active'}
-                    </button>
-                  </td>
-                )}
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>Original Client Wording</th>
+                <th>Completion Date</th>
+                <th>Source</th>
+                <th>Status</th>
+                {isAdmin && <th></th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {history.map((r) => (
+                <tr key={r.record_id}>
+                  <td>{r.original_client_training_name || '—'}</td>
+                  <td>{r.completion_date || '—'}</td>
+                  <td>{r.source || '—'}</td>
+                  <td>
+                    <span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span>{' '}
+                    {r.duplicate_status === 'resolved' && r.is_active_record ? <span className="badge badge-current">Active</span> : null}
+                  </td>
+                  {isAdmin && (
+                    <td>
+                      <button disabled={resolving === r.record_id || ignoring} onClick={() => merge(r.record_id)}>
+                        {resolving === r.record_id ? 'Merging...' : 'Merge into This One'}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {isAdmin && (
+            <button type="button" className="secondary" style={{ marginTop: 12 }} disabled={ignoring || !!resolving} onClick={ignore}>
+              {ignoring ? 'Ignoring...' : 'Ignore (these are separate completions)'}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -391,7 +414,7 @@ export default function EmployeeDetail() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
   const [deactivateConfirmText, setDeactivateConfirmText] = useState('');
-  const formRef = useRef(null);
+  const [addingRecord, setAddingRecord] = useState(false);
 
   const [selectedTrainingId, setSelectedTrainingId] = useState('');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
@@ -447,11 +470,14 @@ export default function EmployeeDetail() {
       });
       // Certificate upload is optional - if one was chosen, attach it to the record we just
       // saved. A failure here shouldn't undo the record itself, just surface as a form error
-      // so Keeley knows to attach it from the completed-trainings list instead.
+      // so Keeley knows to attach it from the completed-trainings list instead - and stays open
+      // so that message is actually visible, rather than closing along with everything else.
+      let certUploadFailed = false;
       if (certificateFile) {
         try {
           await api.uploadCertificate(saved.record_id, certificateFile);
         } catch (certErr) {
+          certUploadFailed = true;
           setFormError(`Record saved, but the certificate upload failed: ${certErr.message}`);
         }
       }
@@ -462,6 +488,7 @@ export default function EmployeeDetail() {
       setRecordNotes('');
       setCertificateFile(null);
       load();
+      if (!certUploadFailed) setAddingRecord(false);
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -508,6 +535,7 @@ export default function EmployeeDetail() {
         </div>
         <div className="page-header-actions">
           <button className="secondary" onClick={() => navigate('/matrix')}>Back to Employees</button>
+          {isAdmin && <button onClick={() => setAddingRecord(true)}>+ Add Training</button>}
           {isAdmin && employee.active && (
             <button className="secondary" onClick={() => setConfirmingDeactivate(true)}>Deactivate Employee</button>
           )}
@@ -559,8 +587,6 @@ export default function EmployeeDetail() {
           <button className="secondary" onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}>Cancel</button>
         </div>
       )}
-      {formError && <div className="error-banner">{formError}</div>}
-
       {editingProfile ? (
         <EmployeeProfileEditor employee={employee} onSaved={() => { setEditingProfile(false); load(); }} onCancel={() => setEditingProfile(false)} />
       ) : (
@@ -694,9 +720,10 @@ export default function EmployeeDetail() {
         </div>
 
         <div>
-          {isAdmin && (
-            <div className="card" ref={formRef}>
-              <h2>Record Training Completion</h2>
+          {isAdmin && addingRecord && (
+            <Modal onClose={() => setAddingRecord(false)}>
+              <h2 style={{ marginTop: 0 }}>Record Training Completion</h2>
+              {formError && <div className="error-banner">{formError}</div>}
               <form onSubmit={submitRecord}>
                 <div className="field-row">
                   <label>Select Training Course</label>
@@ -744,9 +771,10 @@ export default function EmployeeDetail() {
                   />
                   {certificateFile && <span className="page-subtitle" style={{ margin: '4px 0 0' }}>{certificateFile.name}</span>}
                 </div>
-                <button type="submit" disabled={saving || !selectedTrainingId || !selectedTrainerId}>{saving ? 'Saving...' : 'Save Record'}</button>
+                <button type="submit" disabled={saving || !selectedTrainingId || !selectedTrainerId}>{saving ? 'Saving...' : 'Save Record'}</button>{' '}
+                <button type="button" className="secondary" onClick={() => setAddingRecord(false)}>Cancel</button>
               </form>
-            </div>
+            </Modal>
           )}
 
           {addingTrainer && (

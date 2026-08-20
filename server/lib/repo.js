@@ -107,20 +107,63 @@ function flagDuplicatesIfAny(employeeId, trainingId) {
   return true;
 }
 
-// Resolve a duplicate group: the chosen record becomes the active/current one (drives status
-// everywhere), the rest stay in the table (never deleted) but stop competing for "latest".
-// All records in the group are marked resolved so they no longer show as needing review.
-function resolveDuplicateGroup(activeRecordId) {
+// Merge a flagged duplicate group into one chosen "winner" record (Keeley's request, same
+// spirit as the employee/client/trainer merges): a blank field on the winner is backfilled from
+// a sibling rather than staying blank, then every sibling is marked superseded - never deleted,
+// just stops competing for "latest" (is_active_record = 0). Was previously a plain "Set as
+// Active" with no backfill, which also had a real bug: every record defaults to
+// is_active_record = 1 until a group is resolved, so with two fresh duplicates both buttons
+// showed as disabled (each one's own is_active_record was already truthy) - nothing was ever
+// clickable. Renamed here to reflect what it now actually does.
+const RECORD_MERGE_FIELDS = ['notes', 'original_client_training_name', 'source_expiration_date', 'trainer_employee_id'];
+function mergeRecordDuplicateGroup(activeRecordId) {
   const active = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(activeRecordId);
   if (!active) return null;
   const siblings = db
-    .prepare('SELECT record_id FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
-    .all(active.employee_id, active.training_id);
+    .prepare('SELECT * FROM employee_training_records WHERE employee_id = ? AND training_id = ? AND record_id != ?')
+    .all(active.employee_id, active.training_id, activeRecordId);
+
+  const updates = {};
+  for (const field of RECORD_MERGE_FIELDS) {
+    if (!active[field]) {
+      const donor = siblings.find((s) => s[field]);
+      if (donor) updates[field] = donor[field];
+    }
+  }
+  if (!active.certificate_path) {
+    const donor = siblings.find((s) => s.certificate_path);
+    if (donor) {
+      updates.certificate_filename = donor.certificate_filename;
+      updates.certificate_path = donor.certificate_path;
+      updates.certificate_uploaded_at = donor.certificate_uploaded_at;
+      updates.certificate_auto_generated = donor.certificate_auto_generated;
+    }
+  }
+  if (Object.keys(updates).length > 0) {
+    const setClause = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
+    db.prepare(`UPDATE employee_training_records SET ${setClause} WHERE record_id = ?`).run(
+      ...Object.values(updates),
+      activeRecordId
+    );
+  }
+
   const setActive = db.prepare(
     `UPDATE employee_training_records SET is_active_record = ?, duplicate_status = 'resolved' WHERE record_id = ?`
   );
-  for (const s of siblings) setActive.run(s.record_id === activeRecordId ? 1 : 0, s.record_id);
+  setActive.run(1, activeRecordId);
+  for (const s of siblings) setActive.run(0, s.record_id);
   return recomputeAndPersistRecord(activeRecordId);
+}
+
+// Dismiss a flagged duplicate group without merging anything (Keeley's request) - for when two
+// records genuinely are separate completions of the same training on different dates (e.g. an
+// annual re-cert), not a mistaken double-entry. Leaves every record's is_active_record exactly
+// as it is - repo.getLatestRecord already picks whichever has the most recent completion_date
+// for live status, so nothing needs to change there, only the "needs review" flag clears.
+function ignoreRecordDuplicateGroup(employeeId, trainingId) {
+  db.prepare(
+    `UPDATE employee_training_records SET duplicate_status = 'resolved' WHERE employee_id = ? AND training_id = ?`
+  ).run(employeeId, trainingId);
 }
 
 // Display-only derived flag - deliberately NOT a 7th status in statusEngine.js (that stays the
@@ -582,7 +625,8 @@ module.exports = {
   recomputeAndPersistRecord,
   recomputeAllForClientTraining,
   flagDuplicatesIfAny,
-  resolveDuplicateGroup,
+  mergeRecordDuplicateGroup,
+  ignoreRecordDuplicateGroup,
   isExpiringSoon,
   saveTrainingRecord,
   attachCertificateFile,
