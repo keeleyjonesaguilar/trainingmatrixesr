@@ -7,6 +7,15 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'esr-logo-full.png');
+
+// ESR brand colors for the certificate (Keeley's requested redesign) - not defined elsewhere
+// in the codebase (the app's own UI uses a neutral gray palette), so picked to match the ESR
+// logo/letterhead itself. Background is left plain white (not a cream wash) because the
+// captured signature images are painted on an opaque white canvas (SignaturePad.jsx) - anything
+// other than white behind them would show as a visible box around the signature.
+const ESR_GREEN = '#1B5E42';
+const ESR_GOLD = '#C9A227';
 
 function b64ToBuffer(dataUrl) {
   if (!dataUrl) return null;
@@ -30,102 +39,114 @@ function formatDate(d) {
   });
 }
 
-// One certificate of completion per attendee.
+// One certificate of completion per attendee - matches the ESR letterhead template (Keeley's
+// redesign request): cream background, green chevron border bleeding off both edges, logo +
+// address block, gold divider, "CERTIFICATE / OF TRAINING" heading, and a single Trainer
+// Name/Trainer Signature sign-off (the trainee's own signature isn't repeated here since their
+// name is already the certificate's subject - it's shown instead in the app's Completed
+// Trainings table for each employee).
 function generateCertificate(session, attendee) {
   const dir = path.join(DATA_DIR, 'certificates', 'sign-in-sessions', session.session_id);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, `${attendee.attendee_id}.pdf`);
 
-  const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 50 });
+  const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 0 });
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  // Border
+  const pageWidth = doc.page.width;
+  const pageHeight = doc.page.height;
+
+  const contentLeft = 90;
+  const contentWidth = pageWidth - contentLeft * 2;
+
+  let logoBottom = 40;
+  if (fs.existsSync(LOGO_PATH)) {
+    try {
+      doc.image(LOGO_PATH, pageWidth / 2 - 110, 30, { width: 220 });
+      logoBottom = 30 + 60;
+    } catch {
+      /* ignore bad logo file */
+    }
+  }
+
   doc
-    .lineWidth(3)
-    .strokeColor('#111111')
-    .rect(24, 24, doc.page.width - 48, doc.page.height - 48)
+    .fillColor('#333333')
+    .font('Helvetica')
+    .fontSize(10)
+    .text('5171 Glenwood Ave, Suite 365 Raleigh NC 27612', contentLeft, logoBottom, { width: contentWidth, align: 'center' })
+    .text('Tel: 919-858-6781', contentLeft, doc.y, { width: contentWidth, align: 'center' })
+    .text('info@evolutionsafetyresources.com', contentLeft, doc.y, { width: contentWidth, align: 'center' });
+
+  const dividerY = doc.y + 12;
+  doc
+    .strokeColor(ESR_GOLD)
+    .lineWidth(1.5)
+    .moveTo(contentLeft + 30, dividerY)
+    .lineTo(pageWidth - contentLeft - 30, dividerY)
     .stroke();
 
   doc
-    .fillColor('#111111')
-    .fontSize(12)
-    .font('Helvetica')
-    .text('ESR SAFETY TRAINING', 0, 60, { align: 'center', characterSpacing: 2 });
-
-  doc
-    .fontSize(30)
+    .fillColor(ESR_GREEN)
     .font('Helvetica-Bold')
-    .text('Certificate of Completion', 0, 90, { align: 'center' });
+    .fontSize(34)
+    .text('CERTIFICATE', contentLeft, dividerY + 20, { width: contentWidth, align: 'center', characterSpacing: 6 });
 
   doc
-    .moveDown(1.5)
-    .fontSize(14)
     .font('Helvetica')
-    .text('This certifies that', { align: 'center' });
+    .fontSize(17)
+    .text('OF TRAINING', contentLeft, doc.y + 2, { width: contentWidth, align: 'center', characterSpacing: 5 });
 
   doc
-    .moveDown(0.5)
-    .fontSize(26)
+    .font('Helvetica')
+    .fontSize(13)
+    .text('This certifies that', contentLeft, doc.y + 22, { width: contentWidth, align: 'center' });
+
+  doc
     .font('Helvetica-Bold')
-    .text(attendee.trainee_name, { align: 'center' });
+    .fontSize(24)
+    .text(attendee.trainee_name, contentLeft, doc.y + 10, { width: contentWidth, align: 'center' });
 
   doc
-    .moveDown(0.5)
-    .fontSize(14)
     .font('Helvetica')
-    .text('has successfully completed the training', { align: 'center' });
+    .fontSize(13)
+    .text('has successfully completed the training', contentLeft, doc.y + 12, { width: contentWidth, align: 'center' });
 
   doc
-    .moveDown(0.5)
-    .fontSize(20)
     .font('Helvetica-Bold')
-    .text(session.training_type_label, { align: 'center' });
+    .fontSize(19)
+    .text(session.training_type_label, contentLeft, doc.y + 8, { width: contentWidth, align: 'center' });
 
   doc
-    .moveDown(0.3)
-    .fontSize(12)
     .font('Helvetica')
-    .text(`for ${session.client_name}`, { align: 'center' });
+    .fontSize(13)
+    .text(`Completed on ${formatDate(session.session_date)}`, contentLeft, doc.y + 18, { width: contentWidth, align: 'center' });
+
+  // Trainer sign-off - two columns: typed name on the left, the trainer's own captured
+  // signature image on the right, matching the template's "Trainer Name" / "Trainer Signature".
+  const sigLineY = pageHeight - 90;
+  const colWidth = 220;
+  const leftX = contentLeft + 20;
+  const rightX = pageWidth - contentLeft - 20 - colWidth;
 
   doc
-    .moveDown(0.3)
-    .fontSize(12)
-    .text(`Completed on ${formatDate(session.session_date)}`, { align: 'center' });
-
-  // Signature block
-  const sigY = doc.page.height - 170;
-  const leftX = 120;
-  const rightX = doc.page.width - 120 - 220;
-
-  const traineeSig = b64ToBuffer(attendee.signature);
-  if (traineeSig) {
-    try {
-      doc.image(traineeSig, leftX, sigY - 55, { width: 220, height: 60, fit: [220, 60] });
-    } catch {
-      /* ignore bad image data */
-    }
-  }
-  doc.moveTo(leftX, sigY).lineTo(leftX + 220, sigY).stroke();
-  doc.fontSize(11).text(attendee.trainee_name, leftX, sigY + 5, { width: 220, align: 'center' });
-  doc.fontSize(9).fillColor('#555555').text('Trainee Signature', leftX, sigY + 20, { width: 220, align: 'center' });
+    .fillColor(ESR_GREEN)
+    .font('Helvetica')
+    .fontSize(13)
+    .text(session.trainer_signed_name || session.trainer_name, leftX, sigLineY - 20, { width: colWidth, align: 'center' });
+  doc.strokeColor(ESR_GOLD).lineWidth(1.5).moveTo(leftX, sigLineY).lineTo(leftX + colWidth, sigLineY).stroke();
+  doc.fillColor(ESR_GREEN).font('Helvetica').fontSize(11).text('Trainer Name', leftX, sigLineY + 6, { width: colWidth, align: 'center' });
 
   const trainerSig = b64ToBuffer(session.trainer_signature);
   if (trainerSig) {
     try {
-      doc.image(trainerSig, rightX, sigY - 55, { width: 220, height: 60, fit: [220, 60] });
+      doc.image(trainerSig, rightX + (colWidth - 140) / 2, sigLineY - 45, { width: 140, height: 40, fit: [140, 40] });
     } catch {
       /* ignore bad image data */
     }
   }
-  doc.fillColor('#111111').moveTo(rightX, sigY).lineTo(rightX + 220, sigY).stroke();
-  doc
-    .fontSize(11)
-    .text(session.trainer_signed_name || session.trainer_name, rightX, sigY + 5, {
-      width: 220,
-      align: 'center',
-    });
-  doc.fontSize(9).fillColor('#555555').text('Trainer Signature', rightX, sigY + 20, { width: 220, align: 'center' });
+  doc.strokeColor(ESR_GOLD).lineWidth(1.5).moveTo(rightX, sigLineY).lineTo(rightX + colWidth, sigLineY).stroke();
+  doc.fillColor(ESR_GREEN).font('Helvetica').fontSize(11).text('Trainer Signature', rightX, sigLineY + 6, { width: colWidth, align: 'center' });
 
   doc.end();
   return new Promise((resolve, reject) => {

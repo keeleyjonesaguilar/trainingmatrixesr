@@ -1,3 +1,5 @@
+require('dotenv').config({ quiet: true });
+
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -37,6 +39,7 @@ app.use('/api/users', requireAuth, require('./routes/users'));
 app.use('/api/clients', requireAuth, require('./routes/clients'));
 app.use('/api/master-trainings', requireAuth, require('./routes/masterTrainings'));
 app.use('/api/employees', requireAuth, require('./routes/employees'));
+app.use('/api/trainers', requireAuth, require('./routes/trainers'));
 app.use('/api/training-requirements', requireAuth, require('./routes/trainingRequirements'));
 app.use('/api/training-records', requireAuth, require('./routes/trainingRecords'));
 app.use('/api/matrix', requireAuth, require('./routes/matrix'));

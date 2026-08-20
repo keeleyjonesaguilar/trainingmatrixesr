@@ -14,16 +14,23 @@ export default function Sessions() {
   const [sessions, setSessions] = useState([]);
   const [trainings, setTrainings] = useState([]);
   const [filters, setFilters] = useState({ client_name: '', status: '' });
-  const [showForm, setShowForm] = useState(false);
+  // Auto-opens the create form when linked here from the Dashboard's "Create New Training
+  // Session" button (?new=1).
+  const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
     client_name: '',
     master_training_id: '',
-    trainer_name: '',
+    trainer_first_name: '',
+    trainer_last_name: '',
+    trainer_phone: '',
     session_date: new Date().toISOString().slice(0, 10),
+    location: '',
+    duration: '',
     outline: '',
+    language: 'english',
   });
   const [creating, setCreating] = useState(false);
 
@@ -44,28 +51,32 @@ export default function Sessions() {
   const submit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!form.client_name || !form.trainer_name || !form.session_date) {
-      setError('Client, trainer, and date are required.');
+    if (
+      !form.client_name || !form.master_training_id || !form.trainer_first_name || !form.trainer_last_name ||
+      !form.trainer_phone || !form.session_date || !form.location || !form.duration || !form.outline
+    ) {
+      setError('Every field is required to create a session.');
       return;
     }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
-    const training_type_label = training
-      ? `${training.training_id} - ${training.training_name}`
-      : form.master_training_id || 'Custom Training';
-    if (!training && !form.master_training_id) {
-      setError('Please select a training type.');
-      return;
-    }
+    const training_type_label = `${training.training_id} - ${training.training_name}`;
     setCreating(true);
     try {
       const session = await api.createTrainingSession({
         client_name: form.client_name,
-        master_training_id: form.master_training_id || null,
+        master_training_id: form.master_training_id,
         training_type_label,
-        trainer_name: form.trainer_name,
+        trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+        trainer_phone: form.trainer_phone,
         session_date: form.session_date,
+        location: form.location,
+        duration: form.duration,
         outline: form.outline,
+        language: form.language,
       });
+      if (session.translation_warning) {
+        window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
+      }
       navigate(`/sessions/${session.session_id}`);
     } catch (err) {
       setError(err.message);
@@ -99,6 +110,7 @@ export default function Sessions() {
                     value={form.client_name}
                     onChange={(e) => setForm({ ...form, client_name: e.target.value })}
                     placeholder="Resolute Builders"
+                    required
                   />
                 </div>
                 <div className="field">
@@ -106,6 +118,7 @@ export default function Sessions() {
                   <select
                     value={form.master_training_id}
                     onChange={(e) => setForm({ ...form, master_training_id: e.target.value })}
+                    required
                   >
                     <option value="">Select a training…</option>
                     {trainings.map((t) => (
@@ -116,11 +129,30 @@ export default function Sessions() {
                   </select>
                 </div>
                 <div className="field">
-                  <label>Trainer Name</label>
+                  <label>Trainer First Name</label>
                   <input
-                    value={form.trainer_name}
-                    onChange={(e) => setForm({ ...form, trainer_name: e.target.value })}
-                    placeholder="Jamie Trainer"
+                    value={form.trainer_first_name}
+                    onChange={(e) => setForm({ ...form, trainer_first_name: e.target.value })}
+                    placeholder="Jamie"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Trainer Last Name</label>
+                  <input
+                    value={form.trainer_last_name}
+                    onChange={(e) => setForm({ ...form, trainer_last_name: e.target.value })}
+                    placeholder="Trainer"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Trainer Phone Number</label>
+                  <input
+                    value={form.trainer_phone}
+                    onChange={(e) => setForm({ ...form, trainer_phone: e.target.value })}
+                    placeholder="(555) 123-4567"
+                    required
                   />
                 </div>
                 <div className="field">
@@ -129,7 +161,43 @@ export default function Sessions() {
                     type="date"
                     value={form.session_date}
                     onChange={(e) => setForm({ ...form, session_date: e.target.value })}
+                    required
                   />
+                </div>
+                <div className="field">
+                  <label>Location / Address</label>
+                  <input
+                    value={form.location}
+                    onChange={(e) => setForm({ ...form, location: e.target.value })}
+                    placeholder="123 Main St, Suite 4"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Duration</label>
+                  <input
+                    value={form.duration}
+                    onChange={(e) => setForm({ ...form, duration: e.target.value })}
+                    placeholder="e.g. 4 hours, Half day"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Sign-In Language</label>
+                  <select
+                    value={form.language}
+                    onChange={(e) => setForm({ ...form, language: e.target.value })}
+                    required
+                  >
+                    <option value="english">English</option>
+                    <option value="spanish">Spanish</option>
+                    <option value="both">Both (English/Spanish)</option>
+                  </select>
+                  {form.language !== 'english' && (
+                    <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                      The training name and outline you type below are auto-translated to Spanish when you save.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="field">
@@ -139,6 +207,7 @@ export default function Sessions() {
                   value={form.outline}
                   onChange={(e) => setForm({ ...form, outline: e.target.value })}
                   placeholder="What will this session cover?"
+                  required
                 />
               </div>
               <div style={{ display: 'flex', gap: 10 }}>

@@ -216,6 +216,32 @@ button.secondary {
   border-color: var(--color-border);
 }
 button.secondary:hover { background: var(--color-bg); }
+/* Destructive actions (e.g. Delete Client) - the main app's button system had no danger
+   variant before this; reuses the same red already used for .error-banner/expired badges. */
+button.danger { background: var(--status-expired-text); border-color: var(--status-expired-text); color: #fff; }
+button.danger:hover { opacity: 0.9; }
+
+/* Simple modal popup (Import page's "+ Add Trainer" while recording a completion, Keeley's
+   request 2026-08-20: don't navigate away from the page to add a trainer). No framework -
+   just a fixed backdrop behind a centered card, matching the app's plain-CSS style elsewhere. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-card {
+  background: var(--color-surface);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Native <input type="file"> ignores button styling entirely, so it's wrapped in a label styled
@@ -261,6 +287,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .stat-tile.clickable { cursor: pointer; }
 .stat-tile.clickable:hover { border-color: var(--color-primary); }
+/* Marks which of a pair of toggle tiles (e.g. Active/Inactive Employees or Trainers) is
+   currently selected - Keeley's request, so the Inactive tile is both clickable and it's
+   obvious which view you're looking at. */
+.stat-tile.selected { border-color: var(--color-primary); border-width: 2px; }
 .stat-tile .stat-label { font-size: 12px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
 .stat-tile .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
 .stat-tile .label { font-size: 13px; color: var(--color-text-muted); margin-top: 2px; }

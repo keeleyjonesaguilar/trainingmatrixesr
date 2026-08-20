@@ -15,20 +15,32 @@ const router = express.Router();
 router.get('/', (req, res) => {
   const { client_id, department, job_title, search, status } = req.query;
   const trainingIdsFilter = [req.query.training_ids || []].flat().filter(Boolean);
+  // Which set the grid itself shows - defaults to active, switches to inactive when the
+  // "Inactive Employees" stat tile is clicked (Keeley's request: make that tile clickable).
+  const activeFilter = req.query.active === '0' ? 0 : 1;
 
-  const clauses = ['e.active = 1'];
+  const sharedClauses = ['c.is_internal = 0'];
   const params = [];
-  if (client_id) { clauses.push('e.client_id = ?'); params.push(client_id); }
-  if (department) { clauses.push('e.department = ?'); params.push(department); }
-  if (job_title) { clauses.push('e.job_title = ?'); params.push(job_title); }
-  if (search) { clauses.push('LOWER(e.full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
-  const where = `WHERE ${clauses.join(' AND ')}`;
+  if (client_id) { sharedClauses.push('e.client_id = ?'); params.push(client_id); }
+  if (department) { sharedClauses.push('e.department = ?'); params.push(department); }
+  if (job_title) { sharedClauses.push('e.job_title = ?'); params.push(job_title); }
+  if (search) { sharedClauses.push('LOWER(e.full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
+  const where = `WHERE e.active = ? AND ${sharedClauses.join(' AND ')}`;
 
   const employees = db
     .prepare(
       `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id ${where} ORDER BY c.client_name, e.full_name`
     )
-    .all(...params);
+    .all(activeFilter, ...params);
+
+  // Both counts are always computed regardless of which set the grid is currently showing, so
+  // the two stat tiles stay accurate no matter which one is currently selected.
+  const activeCount = activeFilter === 1 ? employees.length : db
+    .prepare(`SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND ${sharedClauses.join(' AND ')}`)
+    .get(...params).n;
+  const inactiveCount = activeFilter === 0 ? employees.length : db
+    .prepare(`SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 0 AND ${sharedClauses.join(' AND ')}`)
+    .get(...params).n;
 
   const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
 
@@ -93,7 +105,8 @@ router.get('/', (req, res) => {
     masterTrainings,
     employees: filteredRows,
     stats: {
-      audited_employees: employees.length,
+      audited_employees: activeCount,
+      inactive_employees: inactiveCount,
       current_percent: orgApplicable > 0 ? Math.round((orgCurrent / orgApplicable) * 100) : 100,
       expiring_soon_count: orgExpiringSoon,
       expired_or_missing_count: orgExpiredOrMissing,

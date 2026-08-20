@@ -39,6 +39,21 @@ router.get('/employee/:employeeId/training/:trainingId', (req, res) => {
   res.json(repo.listRecordsForEmployee(req.params.employeeId, req.params.trainingId));
 });
 
+// Inactive (soft-deleted) records for an employee - hidden from the main Completed Trainings
+// table and every compliance calculation, but never physically deleted. Feeds the collapsed
+// "Inactive records" section on Employee Detail.
+router.get('/employee/:employeeId/inactive', (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT r.*, m.training_name FROM employee_training_records r
+       JOIN master_trainings m ON m.training_id = r.training_id
+       WHERE r.employee_id = ? AND r.is_inactive = 1
+       ORDER BY r.updated_at DESC`
+    )
+    .all(req.params.employeeId);
+  res.json(rows);
+});
+
 // Manual add/correct of a training record (spec section 9). Preserves whatever original
 // wording/date is supplied rather than overwriting silently - each save is a new row unless
 // record_id is passed to update an existing one, so history isn't lost (spec section 12).
@@ -67,6 +82,26 @@ router.put('/:id/resolve-duplicate', requireAdmin, (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Record not found' });
   const updated = repo.resolveDuplicateGroup(req.params.id);
   res.json(updated);
+});
+
+// Soft-delete toggle: is_inactive = true hides a record from Matrix/Dashboard/Reports and the
+// employee's main Completed Trainings table (moved into a collapsed "Inactive records" section
+// instead), without ever deleting it - distinct from the real, permanent DELETE below.
+router.put('/:id/inactive', requireAdmin, (req, res) => {
+  const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Record not found' });
+  const is_inactive = req.body?.is_inactive ? 1 : 0;
+  db.prepare('UPDATE employee_training_records SET is_inactive = ?, updated_at = ? WHERE record_id = ?').run(
+    is_inactive,
+    new Date().toISOString(),
+    req.params.id
+  );
+  // Reactivating: refresh status/expiration against current rules now that it's live again.
+  // While inactive, there's no reason to recompute a record that's being ignored everywhere.
+  if (!is_inactive) {
+    return res.json(repo.recomputeAndPersistRecord(req.params.id));
+  }
+  res.json(db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id));
 });
 
 router.delete('/:id', requireAdmin, (req, res) => {

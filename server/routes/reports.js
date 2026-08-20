@@ -18,7 +18,7 @@ router.get('/completed-trainings', (req, res) => {
   // and completion_date IS NOT NULL is what "completed" means: a record with no completion date
   // on file (e.g. an unresolved "YES" from an import, still Pending Review) isn't a confirmed
   // completion yet, so it's excluded rather than shown as an ambiguous row.
-  const clauses = ['r.completion_date IS NOT NULL', 'r.is_active_record = 1'];
+  const clauses = ['r.completion_date IS NOT NULL', 'r.is_active_record = 1', 'r.is_inactive = 0', 'c.is_internal = 0'];
   const params = [];
   if (client_id) { clauses.push('r.client_id = ?'); params.push(client_id); }
   if (employee_id) { clauses.push('r.employee_id = ?'); params.push(employee_id); }

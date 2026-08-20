@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
@@ -19,8 +19,155 @@ function RecordStatusBadge({ status }) {
   return <span className={`badge ${classes[status] || 'badge-notapplicable'}`}>{labels[status] || status}</span>;
 }
 
+// Admin-only edit of the session's own metadata (client/trainer/date/outline/location/
+// duration) after creation. Client and Training Type are selects here (not free text like the
+// create form) so a typo can't silently spawn a new client mid-edit.
+// trainer_name is stored as one combined field - split naively (first word / everything else)
+// just to seed the two edit inputs; not meant to be a robust name parser.
+function splitTrainerName(name) {
+  const parts = String(name || '').trim().split(/\s+/);
+  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+}
+
+function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDeleted }) {
+  const { first, last } = splitTrainerName(session.trainer_name);
+  const [form, setForm] = useState({
+    client_name: session.client_name,
+    master_training_id: session.master_training_id || '',
+    training_type_label: session.training_type_label,
+    trainer_first_name: first,
+    trainer_last_name: last,
+    trainer_phone: session.trainer_phone || '',
+    session_date: session.session_date,
+    location: session.location || '',
+    duration: session.duration || '',
+    outline: session.outline || '',
+    language: session.language || 'english',
+  });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.updateTrainingSession(session.session_id, {
+        ...form,
+        trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+      });
+      if (updated.translation_warning) {
+        window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
+      }
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteSession = async () => {
+    if (!window.confirm('Permanently delete this training session? This cannot be undone.')) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await api.deleteTrainingSession(session.session_id);
+      onDeleted();
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h3 style={{ marginTop: 0, fontSize: 14 }}>Edit Session Details</h3>
+      {error && <p className="error-banner">{error}</p>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="field">
+          <label>Client</label>
+          <select value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} required>
+            {clients.map((c) => <option key={c.client_id} value={c.client_name}>{c.client_name}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Training Type</label>
+          <select
+            value={form.master_training_id}
+            onChange={(e) => {
+              const t = trainings.find((x) => x.training_id === e.target.value);
+              setForm({
+                ...form,
+                master_training_id: e.target.value,
+                training_type_label: t ? `${t.training_id} - ${t.training_name}` : form.training_type_label,
+              });
+            }}
+            required
+          >
+            <option value="">Select a training…</option>
+            {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Trainer First Name</label>
+          <input value={form.trainer_first_name} onChange={(e) => setForm({ ...form, trainer_first_name: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Trainer Last Name</label>
+          <input value={form.trainer_last_name} onChange={(e) => setForm({ ...form, trainer_last_name: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Trainer Phone Number</label>
+          <input value={form.trainer_phone} onChange={(e) => setForm({ ...form, trainer_phone: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Date</label>
+          <input type="date" value={form.session_date} onChange={(e) => setForm({ ...form, session_date: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Location / Address</label>
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
+        </div>
+        <div className="field">
+          <label>Duration</label>
+          <input value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="e.g. 4 hours, Half day" required />
+        </div>
+        <div className="field">
+          <label>Sign-In Language</label>
+          <select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} required>
+            <option value="english">English</option>
+            <option value="spanish">Spanish</option>
+            <option value="both">Both (English/Spanish)</option>
+          </select>
+        </div>
+      </div>
+      <div className="field">
+        <label>Outline / Topics Covered</label>
+        <textarea rows={3} value={form.outline} onChange={(e) => setForm({ ...form, outline: e.target.value })} required />
+      </div>
+      <button className="btn btn-accent" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save Changes'}</button>{' '}
+      <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+      <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10 }}>
+        Already-generated roster/certificate PDFs won't be regenerated, and already-processed attendee records
+        won't retroactively update — use each attendee's Retry button for that.
+      </p>
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
+        <strong style={{ fontSize: 13 }}>Delete this session</strong>
+        <p className="page-subtitle" style={{ margin: '4px 0 8px' }}>
+          Made this session by accident? This permanently deletes it and its roster/certificates. This cannot be undone.
+        </p>
+        <button className="btn btn-danger" type="button" disabled={deleting} onClick={deleteSession}>
+          {deleting ? 'Deleting…' : 'Delete Session'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const [session, setSession] = useState(null);
   const [error, setError] = useState('');
@@ -28,6 +175,9 @@ export default function SessionDetail() {
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [retryingId, setRetryingId] = useState(null);
+  const [editingSession, setEditingSession] = useState(false);
+  const [clients, setClients] = useState([]);
+  const [trainings, setTrainings] = useState([]);
 
   const load = () => {
     api.getTrainingSession(id).then(setSession).catch((err) => setError(err.message));
@@ -39,6 +189,12 @@ export default function SessionDetail() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.listClients().then(setClients).catch(() => {});
+    api.listMasterTrainings(true).then(setTrainings).catch(() => {});
+  }, [isAdmin]);
 
   const saveEdit = async (attendeeId) => {
     await api.updateSessionAttendee(id, attendeeId, { trainee_name: editName, trainee_phone: editPhone });
@@ -76,9 +232,28 @@ export default function SessionDetail() {
         {session.training_type_label}
       </h1>
       <p className="page-subtitle">
-        {session.client_name} · {session.session_date} · Trainer: {session.trainer_signed_name || session.trainer_name}{' '}
+        {session.client_name} · {session.session_date} · Trainer: {session.trainer_signed_name || session.trainer_name}
+        {session.location ? ` · ${session.location}` : ''}
+        {session.duration ? ` · ${session.duration}` : ''}{' '}
         · <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
+        {session.language && session.language !== 'english' && (
+          <>{' '}· <span className="badge badge-noexpiration">{session.language === 'both' ? 'English/Spanish' : 'Spanish'}</span></>
+        )}
+        {isAdmin && !editingSession && (
+          <>{' '}· <button type="button" className="link-button" onClick={() => setEditingSession(true)}>Edit session details</button></>
+        )}
       </p>
+
+      {editingSession && (
+        <EditSessionForm
+          session={session}
+          clients={clients}
+          trainings={trainings}
+          onSaved={() => { setEditingSession(false); load(); }}
+          onCancel={() => setEditingSession(false)}
+          onDeleted={() => navigate('/sessions')}
+        />
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20 }}>
         <div className="card" style={{ textAlign: 'center' }}>
@@ -158,7 +333,7 @@ export default function SessionDetail() {
                     </>
                   ) : (
                     <>
-                      <td>{a.trainee_name}</td>
+                      <td>{a.employee_id ? <Link to={`/employees/${a.employee_id}`}>{a.trainee_name}</Link> : a.trainee_name}</td>
                       <td>{a.trainee_phone || '—'}</td>
                       <td>{new Date(a.signed_at).toLocaleString()}</td>
                       {session.status === 'closed' && (

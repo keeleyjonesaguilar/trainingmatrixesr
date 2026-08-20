@@ -18,4 +18,13 @@ function formatPhoneNumber(value) {
   return raw;
 }
 
-module.exports = { formatPhoneNumber };
+// Standard US phone numbers only (Keeley's call) - exactly 10 digits, optionally with a
+// leading country code 1. Used wherever a phone number is required, so a partial/garbled
+// entry never silently gets stored as if it were valid.
+function isValidPhoneNumber(value) {
+  if (!value) return false;
+  const digits = String(value).replace(/\D/g, '');
+  return digits.length === 10 || (digits.length === 11 && digits.startsWith('1'));
+}
+
+module.exports = { formatPhoneNumber, isValidPhoneNumber };

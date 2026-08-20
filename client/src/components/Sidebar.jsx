@@ -3,11 +3,11 @@ import esrMark from '../assets/brand/esr-mark.png';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
-  { to: '/matrix', label: 'Training Matrix' },
+  { to: '/clients', label: 'Clients' },
+  { to: '/trainers', label: 'Trainers' },
+  { to: '/matrix', label: 'Employees' },
   { to: '/sessions', label: 'Training Sessions' },
   { to: '/training-types', label: 'Training Types' },
-  { to: '/clients', label: 'Clients' },
-  { to: '/master-trainings', label: 'Master Trainings' },
   { to: '/import', label: 'Import Data' },
   { to: '/reports', label: 'Reports' },
   { to: '/admin/users', label: 'Manage Users' },

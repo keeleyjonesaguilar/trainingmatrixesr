@@ -1,6 +1,7 @@
 // One-time data fixes - each runs exactly once (guarded by an app_settings flag), never on
 // every boot, so they can't silently undo later admin edits or wipe data a second time.
 const db = require('../db');
+const repo = require('./repo');
 const { getSetting, setSetting } = require('./settings');
 
 function runOnce(flagKey, description, fn) {
@@ -25,6 +26,20 @@ function runOneTimeFixes() {
   // accounts are untouched. This runs exactly once and never again, even on later restarts.
   runOnce('fix_wipe_clients_and_employees_v1', 'cleared all existing clients/employees for a fresh start', () => {
     db.prepare('DELETE FROM clients').run();
+  });
+
+  // Trainers feature: existing training_sessions.trainer_name values predate
+  // trainer_employee_id. Backfill a Trainer profile for each distinct name on file so
+  // "Trainings Taught" is populated for historical sessions too, not just new ones.
+  runOnce('fix_backfill_trainer_employees_v1', 'linked existing training_sessions.trainer_name values to Trainer employee records', () => {
+    const rows = db.prepare(`SELECT DISTINCT trainer_name FROM training_sessions WHERE trainer_employee_id IS NULL`).all();
+    for (const { trainer_name } of rows) {
+      const trainerEmployeeId = repo.findOrCreateTrainerEmployee(trainer_name);
+      if (trainerEmployeeId) {
+        db.prepare(`UPDATE training_sessions SET trainer_employee_id = ? WHERE trainer_name = ? AND trainer_employee_id IS NULL`)
+          .run(trainerEmployeeId, trainer_name);
+      }
+    }
   });
 }
 

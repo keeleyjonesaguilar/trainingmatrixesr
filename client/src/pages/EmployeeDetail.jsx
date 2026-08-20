@@ -1,7 +1,49 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
+import Modal from '../components/Modal.jsx';
+
+const ADD_NEW_TRAINER = '__add_new__';
+
+// Quick-add popup for a trainer that isn't in the list yet (Keeley's request: don't leave the
+// page to add one). Only the name is required here - phone/job title can be filled in later
+// from the trainer's own profile, same as the dedicated Trainers page already allows.
+function AddTrainerModal({ onCreated, onClose }) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const trainer = await api.createTrainer({ full_name: name.trim() });
+      onCreated(trainer);
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose}>
+      <form onSubmit={submit}>
+        <h2 style={{ marginTop: 0 }}>Add a New Trainer</h2>
+        {error && <div className="error-banner">{error}</div>}
+        <div className="field-row">
+          <label>Trainer Name</label>
+          <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Adding...' : 'Add Trainer'}</button>{' '}
+        <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+      </form>
+    </Modal>
+  );
+}
 
 function statusBadgeClass(status) {
   switch (status) {
@@ -130,6 +172,134 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
   );
 }
 
+// Inline edit for an already-logged training record (Keeley's request: fix a wrong date etc
+// after the fact) - reuses api.saveTrainingRecord with record_id, which the backend already
+// supports as an update-in-place.
+function RecordEditRow({ record, employee, client, onSaved, onCancel }) {
+  const [completionDate, setCompletionDate] = useState(record.completion_date || '');
+  const [expirationDate, setExpirationDate] = useState(record.expiration_date || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.saveTrainingRecord({
+        record_id: record.record_id,
+        client_id: employee.client_id,
+        employee_id: employee.employee_id,
+        training_id: record.training_id,
+        completion_date: completionDate || null,
+        source_expiration_date: expirationDate || null,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <tr>
+      <td>{record.training_id}</td>
+      <td>{record.training_name}</td>
+      <td>{client?.client_name || '—'}</td>
+      <td><span className={`badge ${statusBadgeClass(record.status)}`}>{record.status}</span></td>
+      <td><input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} /></td>
+      <td><input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} /></td>
+      <td colSpan={3}>
+        <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+        <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+        {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
+      </td>
+    </tr>
+  );
+}
+
+function InactiveRecordsSection({ employeeId, refreshKey, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [records, setRecords] = useState([]);
+  const [busyId, setBusyId] = useState('');
+
+  useEffect(() => {
+    api.getInactiveRecords(employeeId).then(setRecords).catch(() => {});
+  }, [employeeId, refreshKey]);
+
+  const reactivate = async (recordId) => {
+    setBusyId(recordId);
+    try {
+      await api.setRecordInactive(recordId, false);
+      onChanged();
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  if (records.length === 0) return null;
+
+  return (
+    <div className="card">
+      <button type="button" className="link-button" onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide' : 'Show'} Inactive Records ({records.length})
+      </button>
+      {open && (
+        <table style={{ marginTop: 12 }}>
+          <thead><tr><th>Code</th><th>Training</th><th>Completed</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            {records.map((r) => (
+              <tr key={r.record_id}>
+                <td>{r.training_id}</td>
+                <td>{r.training_name}</td>
+                <td>{r.completion_date || '—'}</td>
+                <td>{r.expiration_date || '—'}</td>
+                <td>
+                  <button type="button" className="secondary" disabled={busyId === r.record_id} onClick={() => reactivate(r.record_id)}>
+                    {busyId === r.record_id ? 'Saving...' : 'Reactivate'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// A trainer's own list of sessions they've taught, linking each to its SessionDetail page.
+function TrainingsTaughtSection({ employeeId }) {
+  const [sessions, setSessions] = useState([]);
+
+  useEffect(() => {
+    api.listTrainingSessions({ trainer_employee_id: employeeId }).then(setSessions).catch(() => {});
+  }, [employeeId]);
+
+  return (
+    <div className="card">
+      <h2>Trainings Taught ({sessions.length})</h2>
+      {sessions.length === 0 ? (
+        <div className="empty-state">No sessions taught yet.</div>
+      ) : (
+        <table>
+          <thead><tr><th>Date</th><th>Client</th><th>Training</th><th>Attendees</th></tr></thead>
+          <tbody>
+            {sessions.map((s) => (
+              <tr key={s.session_id}>
+                <td><Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link></td>
+                <td>{s.client_name}</td>
+                <td>{s.training_type_label}</td>
+                <td>{s.attendee_count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onClose }) {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState('');
@@ -209,15 +379,26 @@ export default function EmployeeDetail() {
   const [error, setError] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
   const [reviewingTrainingId, setReviewingTrainingId] = useState('');
+  const [editingRecordId, setEditingRecordId] = useState('');
+  const [inactiveRefreshKey, setInactiveRefreshKey] = useState(0);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
+  const [deactivateConfirmText, setDeactivateConfirmText] = useState('');
   const formRef = useRef(null);
 
   const [selectedTrainingId, setSelectedTrainingId] = useState('');
+  const [selectedTrainerId, setSelectedTrainerId] = useState('');
+  const [trainers, setTrainers] = useState([]);
+  const [addingTrainer, setAddingTrainer] = useState(false);
   const [completionDate, setCompletionDate] = useState('');
   const [expirationDate, setExpirationDate] = useState('');
   const [recordNotes, setRecordNotes] = useState('');
   const [certificateFile, setCertificateFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+
+  useEffect(() => { api.listTrainers().then(setTrainers).catch(() => {}); }, []);
 
   const load = () => {
     api.getEmployeeFullDetail(employeeId).then(setDetail).catch((e) => setError(e.message));
@@ -244,7 +425,7 @@ export default function EmployeeDetail() {
 
   const submitRecord = async (e) => {
     e.preventDefault();
-    if (!selectedTrainingId) return;
+    if (!selectedTrainingId || !selectedTrainerId || selectedTrainerId === ADD_NEW_TRAINER) return;
     setSaving(true);
     setFormError('');
     try {
@@ -252,6 +433,7 @@ export default function EmployeeDetail() {
         client_id: employee.client_id,
         employee_id: employee.employee_id,
         training_id: selectedTrainingId,
+        trainer_employee_id: selectedTrainerId,
         completion_date: completionDate || null,
         source_expiration_date: expirationDate || null,
         notes: recordNotes || null,
@@ -268,6 +450,7 @@ export default function EmployeeDetail() {
         }
       }
       setSelectedTrainingId('');
+      setSelectedTrainerId('');
       setCompletionDate('');
       setExpirationDate('');
       setRecordNotes('');
@@ -280,6 +463,37 @@ export default function EmployeeDetail() {
     }
   };
 
+  const deleteRecord = async (record) => {
+    if (!window.confirm(`Permanently delete the ${record.training_name} record for ${employee.full_name}? This cannot be undone.`)) return;
+    await api.deleteTrainingRecord(record.record_id);
+    load();
+  };
+
+  const inactivateRecord = async (record) => {
+    await api.setRecordInactive(record.record_id, true);
+    setInactiveRefreshKey((k) => k + 1);
+    load();
+  };
+
+  const deleteEmployee = async () => {
+    await api.deleteEmployee(employee.employee_id);
+    navigate('/matrix');
+  };
+
+  const deactivateEmployee = async () => {
+    await api.updateEmployee(employee.employee_id, { active: false });
+    setConfirmingDeactivate(false);
+    setDeactivateConfirmText('');
+    load();
+  };
+
+  const reactivateEmployee = async () => {
+    await api.updateEmployee(employee.employee_id, { active: true });
+    load();
+  };
+
+  const isTrainer = employee.employee_type === 'trainer';
+
   return (
     <div>
       <div className="page-header">
@@ -287,10 +501,58 @@ export default function EmployeeDetail() {
           <h1>{employee.full_name} {employee.employee_number ? `(${employee.employee_number})` : ''}</h1>
         </div>
         <div className="page-header-actions">
-          <button className="secondary" onClick={() => navigate('/matrix')}>Back to Matrix</button>
-          {isAdmin && <button onClick={() => formRef.current?.scrollIntoView({ behavior: 'smooth' })}>+ Add Training Record</button>}
+          <button className="secondary" onClick={() => navigate('/matrix')}>Back to Employees</button>
+          {isAdmin && employee.active && (
+            <button className="secondary" onClick={() => setConfirmingDeactivate(true)}>Deactivate Employee</button>
+          )}
+          {isAdmin && !employee.active && (
+            <button className="secondary" onClick={reactivateEmployee}>Reactivate Employee</button>
+          )}
+          {isAdmin && !confirmingDelete && <button className="danger" onClick={() => setConfirmingDelete(true)}>Delete Employee</button>}
         </div>
       </div>
+
+      {confirmingDeactivate && (
+        <div className="card">
+          <h2>Deactivate Employee</h2>
+          <p className="page-subtitle">
+            {employee.full_name} will no longer appear as an active employee. Their records aren't touched, and this can be undone any time.
+          </p>
+          <div className="field-row">
+            <label>Type "deactivate" to confirm</label>
+            <input type="text" value={deactivateConfirmText} onChange={(e) => setDeactivateConfirmText(e.target.value)} />
+          </div>
+          <button
+            className="secondary"
+            disabled={deactivateConfirmText.trim().toLowerCase() !== 'deactivate'}
+            onClick={deactivateEmployee}
+          >
+            Confirm Deactivate
+          </button>{' '}
+          <button className="secondary" onClick={() => { setConfirmingDeactivate(false); setDeactivateConfirmText(''); }}>Cancel</button>
+        </div>
+      )}
+
+      {confirmingDelete && (
+        <div className="card">
+          <h2>Delete Employee</h2>
+          <p className="page-subtitle">
+            Permanently deletes {employee.full_name} and all of their training records. This cannot be undone.
+          </p>
+          <div className="field-row">
+            <label>Type "delete" to confirm</label>
+            <input type="text" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} />
+          </div>
+          <button
+            className="danger"
+            disabled={deleteConfirmText.trim().toLowerCase() !== 'delete'}
+            onClick={deleteEmployee}
+          >
+            Permanently Delete
+          </button>{' '}
+          <button className="secondary" onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}>Cancel</button>
+        </div>
+      )}
       {formError && <div className="error-banner">{formError}</div>}
 
       {editingProfile ? (
@@ -335,6 +597,8 @@ export default function EmployeeDetail() {
         </div>
       </div>
 
+      {isTrainer && <TrainingsTaughtSection employeeId={employee.employee_id} />}
+
       {reviewingTrainingId && (
         <DuplicateReviewPanel
           employeeId={employee.employee_id}
@@ -348,45 +612,78 @@ export default function EmployeeDetail() {
       <div className="layout-2col">
         <div>
           <div className="card">
-            <h2>Completed Trainings ({completed.length})</h2>
+            <h2>{isTrainer ? 'Trainings Obtained' : 'Completed Trainings'} ({completed.length})</h2>
             <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
                     <th>Code</th>
-                    <th>Master Training Course</th>
+                    <th>Training Course</th>
+                    <th>Client</th>
                     <th>Status</th>
                     <th>Completed</th>
                     <th>Expires</th>
                     <th>Certificate</th>
+                    <th>Signature</th>
                     <th>Flag</th>
+                    {isAdmin && <th>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {completed.map((t) => (
-                    <tr key={t.training_id}>
-                      <td>{t.training_id}</td>
-                      <td>{t.training_name}</td>
-                      <td><span className={`badge ${statusBadgeClass(t.status)}`}>{t.status}</span></td>
-                      <td>{t.completion_date || '—'}</td>
-                      <td>{t.expiration_date || '—'}</td>
-                      <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={load} /></td>
-                      <td>
-                        {t.duplicate_status === 'flagged' ? (
-                          <button type="button" className="secondary" onClick={() => setReviewingTrainingId(t.training_id)}>
-                            Potential Duplicate
-                          </button>
-                        ) : '—'}
-                      </td>
-                    </tr>
+                    editingRecordId === t.record_id ? (
+                      <RecordEditRow
+                        key={t.training_id}
+                        record={t}
+                        employee={employee}
+                        client={client}
+                        onSaved={() => { setEditingRecordId(''); load(); }}
+                        onCancel={() => setEditingRecordId('')}
+                      />
+                    ) : (
+                      <tr key={t.training_id}>
+                        <td>{t.training_id}</td>
+                        <td>{t.training_name}</td>
+                        <td>{client?.client_name || '—'}</td>
+                        <td><span className={`badge ${statusBadgeClass(t.status)}`}>{t.status}</span></td>
+                        <td>{t.completion_date || '—'}</td>
+                        <td>{t.expiration_date || '—'}</td>
+                        <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={load} /></td>
+                        <td>
+                          {t.signature ? (
+                            <img src={t.signature} alt="Employee signature" style={{ height: 28, maxWidth: 90 }} />
+                          ) : '—'}
+                        </td>
+                        <td>
+                          {t.duplicate_status === 'flagged' ? (
+                            <button type="button" className="secondary" onClick={() => setReviewingTrainingId(t.training_id)}>
+                              Potential Duplicate
+                            </button>
+                          ) : '—'}
+                        </td>
+                        {isAdmin && (
+                          <td>
+                            <button type="button" className="secondary" onClick={() => setEditingRecordId(t.record_id)}>Edit</button>{' '}
+                            <button type="button" className="secondary" onClick={() => inactivateRecord(t)}>Inactivate</button>{' '}
+                            <button type="button" className="secondary" onClick={() => deleteRecord(t)}>Delete</button>
+                          </td>
+                        )}
+                      </tr>
+                    )
                   ))}
                   {completed.length === 0 && (
-                    <tr><td colSpan={7} className="empty-state">No trainings completed yet.</td></tr>
+                    <tr><td colSpan={isAdmin ? 10 : 9} className="empty-state">No trainings completed yet.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
+
+          <InactiveRecordsSection
+            employeeId={employee.employee_id}
+            refreshKey={inactiveRefreshKey}
+            onChanged={() => { setInactiveRefreshKey((k) => k + 1); load(); }}
+          />
         </div>
 
         <div>
@@ -399,6 +696,24 @@ export default function EmployeeDetail() {
                   <select value={selectedTrainingId} onChange={(e) => setSelectedTrainingId(e.target.value)} required>
                     <option value="">Select...</option>
                     {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <label>Trainer</label>
+                  <select
+                    value={selectedTrainerId}
+                    onChange={(e) => {
+                      if (e.target.value === ADD_NEW_TRAINER) {
+                        setAddingTrainer(true);
+                      } else {
+                        setSelectedTrainerId(e.target.value);
+                      }
+                    }}
+                    required
+                  >
+                    <option value="">Select...</option>
+                    {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                    <option value={ADD_NEW_TRAINER}>+ Add New Trainer</option>
                   </select>
                 </div>
                 <div className="field-row">
@@ -422,9 +737,20 @@ export default function EmployeeDetail() {
                   />
                   {certificateFile && <span className="page-subtitle" style={{ margin: '4px 0 0' }}>{certificateFile.name}</span>}
                 </div>
-                <button type="submit" disabled={saving || !selectedTrainingId}>{saving ? 'Saving...' : 'Save Record'}</button>
+                <button type="submit" disabled={saving || !selectedTrainingId || !selectedTrainerId}>{saving ? 'Saving...' : 'Save Record'}</button>
               </form>
             </div>
+          )}
+
+          {addingTrainer && (
+            <AddTrainerModal
+              onCreated={(trainer) => {
+                setTrainers((prev) => [...prev, trainer]);
+                setSelectedTrainerId(trainer.employee_id);
+                setAddingTrainer(false);
+              }}
+              onClose={() => setAddingTrainer(false)}
+            />
           )}
 
           <div className="card">

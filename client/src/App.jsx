@@ -4,10 +4,9 @@ import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Matrix from './pages/Matrix.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
-import TrainingDetail from './pages/TrainingDetail.jsx';
 import ClientSettings from './pages/ClientSettings.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
-import MasterTrainings from './pages/MasterTrainings.jsx';
+import Trainers from './pages/Trainers.jsx';
 import Import from './pages/Import.jsx';
 import Reports from './pages/Reports.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
@@ -69,10 +68,9 @@ export default function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/matrix" element={<Matrix />} />
               <Route path="/employees/:employeeId" element={<EmployeeDetail />} />
-              <Route path="/trainings/:trainingId" element={<TrainingDetail />} />
               <Route path="/clients" element={<ClientSettings />} />
               <Route path="/clients/:clientId" element={<ClientDetail />} />
-              <Route path="/master-trainings" element={<MasterTrainings />} />
+              <Route path="/trainers" element={<Trainers />} />
               <Route path="/sessions" element={<Sessions />} />
               <Route path="/sessions/:id" element={<SessionDetail />} />
               <Route path="/training-types" element={<TrainingTypes />} />

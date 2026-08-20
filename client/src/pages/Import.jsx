@@ -2,71 +2,59 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
-// Small inline "add a client" form, same pattern as ClientSettings.jsx's AddClientForm, so an
-// admin who doesn't yet have the client they're importing for can create it right here instead
-// of bouncing to the Clients page and back.
-function NewClientForm({ onCreated, onCancel }) {
-  const [name, setName] = useState('');
-  const [notes, setNotes] = useState('');
+// One raw "Client" value from the sheet that didn't exactly match an existing client - pick
+// an existing one, or create a new client from the raw name as typed. Every row that used
+// this exact raw name resolves together, since it's almost always the same client typed once
+// and pasted down a column.
+function ClientResolveRow({ entry, clients, onResolved }) {
+  const [choice, setChoice] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!name.trim()) return;
+  const resolve = async () => {
+    if (!choice) return;
     setSaving(true);
     setError('');
     try {
-      const client = await api.createClient({ client_name: name.trim(), notes: notes.trim() || null });
-      onCreated(client);
-    } catch (e2) {
-      setError(e2.message);
+      if (choice === '__create_new__') {
+        await api.resolveImportClient(entry.batchId, { client_name_raw: entry.client_name_raw, create_new: true });
+      } else {
+        await api.resolveImportClient(entry.batchId, { client_name_raw: entry.client_name_raw, client_id: choice });
+      }
+      onResolved();
+    } catch (e) {
+      setError(e.message);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <form className="card add-client-card" onSubmit={submit} style={{ marginBottom: 16 }}>
-      <h2>New Client</h2>
-      {error && <div className="error-banner">{error}</div>}
-      <div className="field-row">
-        <label>Client Name</label>
-        <input
-          type="text"
-          autoFocus
-          placeholder="e.g. Resolute Builders"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-      </div>
-      <div className="field-row">
-        <label>Notes (optional)</label>
-        <input
-          type="text"
-          placeholder="Internal notes about this client"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-      </div>
-      <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Adding...' : 'Add Client'}</button>{' '}
-      <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
-    </form>
+    <tr>
+      <td>"{entry.client_name_raw}"</td>
+      <td>{entry.row_count}</td>
+      <td>
+        <select value={choice} onChange={(e) => setChoice(e.target.value)}>
+          <option value="">Select...</option>
+          <option value="__create_new__">+ Create new client "{entry.client_name_raw}"</option>
+          {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+        </select>{' '}
+        <button className="secondary" disabled={!choice || saving} onClick={resolve}>{saving ? 'Saving...' : 'Resolve'}</button>
+        {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
+      </td>
+    </tr>
   );
 }
 
 export default function Import() {
   const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
-  const [clientId, setClientId] = useState('');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [masterTrainings, setMasterTrainings] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-  const [addingClient, setAddingClient] = useState(false);
 
   useEffect(() => {
     api.listClients().then(setClients).catch((e) => setError(e.message));
@@ -74,12 +62,12 @@ export default function Import() {
   }, []);
 
   const upload = async () => {
-    if (!clientId || !file) return;
+    if (!file) return;
     setBusy(true);
     setError('');
     setResult(null);
     try {
-      const p = await api.previewImport(clientId, file);
+      const p = await api.previewImport(file);
       setPreview(p);
     } catch (e) {
       setError(e.message);
@@ -90,7 +78,15 @@ export default function Import() {
 
   const refreshBatch = async () => {
     const b = await api.getImportBatch(preview.batch_id);
-    setPreview({ ...preview, column_map: b.column_map, needs_review_count: b.column_map.filter((c) => c.resolution_status === 'needs_review').length });
+    setPreview({
+      ...preview,
+      column_map: b.column_map,
+      needs_review_count: b.column_map.filter((c) => c.resolution_status === 'needs_review').length,
+      clients_needing_review: b.clients_needing_review,
+    });
+    // A client just got resolved - refresh the client list too so it shows up as a pick option
+    // for any other still-unresolved raw name, and in the "+ Create new" case going forward.
+    api.listClients().then(setClients).catch(() => {});
   };
 
   const resolveColumn = async (mapId, trainingId, ignore) => {
@@ -119,11 +115,15 @@ export default function Import() {
     setFile(null);
   };
 
+  const clientsNeedingReview = preview?.clients_needing_review || [];
+  const canCommit = preview && preview.needs_review_count === 0 && clientsNeedingReview.length === 0;
+
   return (
     <div>
       <h1>Import Client Training Data</h1>
       <p className="page-subtitle">
-        Upload a client spreadsheet (CSV). Columns are auto-matched to the Master Training Catalog where possible;
+        Upload a spreadsheet (CSV). Each row names its own client, so one file can cover several clients at once -
+        columns are auto-matched to the Master Training Catalog and clients are auto-matched by name where possible;
         anything ambiguous is queued below for you to resolve manually before anything is saved. Nothing is ever guessed silently.
       </p>
       {error && <div className="error-banner">{error}</div>}
@@ -136,51 +136,59 @@ export default function Import() {
         </div>
       )}
 
-      {isAdmin && !preview && addingClient && (
-        <NewClientForm
-          onCreated={(client) => {
-            setClients((prev) => [...prev, client]);
-            setClientId(client.client_id);
-            setAddingClient(false);
-          }}
-          onCancel={() => setAddingClient(false)}
-        />
-      )}
-
-      {isAdmin && !preview && !addingClient && (
+      {isAdmin && !preview && (
         <div className="card">
           <div className="toolbar">
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              <option value="">Select client...</option>
-              {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
-            </select>
-            <button type="button" className="secondary" onClick={() => setAddingClient(true)}>+ New Client</button>
             <label className="file-picker-button">
               Choose File
               <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files[0])} />
             </label>
             {file && <span className="file-picker-name">{file.name}</span>}
-            <button disabled={!clientId || !file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
+            <button disabled={!file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
           </div>
-          {clients.length === 0 && (
-            <p className="page-subtitle">No clients yet — use "+ New Client" above to add one.</p>
-          )}
-          <p className="page-subtitle">CSV should have one row per employee. Include columns like Employee Phone Number, Full Name, Job Title, Department, plus one column per training.</p>
+          <p className="page-subtitle">
+            CSV should have one row per employee, with columns "Client", "Employee First Name", "Employee Last Name",
+            "Trainer", then one column per training (put that training's completion date in the cell). {' '}
+            <a href={api.importTemplateUrl}>Download a blank template</a> to start from.
+          </p>
         </div>
       )}
 
       {result && (
         <div className="card">
           <h2>Import Complete</h2>
-          <p>Created {result.employees_created} new employee(s) and {result.records_created} training record(s).</p>
+          <p>
+            Created {result.employees_created} new employee(s) and {result.records_created} training record(s).
+            {result.rows_skipped_no_client > 0 && ` ${result.rows_skipped_no_client} row(s) were skipped for having no client.`}
+          </p>
         </div>
       )}
 
       {preview && (
         <div className="card">
-          <h2>Review: {preview.client.client_name}</h2>
+          <h2>Review Import</h2>
           <p className="page-subtitle">{preview.row_count} rows detected. Identity columns: {Object.entries(preview.identity_columns_detected).map(([k, v]) => `${k}=${v}`).join(', ') || 'none detected'}</p>
 
+          {clientsNeedingReview.length > 0 && (
+            <>
+              <h3 style={{ fontSize: 14 }}>Clients Needing Review ({clientsNeedingReview.length})</h3>
+              <table>
+                <thead><tr><th>Client (as typed in the sheet)</th><th>Rows</th><th>Resolve</th></tr></thead>
+                <tbody>
+                  {clientsNeedingReview.map((entry) => (
+                    <ClientResolveRow
+                      key={entry.client_name_raw}
+                      entry={{ ...entry, batchId: preview.batch_id }}
+                      clients={clients}
+                      onResolved={refreshBatch}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          <h3 style={{ fontSize: 14 }}>Training Columns</h3>
           <table>
             <thead>
               <tr>
@@ -220,8 +228,10 @@ export default function Import() {
           </table>
 
           <div style={{ marginTop: 16 }}>
-            <button disabled={preview.needs_review_count > 0 || busy} onClick={commit}>
-              {busy ? 'Committing...' : `Commit Import${preview.needs_review_count > 0 ? ` (${preview.needs_review_count} column(s) need review)` : ''}`}
+            <button disabled={!canCommit || busy} onClick={commit}>
+              {busy
+                ? 'Committing...'
+                : `Commit Import${!canCommit ? ` (${preview.needs_review_count} column(s), ${clientsNeedingReview.length} client(s) need review)` : ''}`}
             </button>{' '}
             <button className="secondary" onClick={cancel}>Cancel Import</button>
           </div>

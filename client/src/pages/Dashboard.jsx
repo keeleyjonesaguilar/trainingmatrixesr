@@ -4,9 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
 function healthPillClass(health) {
-  if (health === 'Compliant') return 'pill-compliant';
-  if (health === 'Review Pending') return 'pill-review-pending';
-  return 'pill-action-required';
+  return health === 'Compliant' ? 'pill-compliant' : 'pill-action-required';
 }
 
 function timeAgo(dateStr) {
@@ -30,7 +28,7 @@ function PopularityList({ items, forClientId }) {
       {items.map((m) => (
         <Link
           key={m.training_id}
-          to={`/trainings/${m.training_id}${forClientId ? `?client_id=${forClientId}` : ''}`}
+          to={`/training-types/${m.training_id}${forClientId ? `?client_id=${forClientId}` : ''}`}
           className="popularity-row"
         >
           <div className="popularity-name">{m.training_id} &mdash; {m.training_name}</div>
@@ -42,6 +40,110 @@ function PopularityList({ items, forClientId }) {
         </Link>
       ))}
       {items.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No trainings completed yet.</p>}
+    </div>
+  );
+}
+
+const UPCOMING_PER_PAGE = 5;
+const UPCOMING_MAX = 20;
+
+// Upcoming Trainings Scheduled (Keeley's request): open sessions dated today or later, soonest
+// first, capped at 20 and paginated 5-per-page with numbered page buttons (not Prev/Next) -
+// naturally caps at 4 pages given the 20-item limit. Past-dated open sessions (never closed
+// out) are excluded so this stays a clean "what's coming up" list, not a backlog of stale ones.
+function UpcomingTrainingsBox({ clientId }) {
+  const [sessions, setSessions] = useState([]);
+  const [page, setPage] = useState(0);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api.listTrainingSessions({ status: 'open', client_id: clientId || undefined }).then((rows) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const upcoming = rows
+        .filter((s) => s.session_date >= today)
+        .sort((a, b) => a.session_date.localeCompare(b.session_date))
+        .slice(0, UPCOMING_MAX);
+      setSessions(upcoming);
+      setPage(0);
+    }).catch(() => {});
+  }, [clientId]);
+
+  const totalPages = Math.max(1, Math.ceil(sessions.length / UPCOMING_PER_PAGE));
+  const pageRows = sessions.slice(page * UPCOMING_PER_PAGE, page * UPCOMING_PER_PAGE + UPCOMING_PER_PAGE);
+
+  return (
+    <div className="card">
+      <h2>Upcoming Trainings Scheduled</h2>
+      <div className="activity-feed">
+        {pageRows.map((s) => (
+          <div key={s.session_id} className="activity-item" style={{ cursor: 'pointer' }} onClick={() => navigate(`/sessions/${s.session_id}`)}>
+            <div>
+              <div className="activity-item-title">{s.training_type_label}</div>
+              <div className="activity-item-desc">{s.client_name} &middot; {s.trainer_name}</div>
+            </div>
+            <div className="activity-item-time">{s.session_date}</div>
+          </div>
+        ))}
+        {sessions.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>Nothing scheduled right now.</p>}
+      </div>
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+          {Array.from({ length: totalPages }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              className={page === i ? '' : 'secondary'}
+              style={{ padding: '4px 10px' }}
+              onClick={() => setPage(i)}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact flags on the Dashboard, one box, two separate notifications (Keeley's request) -
+// the actual review/merge UI lives on the Employees and Clients pages; this is just a
+// heads-up with a link to each.
+function DuplicatesSummaryBox() {
+  const [employeeCount, setEmployeeCount] = useState(0);
+  const [clientCount, setClientCount] = useState(0);
+  const [trainerInfoCount, setTrainerInfoCount] = useState(0);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api.getPossibleDuplicateEmployees().then((clusters) => setEmployeeCount(clusters.length)).catch(() => {});
+    api.getPossibleDuplicateClients().then((clusters) => setClientCount(clusters.length)).catch(() => {});
+    api.listTrainers().then((rows) => {
+      setTrainerInfoCount(rows.filter((t) => !t.employee_number || !t.job_title).length);
+    }).catch(() => {});
+  }, []);
+
+  if (employeeCount === 0 && clientCount === 0 && trainerInfoCount === 0) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      {employeeCount > 0 && (
+        <div style={{ cursor: 'pointer', marginBottom: 10 }} onClick={() => navigate('/matrix')}>
+          <strong>{employeeCount} possible duplicate employee{employeeCount === 1 ? '' : 's'} found</strong>
+          <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and merge them on the Employees page.</p>
+        </div>
+      )}
+      {clientCount > 0 && (
+        <div style={{ cursor: 'pointer', marginBottom: trainerInfoCount > 0 ? 10 : 0 }} onClick={() => navigate('/clients')}>
+          <strong>{clientCount} possible duplicate client{clientCount === 1 ? '' : 's'} found</strong>
+          <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and merge them on the Clients page.</p>
+        </div>
+      )}
+      {trainerInfoCount > 0 && (
+        <div style={{ cursor: 'pointer' }} onClick={() => navigate('/trainers')}>
+          <strong>{trainerInfoCount} trainer{trainerInfoCount === 1 ? '' : 's'} missing phone/job info</strong>
+          <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and fill them in on the Trainers page.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -87,7 +189,7 @@ export default function Dashboard() {
                 requirements/overrides page - renamed from "View Settings" for consistency with
                 the same link on the Clients directory. */}
             <button className="secondary" onClick={() => navigate(`/clients/${clientId}`)}>Settings</button>
-            <button onClick={() => goToMatrix(undefined, clientId)}>Open Training Matrix</button>
+            <button onClick={() => goToMatrix(undefined, clientId)}>Open Employees</button>
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}
@@ -105,6 +207,8 @@ export default function Dashboard() {
           </div>
         </div>
 
+        <UpcomingTrainingsBox clientId={clientId} />
+
         <div className="card">
           <h2>Most Popular Trainings</h2>
           <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many of {data.client.client_name}'s employees have completed each one. Click a training to view its page.</p>
@@ -119,11 +223,10 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <h1>Safety Training Dashboard</h1>
-          <p className="page-subtitle">Compliance overview across all clients.</p>
         </div>
         <div className="page-header-actions">
-          <button onClick={() => navigate('/matrix')}>Open Training Matrix</button>
-          {isAdmin && <button className="secondary" onClick={() => navigate('/import')}>Import Client Roster</button>}
+          <button onClick={() => navigate('/sessions?new=1')}>Create New Training Session</button>
+          {isAdmin && <button className="secondary" onClick={() => navigate('/clients?new=1')}>Create a New Client</button>}
         </div>
       </div>
       {error && <div className="error-banner">{error}</div>}
@@ -132,16 +235,18 @@ export default function Dashboard() {
         <>
           <div className="stat-grid">
             <div className="stat-tile clickable" onClick={() => navigate('/clients')}>
-              <div className="stat-label">Client Companies</div>
+              <div className="stat-label">Clients</div>
               <div className="value">{data.totalClients}</div>
               <span className="caption">View Clients</span>
             </div>
             <div className="stat-tile clickable" onClick={() => navigate('/matrix')}>
               <div className="stat-label">Active Employees</div>
               <div className="value">{data.totalActiveEmployees}</div>
-              <span className="caption">Open Training Matrix</span>
+              <span className="caption">View Employees</span>
             </div>
           </div>
+
+          {isAdmin && <DuplicatesSummaryBox />}
 
           <div className="layout-2col">
             <div className="card">
@@ -174,6 +279,8 @@ export default function Dashboard() {
             </div>
 
             <div>
+              <UpcomingTrainingsBox />
+
               <div className="card">
                 <h2>Recently Expired Trainings</h2>
                 <div className="activity-feed">

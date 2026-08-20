@@ -42,7 +42,7 @@ function bulkComputeForEmployees(employees, masterTrainings, { collectGaps = fal
   const recordRows = db
     .prepare(
       `SELECT * FROM employee_training_records
-       WHERE is_active_record = 1 AND employee_id IN (${employeeIds.map(() => '?').join(',')})
+       WHERE is_active_record = 1 AND is_inactive = 0 AND employee_id IN (${employeeIds.map(() => '?').join(',')})
        ORDER BY employee_id, training_id, (completion_date IS NULL), completion_date DESC, rowid DESC`
     )
     .all(...employeeIds);
@@ -117,8 +117,11 @@ function complianceRate(counts) {
   return applicable > 0 ? Math.round((compliant / applicable) * 100) : 100;
 }
 
+// "Review Pending" used to override this (Keeley's request to remove it: there was no
+// dashboard-level action to resolve it from here) - a Pending Review record now just counts
+// against the compliance rate like any other non-compliant status, and is actually resolvable
+// per-record via the Edit control on Employee Detail.
 function healthStatus(counts) {
-  if ((counts['Pending Review'] || 0) > 0) return 'Review Pending';
   return complianceRate(counts) >= 90 ? 'Compliant' : 'Action Required';
 }
 
@@ -131,7 +134,7 @@ router.get('/', (req, res) => {
     const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
     if (!client) return res.status(404).json({ error: 'Client not found' });
     const employees = db.prepare('SELECT * FROM employees WHERE client_id = ? AND active = 1').all(client_id);
-    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ?').get(client_id).n;
+    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0').get(client_id).n;
     const { counts, popularity } = bulkComputeForEmployees(employees, masterTrainings, { collectPopularity: true });
     return res.json({
       scope: 'client',
@@ -146,9 +149,18 @@ router.get('/', (req, res) => {
     });
   }
 
-  const totalClients = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1').get().n;
-  const allEmployees = db.prepare('SELECT * FROM employees WHERE active = 1').all();
-  const totalRecords = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records').get().n;
+  const totalClients = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1 AND is_internal = 0').get().n;
+  const allEmployees = db
+    .prepare(
+      `SELECT e.* FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND c.is_internal = 0`
+    )
+    .all();
+  const totalRecords = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM employee_training_records r JOIN clients c ON c.client_id = r.client_id
+       WHERE c.is_internal = 0 AND r.is_inactive = 0`
+    )
+    .get().n;
 
   // One single pass over every employee x training cell drives org totals, the per-client
   // breakdown, the expired-training gaps list, and training popularity all at once.
@@ -162,10 +174,10 @@ router.get('/', (req, res) => {
   // it doesn't flag every training nobody's done as a gap, since most trainings aren't required.
   gaps.sort((a, b) => (a.expiration_date || '9999').localeCompare(b.expiration_date || '9999'));
 
-  const clients = db.prepare('SELECT * FROM clients ORDER BY client_name').all();
+  const clients = db.prepare('SELECT * FROM clients WHERE is_internal = 0 ORDER BY client_name').all();
   const perClient = clients.map((c) => {
     const totalActiveEmployees = allEmployees.reduce((n, e) => n + (e.client_id === c.client_id ? 1 : 0), 0);
-    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ?').get(c.client_id).n;
+    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0').get(c.client_id).n;
     const clientCounts = countsByClient.get(c.client_id) || zeroCounts();
     return {
       client_id: c.client_id,

@@ -43,6 +43,16 @@ export const api = {
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) => request('/clients', { method: 'POST', body: JSON.stringify(data) }),
   updateClient: (id, data) => request(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteClient: (id) => request(`/clients/${id}`, { method: 'DELETE' }),
+  getPossibleDuplicateClients: () => request('/clients/duplicates'),
+  mergeClients: (winnerId, loserIds) => request('/clients/merge', { method: 'POST', body: JSON.stringify({ winner_id: winnerId, loser_ids: loserIds }) }),
+  ignoreDuplicateClients: (memberIds) => request('/clients/duplicates/ignore', { method: 'POST', body: JSON.stringify({ member_ids: memberIds }) }),
+
+  // Trainers (tracked separately from client employees)
+  listTrainers: () => request('/trainers'),
+  getPossibleDuplicateTrainers: () => request('/trainers/duplicates'),
+  createTrainer: (data) => request('/trainers', { method: 'POST', body: JSON.stringify(data) }),
+  ignoreDuplicateTrainers: (memberIds) => request('/trainers/duplicates/ignore', { method: 'POST', body: JSON.stringify({ member_ids: memberIds }) }),
 
   // Master Trainings
   listMasterTrainings: (activeOnly = false) => request(`/master-trainings${activeOnly ? '?activeOnly=true' : ''}`),
@@ -50,6 +60,7 @@ export const api = {
   getTrainingDetail: (id, clientId) => request(`/master-trainings/${id}/detail${clientId ? `?client_id=${clientId}` : ''}`),
   createMasterTraining: (data) => request('/master-trainings', { method: 'POST', body: JSON.stringify(data) }),
   updateMasterTraining: (id, data) => request(`/master-trainings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMasterTraining: (id) => request(`/master-trainings/${id}`, { method: 'DELETE' }),
 
   // Employees
   listEmployees: (params = {}) => request(`/employees?${new URLSearchParams(params).toString()}`),
@@ -57,6 +68,10 @@ export const api = {
   getEmployeeFullDetail: (id) => request(`/employees/${id}/full-detail`),
   createEmployee: (data) => request('/employees', { method: 'POST', body: JSON.stringify(data) }),
   updateEmployee: (id, data) => request(`/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEmployee: (id) => request(`/employees/${id}`, { method: 'DELETE' }),
+  getPossibleDuplicateEmployees: () => request('/employees/duplicates'),
+  mergeEmployees: (winnerId, loserIds) => request('/employees/merge', { method: 'POST', body: JSON.stringify({ winner_id: winnerId, loser_ids: loserIds }) }),
+  ignoreDuplicateEmployees: (memberIds) => request('/employees/duplicates/ignore', { method: 'POST', body: JSON.stringify({ member_ids: memberIds }) }),
   getEmployeeFacets: (clientId) => request(`/employees/facets/list${clientId ? `?client_id=${clientId}` : ''}`),
 
   // Training Requirements (Client Settings)
@@ -69,6 +84,9 @@ export const api = {
   deleteTrainingRecord: (id) => request(`/training-records/${id}`, { method: 'DELETE' }),
   resolveDuplicateRecord: (recordId) => request(`/training-records/${recordId}/resolve-duplicate`, { method: 'PUT' }),
   getRecordHistory: (employeeId, trainingId) => request(`/training-records/employee/${employeeId}/training/${trainingId}`),
+  setRecordInactive: (recordId, isInactive) =>
+    request(`/training-records/${recordId}/inactive`, { method: 'PUT', body: JSON.stringify({ is_inactive: isInactive }) }),
+  getInactiveRecords: (employeeId) => request(`/training-records/employee/${employeeId}/inactive`),
 
   // Certificate of completion (optional, attachable at creation or later)
   uploadCertificate: (recordId, file) => {
@@ -91,10 +109,11 @@ export const api = {
   getDashboard: (clientId) => request(`/dashboard${clientId ? `?client_id=${clientId}` : ''}`),
 
   // Import
-  previewImport: (clientId, file) => {
+  importTemplateUrl: `${BASE}/import/template.csv`,
+  previewImport: (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    return fetch(`${BASE}/import/${clientId}/preview`, { method: 'POST', body: formData, credentials: 'include' }).then(async (res) => {
+    return fetch(`${BASE}/import/preview`, { method: 'POST', body: formData, credentials: 'include' }).then(async (res) => {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `Import preview failed (${res.status})`);
@@ -105,6 +124,8 @@ export const api = {
   getImportBatch: (batchId) => request(`/import/batches/${batchId}`),
   resolveImportColumn: (batchId, mapId, data) =>
     request(`/import/batches/${batchId}/column-map/${mapId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  resolveImportClient: (batchId, data) =>
+    request(`/import/batches/${batchId}/resolve-client`, { method: 'PUT', body: JSON.stringify(data) }),
   commitImport: (batchId) => request(`/import/batches/${batchId}/commit`, { method: 'POST' }),
   cancelImport: (batchId) => request(`/import/batches/${batchId}`, { method: 'DELETE' }),
 
@@ -124,6 +145,8 @@ export const api = {
   },
   getTrainingSession: (id) => request(`/training-sessions/${id}`),
   createTrainingSession: (payload) => request('/training-sessions', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTrainingSession: (id, payload) => request(`/training-sessions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteTrainingSession: (id) => request(`/training-sessions/${id}`, { method: 'DELETE' }),
   updateSessionAttendee: (sessionId, attendeeId, payload) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteSessionAttendee: (sessionId, attendeeId) =>

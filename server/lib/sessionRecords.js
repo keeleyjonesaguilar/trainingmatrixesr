@@ -20,17 +20,25 @@ function findOrCreateEmployee(clientId, attendee) {
     const phoneMatch = normalizedPhone && (e.employee_number || '').replace(/\D/g, '') === normalizedPhone;
     return nameMatch || phoneMatch;
   });
-  if (match) return match.employee_id;
+  if (match) {
+    // Backfill job title only if it's currently missing - a sign-in kiosk shouldn't silently
+    // overwrite a client's authoritative job-title data with a possibly mistyped value.
+    if (attendee.trainee_job_title && !match.job_title) {
+      db.prepare(`UPDATE employees SET job_title = ? WHERE employee_id = ?`).run(attendee.trainee_job_title, match.employee_id);
+    }
+    return match.employee_id;
+  }
 
   const employee_id = uuidv4();
   db.prepare(
-    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, active, notes)
-     VALUES (?, ?, ?, ?, 1, ?)`
+    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, active, notes)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`
   ).run(
     employee_id,
     clientId,
     formatPhoneNumber(attendee.trainee_phone || null),
     attendee.trainee_name.trim(),
+    attendee.trainee_job_title || null,
     'Created automatically from a Training Sign-In session.'
   );
   return employee_id;

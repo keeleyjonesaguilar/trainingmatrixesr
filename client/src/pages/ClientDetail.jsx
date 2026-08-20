@@ -75,6 +75,117 @@ function RequirementRow({ clientId, row, onSaved, isAdmin }) {
   );
 }
 
+// Delete Client (Keeley's request): a type-the-name-to-confirm flow, since this cascades to
+// every employee/training-record/session/import batch under this client and can't be undone -
+// a bare window.confirm() felt too thin for something this destructive. Deactivate sits right
+// next to it (reversible, but still requires typing "deactivate" so it's never an accidental
+// click) - reactivating back is a plain one-click toggle since that direction is always safe.
+function DangerZone({ client, onDeactivated }) {
+  const navigate = useNavigate();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
+  const [deactivateConfirmText, setDeactivateConfirmText] = useState('');
+  const [deactivating, setDeactivating] = useState(false);
+  const [error, setError] = useState('');
+
+  const doDelete = async () => {
+    setDeleting(true);
+    setError('');
+    try {
+      await api.deleteClient(client.client_id);
+      navigate('/clients');
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  const doDeactivate = async () => {
+    setDeactivating(true);
+    setError('');
+    try {
+      await api.updateClient(client.client_id, { active: false });
+      setConfirmingDeactivate(false);
+      setDeactivateConfirmText('');
+      onDeactivated();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
+  const doReactivate = async () => {
+    setDeactivating(true);
+    setError('');
+    try {
+      await api.updateClient(client.client_id, { active: true });
+      onDeactivated();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeactivating(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <h2>Danger Zone</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <p className="page-subtitle">
+        Permanently deletes this client and everything under it — employees, training records, sessions, and
+        import history. This cannot be undone. Deactivating just hides it from the active list — reversible any time.
+      </p>
+
+      {!client.active ? (
+        <button type="button" className="secondary" disabled={deactivating} onClick={doReactivate}>
+          {deactivating ? 'Saving...' : 'Reactivate Client'}
+        </button>
+      ) : !confirmingDeactivate ? (
+        <button type="button" className="secondary" onClick={() => setConfirmingDeactivate(true)}>Deactivate Client</button>
+      ) : (
+        <div style={{ marginBottom: 16 }}>
+          <div className="field-row">
+            <label>Type "deactivate" to confirm</label>
+            <input type="text" value={deactivateConfirmText} onChange={(e) => setDeactivateConfirmText(e.target.value)} />
+          </div>
+          <button
+            type="button"
+            className="secondary"
+            disabled={deactivateConfirmText.trim().toLowerCase() !== 'deactivate' || deactivating}
+            onClick={doDeactivate}
+          >
+            {deactivating ? 'Saving...' : 'Confirm Deactivate'}
+          </button>{' '}
+          <button type="button" className="secondary" onClick={() => { setConfirmingDeactivate(false); setDeactivateConfirmText(''); }}>Cancel</button>
+        </div>
+      )}
+      {' '}
+      {!confirmingDelete ? (
+        <button type="button" className="danger" onClick={() => setConfirmingDelete(true)}>Delete Client</button>
+      ) : (
+        <div style={{ marginTop: 12 }}>
+          <div className="field-row">
+            <label>Type "{client.client_name}" to confirm</label>
+            <input type="text" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} />
+          </div>
+          <button
+            type="button"
+            className="danger"
+            disabled={deleteConfirmText.trim().toLowerCase() !== client.client_name.trim().toLowerCase() || deleting}
+            onClick={doDelete}
+          >
+            {deleting ? 'Deleting...' : 'Permanently Delete'}
+          </button>{' '}
+          <button type="button" className="secondary" onClick={() => { setConfirmingDelete(false); setDeleteConfirmText(''); }}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Per-client requirements/settings page (split out of the old single-page ClientSettings.jsx,
 // 2026-08-18, per Keeley's request) - reached by clicking a client on the Clients directory.
 export default function ClientDetail() {
@@ -129,6 +240,8 @@ export default function ClientDetail() {
           </table>
         </div>
       </div>
+
+      {isAdmin && <DangerZone client={client} onDeactivated={loadClient} />}
     </div>
   );
 }

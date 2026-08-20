@@ -16,7 +16,7 @@ router.get('/', (req, res) => {
 // /:id so the literal path "summary" doesn't get swallowed by the :id param route below.
 router.get('/summary', (req, res) => {
   const active = db.prepare('SELECT * FROM master_trainings WHERE active = 1').all();
-  const clientCoverage = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1').get().n;
+  const clientCoverage = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1 AND is_internal = 0').get().n;
   const aliasesMapped = db.prepare('SELECT COUNT(*) AS n FROM training_aliases').get().n;
   // "High-risk" isn't a stored flag - it's every category besides the two lowest-risk ones
   // (regulatory orientation/paperwork categories), based on this catalog's existing categories.
@@ -53,18 +53,18 @@ router.get('/:id', (req, res) => {
 });
 
 // Future Expansion (spec section 16): allow adding new trainings to the catalog without
-// rebuilding the app. New Training IDs should follow the TRN-### convention but aren't enforced
-// here, since the catalog may need to grow past TRN-052.
+// rebuilding the app. Training IDs are now auto-generated (TRN-### one past the current
+// highest number) rather than typed in by hand - see repo.generateNextTrainingId - so there's
+// no more collision risk and no manual-formatting mistakes.
 router.post('/', requireAdmin, (req, res) => {
-  const { training_id, training_name, category, training_type, default_expiration, active = 1, display_order } = req.body;
-  if (!training_id || !training_name || !category || !training_type) {
-    return res.status(400).json({ error: 'training_id, training_name, category, training_type are required' });
+  const { training_name, category, training_type, default_expiration, active = 1, display_order } = req.body;
+  if (!training_name || !category || !training_type) {
+    return res.status(400).json({ error: 'training_name, category, training_type are required' });
   }
   if (!EXPIRATION_UNITS.includes(default_expiration)) {
     return res.status(400).json({ error: `default_expiration must be one of: ${EXPIRATION_UNITS.join(', ')}` });
   }
-  const existing = db.prepare('SELECT training_id FROM master_trainings WHERE training_id = ?').get(training_id);
-  if (existing) return res.status(409).json({ error: 'training_id already exists' });
+  const training_id = repo.generateNextTrainingId();
 
   const maxOrder = db.prepare('SELECT MAX(display_order) AS m FROM master_trainings').get().m || 0;
   db.prepare(
@@ -111,10 +111,12 @@ router.get('/:id/detail', (req, res) => {
   if (!mt) return res.status(404).json({ error: 'Training not found' });
 
   const { client_id } = req.query;
-  const clauses = ['active = 1'];
+  const clauses = ['e.active = 1', 'c.is_internal = 0'];
   const params = [];
-  if (client_id) { clauses.push('client_id = ?'); params.push(client_id); }
-  const employees = db.prepare(`SELECT * FROM employees WHERE ${clauses.join(' AND ')}`).all(...params);
+  if (client_id) { clauses.push('e.client_id = ?'); params.push(client_id); }
+  const employees = db
+    .prepare(`SELECT e.* FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE ${clauses.join(' AND ')}`)
+    .all(...params);
 
   const buckets = { Current: [], Expired: [], 'No Expiration': [], 'Pending Review': [], Missing: [] };
   for (const emp of employees) {
@@ -143,6 +145,31 @@ router.get('/:id/detail', (req, res) => {
     pendingReview: buckets['Pending Review'],
     missing: buckets.Missing,
   });
+});
+
+// Delete a training from the catalog (Keeley's request - e.g. a test/accidental entry).
+// Blocked if any employee has an actual completion record for it - deleting the catalog row
+// out from under real compliance history would make those records orphaned/invisible rather
+// than actually removing anything, so "Inactive" is the right tool once a training has real
+// history; this stays for entries nobody has ever completed. client_training_requirements
+// cascades automatically (ON DELETE CASCADE); sessions/import history that referenced it fall
+// back to their own frozen label text rather than being deleted themselves.
+router.delete('/:id', requireAdmin, (req, res) => {
+  const existing = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Training not found' });
+
+  const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE training_id = ?').get(req.params.id).n;
+  if (recordCount > 0) {
+    return res.status(400).json({
+      error: `Cannot delete - ${recordCount} employee training record${recordCount === 1 ? '' : 's'} reference this training. Set it to Inactive instead if it's no longer needed.`,
+    });
+  }
+
+  db.prepare('DELETE FROM training_aliases WHERE training_id = ?').run(req.params.id);
+  db.prepare('UPDATE training_sessions SET master_training_id = NULL WHERE master_training_id = ?').run(req.params.id);
+  db.prepare('UPDATE import_column_map SET matched_training_id = NULL WHERE matched_training_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM master_trainings WHERE training_id = ?').run(req.params.id);
+  res.status(204).end();
 });
 
 module.exports = router;

@@ -4,7 +4,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { formatPhoneNumber } = require('../lib/phone');
+const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
 const { processAttendee } = require('../lib/sessionRecords');
 
@@ -33,9 +33,12 @@ router.get('/:token', (req, res) => {
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
+    training_type_label_es: session.training_type_label_es,
     trainer_name: session.trainer_name,
     session_date: session.session_date,
     outline: session.outline,
+    outline_es: session.outline_es,
+    language: session.language,
     status: session.status,
     attendee_count: attendeeCount,
   });
@@ -48,18 +51,27 @@ router.post('/:token/attendees', (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This training session has been closed and can no longer accept sign-ins.' });
   }
-  const { trainee_name, trainee_phone, signature } = req.body || {};
+  const { trainee_name, trainee_phone, trainee_job_title, signature } = req.body || {};
   if (!trainee_name || !trainee_name.trim()) {
     return res.status(400).json({ error: 'Name is required.' });
+  }
+  if (!trainee_phone || !trainee_phone.trim()) {
+    return res.status(400).json({ error: 'Phone number is required.' });
+  }
+  if (!isValidPhoneNumber(trainee_phone)) {
+    return res.status(400).json({ error: 'Please enter a standard 10-digit phone number.' });
+  }
+  if (!trainee_job_title || !trainee_job_title.trim()) {
+    return res.status(400).json({ error: 'Job title is required.' });
   }
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A signature is required.' });
   }
   const attendee_id = uuidv4();
   db.prepare(
-    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, signature)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(attendee_id, session.session_id, trainee_name.trim(), formatPhoneNumber(trainee_phone) || null, signature);
+    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, signature)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(attendee_id, session.session_id, trainee_name.trim(), formatPhoneNumber(trainee_phone), trainee_job_title.trim(), signature);
   res.status(201).json({ ok: true });
 });
 

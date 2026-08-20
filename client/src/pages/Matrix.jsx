@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
+import { useIsAdmin } from '../authContext.jsx';
+import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
+import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
+
+function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
+function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 
 function formatDate(dateStr) {
   if (!dateStr) return '';
@@ -88,17 +94,118 @@ function TrainingFilterDropdown({ masterTrainings, selected, onChange }) {
   );
 }
 
+// Manually add an employee without going through the CSV import flow (Keeley's request) -
+// First/Last name combine into the existing single full_name column (same convention used for
+// the sign-in form's split), Phone Number reuses employee_number. Lands on the new employee's
+// own page afterward, where Record Training Completion already exists.
+function AddEmployeeForm({ clients, onAdded, onCancel }) {
+  const [clientId, setClientId] = useState(clients[0]?.client_id || '');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [possibleMatches, setPossibleMatches] = useState(null);
+
+  const createEmployee = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const employee = await api.createEmployee({
+        client_id: clientId,
+        full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+        employee_number: phone.trim(),
+      });
+      onAdded(employee);
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Checks this client's existing roster for a name/phone match before creating (Keeley's
+  // request, 2026-08-20) - catches an accidental duplicate at the moment it would be created.
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!clientId || !firstName.trim() || !lastName.trim() || !phone.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const roster = await api.listEmployees({ client_id: clientId });
+      const fullName = normalizeName(`${firstName} ${lastName}`);
+      const phoneDigits = normalizePhone(phone);
+      const matches = roster.filter((r) => normalizeName(r.full_name) === fullName || (phoneDigits && normalizePhone(r.employee_number) === phoneDigits));
+      if (matches.length > 0) {
+        setPossibleMatches(matches);
+        setSaving(false);
+        return;
+      }
+    } catch {
+      // If the check itself fails, don't block creation over it - just proceed.
+    }
+    createEmployee();
+  };
+
+  return (
+    <>
+    <form className="card" onSubmit={submit} style={{ marginBottom: 16 }}>
+      <h2>Add a New Employee</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="toolbar">
+        <div className="field-row">
+          <label>Client</label>
+          <select value={clientId} onChange={(e) => setClientId(e.target.value)} required>
+            <option value="">Select client...</option>
+            {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label>First Name</label>
+          <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+        </div>
+        <div className="field-row">
+          <label>Last Name</label>
+          <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
+        </div>
+        <div className="field-row">
+          <label>Phone Number</label>
+          <input type="text" placeholder="(555) 123-4567" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+        </div>
+      </div>
+      <button type="submit" disabled={saving}>{saving ? 'Adding...' : 'Add Employee'}</button>{' '}
+      <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+    </form>
+    {possibleMatches && (
+      <DuplicateWarningModal
+        matches={possibleMatches}
+        labelFor={(r) => `${r.full_name}${r.employee_number ? ` (${r.employee_number})` : ''}`}
+        linkFor={(r) => `/employees/${r.employee_id}`}
+        onUseExisting={onCancel}
+        onCreateAnyway={() => { setPossibleMatches(null); createEmployee(); }}
+        onCancel={() => setPossibleMatches(null)}
+      />
+    )}
+    </>
+  );
+}
+
 export default function Matrix() {
+  const navigate = useNavigate();
+  const isAdmin = useIsAdmin();
+  const [addingOpen, setAddingOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState([]);
   const [allMasterTrainings, setAllMasterTrainings] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const clientId = searchParams.get('client_id') || '';
   const search = searchParams.get('search') || '';
   const trainingIds = (searchParams.get('trainings') || '').split(',').filter(Boolean);
+  const activeParam = searchParams.get('active') === '0' ? '0' : '1';
 
   useEffect(() => {
     api.listClients().then(setClients).catch((e) => setError(e.message));
@@ -111,10 +218,11 @@ export default function Matrix() {
     const params = new URLSearchParams();
     if (clientId) params.set('client_id', clientId);
     if (search) params.set('search', search);
+    params.set('active', activeParam);
     for (const tid of trainingIds) params.append('training_ids', tid);
     api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, search, trainingIds.join(',')]);
+  }, [clientId, search, trainingIds.join(','), activeParam, refreshKey]);
 
   // replace: true (Keeley's report, 2026-08-18: the browser back button "took her to Matrix,
   // not Dashboard") - without this, every filter tweak here pushed a brand-new history entry,
@@ -133,18 +241,43 @@ export default function Matrix() {
     <div>
       <div className="page-header">
         <div>
-          <h1>Master Training Matrix</h1>
+          <h1>Employees</h1>
           <p className="page-subtitle">Every employee against the Master Training Catalog. Click a name or training column for details.</p>
         </div>
+        {isAdmin && !addingOpen && (
+          <div className="page-header-actions">
+            <button onClick={() => setAddingOpen(true)}>+ Add Employee</button>
+          </div>
+        )}
       </div>
       {error && <div className="error-banner">{error}</div>}
 
+      {addingOpen && (
+        <AddEmployeeForm
+          clients={clients}
+          onAdded={(employee) => navigate(`/employees/${employee.employee_id}`)}
+          onCancel={() => setAddingOpen(false)}
+        />
+      )}
+
+      {isAdmin && <DuplicateEmployeesPanel onMerged={() => setRefreshKey((k) => k + 1)} />}
+
       {data && (
         <div className="stat-grid">
-          <div className="stat-tile">
-            <div className="stat-label">Audited Employees</div>
+          <div
+            className={`stat-tile clickable${activeParam === '1' ? ' selected' : ''}`}
+            onClick={() => updateParam('active', '1')}
+          >
+            <div className="stat-label">Active Employees</div>
             <div className="value">{data.stats.audited_employees}</div>
             <span className="caption">Across {clients.length} clients</span>
+          </div>
+          <div
+            className={`stat-tile clickable${activeParam === '0' ? ' selected' : ''}`}
+            onClick={() => updateParam('active', '0')}
+          >
+            <div className="stat-label">Inactive Employees</div>
+            <div className="value">{data.stats.inactive_employees}</div>
           </div>
         </div>
       )}
@@ -193,7 +326,7 @@ export default function Matrix() {
                   <th>Role / Trade</th>
                   {data.masterTrainings.map((mt) => (
                     <th key={mt.training_id} title={mt.training_name}>
-                      <Link to={`/trainings/${mt.training_id}`}>{mt.training_id}</Link>
+                      <Link to={`/training-types/${mt.training_id}`}>{mt.training_id}</Link>
                     </th>
                   ))}
                 </tr>
