@@ -346,13 +346,14 @@ function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onC
   return (
     <div className="card">
       <div className="toolbar">
-        <h2 style={{ margin: 0 }}>Potential Duplicate</h2>
+        <h2 style={{ margin: 0 }}>{history?.some((r) => r.duplicate_status === 'flagged') ? 'Potential Duplicate' : 'Record History'}</h2>
         <button className="secondary" onClick={onClose}>Close</button>
       </div>
       <p className="page-subtitle">
-        More than one record exists for this employee and training. If this is a mistaken double-entry, pick which one to keep - blank
-        fields are filled in from the other(s), nothing is lost. If these are genuinely separate completions (e.g. different dates), ignore
-        the group instead - both stay on file and the most recent one already drives the live status.
+        More than one record exists for this employee and training - nothing here has ever been deleted, all of them are still on file.
+        If this is a mistaken double-entry, Merge into the one to keep - blank fields are filled in from the other(s), nothing is lost. If
+        these are genuinely separate completions (e.g. Day 1/Day 2 of a multi-day course, or different dates), Ignore instead - every
+        record stays exactly as it is and the most recent one already drives the live compliance status shown elsewhere.
       </p>
       {error && <div className="error-banner">{error}</div>}
       {!history && <div className="empty-state">Loading...</div>}
@@ -657,7 +658,7 @@ export default function EmployeeDetail() {
                     <th>Expires</th>
                     <th>Certificate</th>
                     <th>Signature</th>
-                    <th>Flag</th>
+                    <th>History</th>
                     {isAdmin && <th>Actions</th>}
                   </tr>
                 </thead>
@@ -688,9 +689,9 @@ export default function EmployeeDetail() {
                           ) : '—'}
                         </td>
                         <td>
-                          {t.duplicate_status === 'flagged' ? (
+                          {t.duplicate_status !== 'none' ? (
                             <button type="button" className="secondary" onClick={() => setReviewingTrainingId(t.training_id)}>
-                              Potential Duplicate
+                              {t.duplicate_status === 'flagged' ? 'Potential Duplicate' : 'History'}
                             </button>
                           ) : '—'}
                         </td>

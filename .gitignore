@@ -1,7 +1,7 @@
 node_modules/
-data/*.db
-data/*.db-shm
-data/*.db-wal
+# Everything under data/ is runtime-generated (the SQLite db, uploaded/auto-generated
+# certificates, rosters) - none of it belongs in the repo, same reasoning as the db file itself.
+data/
 client/dist/
 .DS_Store
 *.log
