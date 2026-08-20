@@ -6,3 +6,7 @@ client/dist/
 .DS_Store
 *.log
 .env
+# Windows-generated lockfile - was never committed before and caused Render's Linux build to
+# skip installing the platform-specific Rollup binary (npm/cli#4828). Root package-lock.json is
+# fine to keep (server deps have no platform-specific optional binaries).
+client/package-lock.json
