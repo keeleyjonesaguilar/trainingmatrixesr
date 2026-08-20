@@ -115,6 +115,7 @@ router.get('/:id/full-detail', (req, res) => {
       record_id: record ? record.record_id : null,
       duplicate_status: record ? record.duplicate_status : 'none',
       certificate_filename: record ? record.certificate_filename : null,
+      trainer_employee_id: record ? record.trainer_employee_id : null,
       // Only records created by closing out a sign-in session have a captured signature - one
       // manually entered via "Record Training Completion" or brought in by CSV import has none.
       signature: record

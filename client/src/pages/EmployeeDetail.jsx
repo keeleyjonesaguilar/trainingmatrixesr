@@ -175,9 +175,10 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
 // Inline edit for an already-logged training record (Keeley's request: fix a wrong date etc
 // after the fact) - reuses api.saveTrainingRecord with record_id, which the backend already
 // supports as an update-in-place.
-function RecordEditRow({ record, employee, client, onSaved, onCancel }) {
+function RecordEditRow({ record, employee, client, trainers, onSaved, onCancel }) {
   const [completionDate, setCompletionDate] = useState(record.completion_date || '');
   const [expirationDate, setExpirationDate] = useState(record.expiration_date || '');
+  const [trainerId, setTrainerId] = useState(record.trainer_employee_id || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -192,6 +193,7 @@ function RecordEditRow({ record, employee, client, onSaved, onCancel }) {
         training_id: record.training_id,
         completion_date: completionDate || null,
         source_expiration_date: expirationDate || null,
+        trainer_employee_id: trainerId || null,
       });
       onSaved();
     } catch (e) {
@@ -209,7 +211,11 @@ function RecordEditRow({ record, employee, client, onSaved, onCancel }) {
       <td><span className={`badge ${statusBadgeClass(record.status)}`}>{record.status}</span></td>
       <td><input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} /></td>
       <td><input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} /></td>
-      <td colSpan={3}>
+      <td colSpan={4}>
+        <select value={trainerId} onChange={(e) => setTrainerId(e.target.value)} style={{ marginRight: 8 }}>
+          <option value="">No trainer on file</option>
+          {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+        </select>
         <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
         <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
         {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
@@ -637,6 +643,7 @@ export default function EmployeeDetail() {
                         record={t}
                         employee={employee}
                         client={client}
+                        trainers={trainers}
                         onSaved={() => { setEditingRecordId(''); load(); }}
                         onCancel={() => setEditingRecordId('')}
                       />

@@ -4,6 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const db = require('../db');
 const repo = require('../lib/repo');
+const { maybeGenerateCertificate } = require('../lib/recordCertificates');
 const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -60,14 +61,19 @@ router.get('/employee/:employeeId/inactive', (req, res) => {
 // The actual insert/update/duplicate-flagging logic lives in repo.saveTrainingRecord so this
 // exact same path is shared with a Training Sign-In session close-out (see sessionRecords.js) -
 // one source of truth for what it means to record a completed training.
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   const { client_id, employee_id, training_id } = req.body || {};
   if (!client_id || !employee_id || !training_id) {
     return res.status(400).json({ error: 'client_id, employee_id, training_id are required' });
   }
   const isUpdate = !!req.body.record_id;
   try {
-    const updated = repo.saveTrainingRecord(req.body);
+    let updated = repo.saveTrainingRecord(req.body);
+    // Auto-generate a certificate of completion (Keeley's request) - covers both a brand new
+    // manual entry and an edit to an existing one (e.g. a trainer just got added/changed), as
+    // long as there's no real admin-uploaded certificate already on file for it.
+    await maybeGenerateCertificate(updated.record_id);
+    updated = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(updated.record_id);
     res.status(isUpdate ? 200 : 201).json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -136,7 +142,7 @@ router.post('/:id/certificate', requireAdmin, (req, res) => {
     const now = new Date().toISOString();
     db.prepare(
       `UPDATE employee_training_records
-       SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, updated_at = ?
+       SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, certificate_auto_generated = 0, updated_at = ?
        WHERE record_id = ?`
     ).run(req.file.originalname, req.file.path, now, now, req.params.id);
 

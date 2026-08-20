@@ -19,6 +19,7 @@ const repo = require('../lib/repo');
 const { parseSourceValue } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
 const { formatPhoneNumber } = require('../lib/phone');
+const { maybeGenerateCertificate } = require('../lib/recordCertificates');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -283,6 +284,7 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
   let duplicatesFlagged = 0;
   let recordsNeedingReview = 0;
   let rowsSkippedNoClient = 0;
+  const createdRecordIds = [];
 
   const txn = db.transaction(() => {
     for (const row of stagedRows) {
@@ -350,6 +352,7 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
         const persisted = repo.recomputeAndPersistRecord(recordId);
         if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
         recordsCreated += 1;
+        createdRecordIds.push(recordId);
       }
     }
     db.prepare(
@@ -367,6 +370,21 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
     records_needing_review: recordsNeedingReview,
     rows_skipped_no_client: rowsSkippedNoClient,
   });
+
+  // Certificates are generated after responding, one at a time in the background (Keeley's
+  // request to auto-generate them for imported completions too) - an import can create
+  // hundreds of records at once, and building that many PDFs synchronously inside the request
+  // would make large imports painfully slow. A failure on one record is logged and skipped;
+  // it never blocks the rest or the commit itself, which has already succeeded by this point.
+  (async () => {
+    for (const recordId of createdRecordIds) {
+      // eslint-disable-next-line no-await-in-loop
+      await maybeGenerateCertificate(recordId).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`Certificate auto-generation failed for imported record ${recordId}:`, err);
+      });
+    }
+  })();
 });
 
 router.delete('/batches/:batchId', requireAdmin, (req, res) => {

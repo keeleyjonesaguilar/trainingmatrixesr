@@ -139,6 +139,12 @@ function isExpiringSoon(status, expirationDate, days = 30, today) {
 // sessionRecords.js), so both paths go through the exact same duplicate-detection/status
 // computation logic and can never drift out of sync with each other.
 function saveTrainingRecord(opts) {
+  // Distinguishes "field not sent at all" (keep whatever's on the existing record) from
+  // "explicitly sent as null" (clear it) for trainer_employee_id specifically - needed so
+  // picking "No trainer on file" in the Employee Detail edit form can actually remove a trainer,
+  // not just leave the old one in place (the ?? fallback below on every other field only ever
+  // sees explicit values from its callers today, so this distinction hasn't mattered for them).
+  const trainerProvided = 'trainer_employee_id' in opts;
   const {
     record_id, // if present, update in place; otherwise insert
     client_id,
@@ -185,7 +191,7 @@ function saveTrainingRecord(opts) {
       finalRawValue ?? existing.raw_source_value,
       source ?? existing.source,
       notes ?? existing.notes,
-      trainer_employee_id ?? existing.trainer_employee_id,
+      trainerProvided ? trainer_employee_id : existing.trainer_employee_id,
       now,
       id
     );

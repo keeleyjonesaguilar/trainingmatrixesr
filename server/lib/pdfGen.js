@@ -45,10 +45,15 @@ function formatDate(d) {
 // Name/Trainer Signature sign-off (the trainee's own signature isn't repeated here since their
 // name is already the certificate's subject - it's shown instead in the app's Completed
 // Trainings table for each employee).
-function generateCertificate(session, attendee) {
-  const dir = path.join(DATA_DIR, 'certificates', 'sign-in-sessions', session.session_id);
-  fs.mkdirSync(dir, { recursive: true });
-  const filePath = path.join(dir, `${attendee.attendee_id}.pdf`);
+function generateCertificate(session, attendee, outputPath) {
+  let filePath = outputPath;
+  if (!filePath) {
+    const dir = path.join(DATA_DIR, 'certificates', 'sign-in-sessions', session.session_id);
+    fs.mkdirSync(dir, { recursive: true });
+    filePath = path.join(dir, `${attendee.attendee_id}.pdf`);
+  } else {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  }
 
   const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 0 });
   const stream = fs.createWriteStream(filePath);
@@ -133,7 +138,7 @@ function generateCertificate(session, attendee) {
     .fillColor(ESR_GREEN)
     .font('Helvetica')
     .fontSize(13)
-    .text(session.trainer_signed_name || session.trainer_name, leftX, sigLineY - 20, { width: colWidth, align: 'center' });
+    .text(session.trainer_signed_name || session.trainer_name || '', leftX, sigLineY - 20, { width: colWidth, align: 'center' });
   doc.strokeColor(ESR_GOLD).lineWidth(1.5).moveTo(leftX, sigLineY).lineTo(leftX + colWidth, sigLineY).stroke();
   doc.fillColor(ESR_GREEN).font('Helvetica').fontSize(11).text('Trainer Name', leftX, sigLineY + 6, { width: colWidth, align: 'center' });
 
