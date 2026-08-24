@@ -211,7 +211,7 @@ function RecordEditRow({ record, employee, client, trainers, onSaved, onCancel }
       <td><span className={`badge ${statusBadgeClass(record.status)}`}>{record.status}</span></td>
       <td><input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} /></td>
       <td><input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} /></td>
-      <td colSpan={4}>
+      <td colSpan={3}>
         <select value={trainerId} onChange={(e) => setTrainerId(e.target.value)} style={{ marginRight: 8 }}>
           <option value="">No trainer on file</option>
           {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
@@ -306,101 +306,6 @@ function TrainingsTaughtSection({ employeeId }) {
   );
 }
 
-function DuplicateReviewPanel({ employeeId, trainingId, isAdmin, onResolved, onClose }) {
-  const [history, setHistory] = useState(null);
-  const [error, setError] = useState('');
-  const [resolving, setResolving] = useState('');
-  const [ignoring, setIgnoring] = useState(false);
-
-  useEffect(() => {
-    api.getRecordHistory(employeeId, trainingId).then(setHistory).catch((e) => setError(e.message));
-  }, [employeeId, trainingId]);
-
-  const merge = async (recordId) => {
-    setResolving(recordId);
-    setError('');
-    try {
-      await api.resolveDuplicateRecord(recordId);
-      onResolved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setResolving('');
-    }
-  };
-
-  const ignore = async () => {
-    if (!window.confirm('Ignore this group? Both records stay exactly as they are - use this when they really are separate completions (e.g. different dates), not a mistake.')) return;
-    setIgnoring(true);
-    setError('');
-    try {
-      await api.ignoreDuplicateRecordGroup(employeeId, trainingId);
-      onResolved();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setIgnoring(false);
-    }
-  };
-
-  return (
-    <div className="card">
-      <div className="toolbar">
-        <h2 style={{ margin: 0 }}>{history?.some((r) => r.duplicate_status === 'flagged') ? 'Potential Duplicate' : 'Record History'}</h2>
-        <button className="secondary" onClick={onClose}>Close</button>
-      </div>
-      <p className="page-subtitle">
-        More than one record exists for this employee and training - nothing here has ever been deleted, all of them are still on file.
-        If this is a mistaken double-entry, Merge into the one to keep - blank fields are filled in from the other(s), nothing is lost. If
-        these are genuinely separate completions (e.g. Day 1/Day 2 of a multi-day course, or different dates), Ignore instead - every
-        record stays exactly as it is and the most recent one already drives the live compliance status shown elsewhere.
-      </p>
-      {error && <div className="error-banner">{error}</div>}
-      {!history && <div className="empty-state">Loading...</div>}
-      {history && (
-        <>
-          <table>
-            <thead>
-              <tr>
-                <th>Original Client Wording</th>
-                <th>Completion Date</th>
-                <th>Source</th>
-                <th>Status</th>
-                {isAdmin && <th></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((r) => (
-                <tr key={r.record_id}>
-                  <td>{r.original_client_training_name || '—'}</td>
-                  <td>{r.completion_date || '—'}</td>
-                  <td>{r.source || '—'}</td>
-                  <td>
-                    <span className={`badge ${statusBadgeClass(r.status)}`}>{r.status}</span>{' '}
-                    {r.duplicate_status === 'resolved' && r.is_active_record ? <span className="badge badge-current">Active</span> : null}
-                  </td>
-                  {isAdmin && (
-                    <td>
-                      <button disabled={resolving === r.record_id || ignoring} onClick={() => merge(r.record_id)}>
-                        {resolving === r.record_id ? 'Merging...' : 'Merge into This One'}
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {isAdmin && (
-            <button type="button" className="secondary" style={{ marginTop: 12 }} disabled={ignoring || !!resolving} onClick={ignore}>
-              {ignoring ? 'Ignoring...' : 'Ignore (these are separate completions)'}
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 export default function EmployeeDetail() {
   const { employeeId } = useParams();
   const navigate = useNavigate();
@@ -408,7 +313,6 @@ export default function EmployeeDetail() {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState('');
   const [editingProfile, setEditingProfile] = useState(false);
-  const [reviewingTrainingId, setReviewingTrainingId] = useState('');
   const [editingRecordId, setEditingRecordId] = useState('');
   const [inactiveRefreshKey, setInactiveRefreshKey] = useState(0);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -439,17 +343,22 @@ export default function EmployeeDetail() {
   if (error) return <div className="error-banner">{error}</div>;
   if (!detail) return <div className="empty-state">Loading...</div>;
 
-  const { employee, client, trainings } = detail;
+  const { employee, client, trainings, completedRecords } = detail;
 
-  // Keeley's call: only completed trainings are shown - an unfinished training just isn't
-  // relevant here and shouldn't take up table space. Sorted most-recently-completed first.
-  const completed = trainings
-    .filter((t) => t.completion_date)
-    .sort((a, b) => (b.completion_date || '').localeCompare(a.completion_date || ''));
+  // Every completed record shows, every time (Keeley's call) - a training taken more than once
+  // (a re-cert, or Day 1/Day 2 of a multi-day course) is normal history, never collapsed down
+  // to just the most recent one and never flagged as a possible duplicate. Already sorted
+  // most-recently-completed first by the server.
+  const completed = completedRecords;
 
-  const expiringSoonCount = completed.filter((t) => t.expiring_soon).length;
-  const expiredCount = completed.filter((t) => t.status === 'Expired').length;
-  const validCount = completed.filter((t) => t.status === 'Current' || t.status === 'No Expiration').length;
+  // The stat tiles below are compliance-style counts - "how many training TYPES is this person
+  // currently current/expiring/expired on" - so they're still based on the one-cell-per-type
+  // view (`trainings`), not the full per-completion list above; completing the same training
+  // twice shouldn't double-count it here.
+  const typeCells = trainings.filter((t) => t.completion_date);
+  const expiringSoonCount = typeCells.filter((t) => t.expiring_soon).length;
+  const expiredCount = typeCells.filter((t) => t.status === 'Expired').length;
+  const validCount = typeCells.filter((t) => t.status === 'Current' || t.status === 'No Expiration').length;
 
   const history = completed.slice(0, 6);
 
@@ -632,16 +541,6 @@ export default function EmployeeDetail() {
 
       {isTrainer && <TrainingsTaughtSection employeeId={employee.employee_id} />}
 
-      {reviewingTrainingId && (
-        <DuplicateReviewPanel
-          employeeId={employee.employee_id}
-          trainingId={reviewingTrainingId}
-          isAdmin={isAdmin}
-          onClose={() => setReviewingTrainingId('')}
-          onResolved={() => { setReviewingTrainingId(''); load(); }}
-        />
-      )}
-
       <div className="layout-2col">
         <div>
           <div className="card">
@@ -658,7 +557,6 @@ export default function EmployeeDetail() {
                     <th>Expires</th>
                     <th>Certificate</th>
                     <th>Signature</th>
-                    <th>History</th>
                     {isAdmin && <th>Actions</th>}
                   </tr>
                 </thead>
@@ -666,7 +564,7 @@ export default function EmployeeDetail() {
                   {completed.map((t) => (
                     editingRecordId === t.record_id ? (
                       <RecordEditRow
-                        key={t.training_id}
+                        key={t.record_id}
                         record={t}
                         employee={employee}
                         client={client}
@@ -675,7 +573,7 @@ export default function EmployeeDetail() {
                         onCancel={() => setEditingRecordId('')}
                       />
                     ) : (
-                      <tr key={t.training_id}>
+                      <tr key={t.record_id}>
                         <td>{t.training_id}</td>
                         <td>{t.training_name}</td>
                         <td>{client?.client_name || '—'}</td>
@@ -686,13 +584,6 @@ export default function EmployeeDetail() {
                         <td>
                           {t.signature ? (
                             <img src={t.signature} alt="Employee signature" style={{ height: 28, maxWidth: 90 }} />
-                          ) : '—'}
-                        </td>
-                        <td>
-                          {t.duplicate_status !== 'none' ? (
-                            <button type="button" className="secondary" onClick={() => setReviewingTrainingId(t.training_id)}>
-                              {t.duplicate_status === 'flagged' ? 'Potential Duplicate' : 'History'}
-                            </button>
                           ) : '—'}
                         </td>
                         {isAdmin && (
@@ -706,7 +597,7 @@ export default function EmployeeDetail() {
                     )
                   ))}
                   {completed.length === 0 && (
-                    <tr><td colSpan={isAdmin ? 10 : 9} className="empty-state">No trainings completed yet.</td></tr>
+                    <tr><td colSpan={isAdmin ? 9 : 8} className="empty-state">No trainings completed yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -793,7 +684,7 @@ export default function EmployeeDetail() {
             <h2>Recent Completions</h2>
             <div className="activity-feed">
               {history.map((t) => (
-                <div key={t.training_id} className="activity-item">
+                <div key={t.record_id} className="activity-item">
                   <div>
                     <div className="activity-item-title">{t.training_name}</div>
                     <div className="activity-item-desc">Completed {t.completion_date}</div>

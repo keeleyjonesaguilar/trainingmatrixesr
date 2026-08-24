@@ -281,7 +281,6 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
 
   let employeesCreated = 0;
   let recordsCreated = 0;
-  let duplicatesFlagged = 0;
   let recordsNeedingReview = 0;
   let rowsSkippedNoClient = 0;
   const createdRecordIds = [];
@@ -316,13 +315,6 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
         const parsed = parseSourceValue(cellValue);
         const masterTraining = repo.getMasterTraining(col.matched_training_id);
 
-        // Rule 15 / duplicate handling: check before inserting whether this employee already
-        // has a record for this training (from an earlier import or manual entry). Never skip
-        // or overwrite - insert the new one too, then flag the whole group for human review.
-        const hadExistingRecord = !!db
-          .prepare('SELECT 1 FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
-          .get(employee.employee_id, col.matched_training_id);
-
         const recordId = uuidv4();
         const now = new Date().toISOString();
         db.prepare(
@@ -345,10 +337,6 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
           now,
           now
         );
-        if (hadExistingRecord) {
-          const flagged = repo.flagDuplicatesIfAny(employee.employee_id, col.matched_training_id);
-          if (flagged) duplicatesFlagged += 1;
-        }
         const persisted = repo.recomputeAndPersistRecord(recordId);
         if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
         recordsCreated += 1;
@@ -366,7 +354,6 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
     batch_id: req.params.batchId,
     employees_created: employeesCreated,
     records_created: recordsCreated,
-    duplicates_flagged: duplicatesFlagged,
     records_needing_review: recordsNeedingReview,
     rows_skipped_no_client: rowsSkippedNoClient,
   });

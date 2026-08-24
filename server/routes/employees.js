@@ -123,7 +123,41 @@ router.get('/:id/full-detail', (req, res) => {
         : null,
     };
   });
-  res.json({ employee, client, trainings });
+
+  // Every completed record on file, not just the one "latest" one per training type (Keeley's
+  // request: nothing should ever look overridden - a training taken more than once, e.g. Day
+  // 1/Day 2 of a multi-day course or a later re-cert, needs its own row every time). The stat
+  // tiles above and the Matrix/Dashboard still use the single-cell-per-type view above, since
+  // compliance status is inherently "per training type," but this list is the actual history.
+  const completedRecords = db
+    .prepare(
+      `SELECT r.*, mt.training_name AS master_training_name
+       FROM employee_training_records r
+       JOIN master_trainings mt ON mt.training_id = r.training_id
+       WHERE r.employee_id = ? AND r.is_inactive = 0 AND r.completion_date IS NOT NULL
+       ORDER BY r.completion_date DESC, r.rowid DESC`
+    )
+    .all(employee.employee_id)
+    .map((r) => {
+      const requirement = repo.getRequirement(employee.client_id, r.training_id);
+      return {
+        training_id: r.training_id,
+        training_name: requirement?.client_training_name || r.master_training_name,
+        master_training_name: r.master_training_name,
+        original_client_training_name: r.original_client_training_name,
+        completion_date: r.completion_date,
+        expiration_date: r.expiration_date,
+        status: r.status,
+        expiring_soon: repo.isExpiringSoon(r.status, r.expiration_date),
+        notes: r.notes,
+        record_id: r.record_id,
+        certificate_filename: r.certificate_filename,
+        trainer_employee_id: r.trainer_employee_id,
+        signature: db.prepare('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1').get(r.record_id)?.signature || null,
+      };
+    });
+
+  res.json({ employee, client, trainings, completedRecords });
 });
 
 // Trainer profiles are created via the dedicated /api/trainers route, not here - this route

@@ -91,81 +91,6 @@ function recomputeAllForClientTraining(clientId, trainingId, effectiveDate) {
   for (const r of rows) recomputeAndPersistRecord(r.record_id);
 }
 
-// Duplicate handling (Rule 15 / spec sections 18, 33): never delete a duplicate, just flag
-// every record sharing this employee+training pair so an authorized user can review and
-// choose which one is active. Called after a new record is inserted for a pair that already
-// had at least one record on file.
-function flagDuplicatesIfAny(employeeId, trainingId) {
-  const rows = db
-    .prepare(`SELECT record_id FROM employee_training_records WHERE employee_id = ? AND training_id = ? AND is_inactive = 0`)
-    .all(employeeId, trainingId);
-  if (rows.length < 2) return false;
-  const mark = db.prepare(
-    `UPDATE employee_training_records SET duplicate_status = 'flagged' WHERE record_id = ? AND duplicate_status = 'none'`
-  );
-  for (const r of rows) mark.run(r.record_id);
-  return true;
-}
-
-// Merge a flagged duplicate group into one chosen "winner" record (Keeley's request, same
-// spirit as the employee/client/trainer merges): a blank field on the winner is backfilled from
-// a sibling rather than staying blank, then every sibling is marked superseded - never deleted,
-// just stops competing for "latest" (is_active_record = 0). Was previously a plain "Set as
-// Active" with no backfill, which also had a real bug: every record defaults to
-// is_active_record = 1 until a group is resolved, so with two fresh duplicates both buttons
-// showed as disabled (each one's own is_active_record was already truthy) - nothing was ever
-// clickable. Renamed here to reflect what it now actually does.
-const RECORD_MERGE_FIELDS = ['notes', 'original_client_training_name', 'source_expiration_date', 'trainer_employee_id'];
-function mergeRecordDuplicateGroup(activeRecordId) {
-  const active = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(activeRecordId);
-  if (!active) return null;
-  const siblings = db
-    .prepare('SELECT * FROM employee_training_records WHERE employee_id = ? AND training_id = ? AND record_id != ?')
-    .all(active.employee_id, active.training_id, activeRecordId);
-
-  const updates = {};
-  for (const field of RECORD_MERGE_FIELDS) {
-    if (!active[field]) {
-      const donor = siblings.find((s) => s[field]);
-      if (donor) updates[field] = donor[field];
-    }
-  }
-  if (!active.certificate_path) {
-    const donor = siblings.find((s) => s.certificate_path);
-    if (donor) {
-      updates.certificate_filename = donor.certificate_filename;
-      updates.certificate_path = donor.certificate_path;
-      updates.certificate_uploaded_at = donor.certificate_uploaded_at;
-      updates.certificate_auto_generated = donor.certificate_auto_generated;
-    }
-  }
-  if (Object.keys(updates).length > 0) {
-    const setClause = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
-    db.prepare(`UPDATE employee_training_records SET ${setClause} WHERE record_id = ?`).run(
-      ...Object.values(updates),
-      activeRecordId
-    );
-  }
-
-  const setActive = db.prepare(
-    `UPDATE employee_training_records SET is_active_record = ?, duplicate_status = 'resolved' WHERE record_id = ?`
-  );
-  setActive.run(1, activeRecordId);
-  for (const s of siblings) setActive.run(0, s.record_id);
-  return recomputeAndPersistRecord(activeRecordId);
-}
-
-// Dismiss a flagged duplicate group without merging anything (Keeley's request) - for when two
-// records genuinely are separate completions of the same training on different dates (e.g. an
-// annual re-cert), not a mistaken double-entry. Leaves every record's is_active_record exactly
-// as it is - repo.getLatestRecord already picks whichever has the most recent completion_date
-// for live status, so nothing needs to change there, only the "needs review" flag clears.
-function ignoreRecordDuplicateGroup(employeeId, trainingId) {
-  db.prepare(
-    `UPDATE employee_training_records SET duplicate_status = 'resolved' WHERE employee_id = ? AND training_id = ?`
-  ).run(employeeId, trainingId);
-}
-
 // Display-only derived flag - deliberately NOT a 7th status in statusEngine.js (that stays the
 // single source of truth for Current/Expired/Missing/etc). "Expiring soon" is just "Current,
 // but the expiration date is inside the next N days" - computed here wherever it's shown.
@@ -239,12 +164,9 @@ function saveTrainingRecord(opts) {
       id
     );
   } else {
-    // Rule 15 / duplicate handling: check before inserting whether this employee already has
-    // a record for this training, so we know afterward whether to flag the group for review.
-    const hadExistingRecord = !!db
-      .prepare('SELECT 1 FROM employee_training_records WHERE employee_id = ? AND training_id = ?')
-      .get(employee_id, training_id);
-
+    // Multiple completions of the same training are expected and never flagged (Keeley's
+    // call) - a re-cert, or a multi-day course logged as separate Day 1/Day 2 entries, is
+    // normal history, not a mistake to review. Every record just gets its own row, always.
     db.prepare(
       `INSERT INTO employee_training_records
        (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
@@ -267,8 +189,6 @@ function saveTrainingRecord(opts) {
       now,
       now
     );
-
-    if (hadExistingRecord) flagDuplicatesIfAny(employee_id, training_id);
   }
 
   return recomputeAndPersistRecord(id);
@@ -458,13 +378,8 @@ function mergeEmployees(winnerId, loserIds) {
   }
 
   // The merge can leave the winner with two records for the same training (one from each
-  // side) - route that through the existing duplicate-record flagging so it surfaces for
-  // review on Employee Detail instead of silently picking one as "the" record.
-  const trainingIds = db
-    .prepare('SELECT DISTINCT training_id FROM employee_training_records WHERE employee_id = ?')
-    .all(winnerId)
-    .map((r) => r.training_id);
-  for (const trainingId of trainingIds) flagDuplicatesIfAny(winnerId, trainingId);
+  // side) - that's fine, every completion just shows as its own row (Keeley's call, no more
+  // flagging multiple completions of the same training as something needing review).
 }
 
 // Runs after two clients merge (their employees are now all under one client_id) - picks a
@@ -624,9 +539,6 @@ module.exports = {
   computeCell,
   recomputeAndPersistRecord,
   recomputeAllForClientTraining,
-  flagDuplicatesIfAny,
-  mergeRecordDuplicateGroup,
-  ignoreRecordDuplicateGroup,
   isExpiringSoon,
   saveTrainingRecord,
   attachCertificateFile,

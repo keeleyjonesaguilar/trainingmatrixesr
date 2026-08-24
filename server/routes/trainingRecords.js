@@ -36,10 +36,6 @@ const certUpload = multer({
   },
 });
 
-router.get('/employee/:employeeId/training/:trainingId', (req, res) => {
-  res.json(repo.listRecordsForEmployee(req.params.employeeId, req.params.trainingId));
-});
-
 // Inactive (soft-deleted) records for an employee - hidden from the main Completed Trainings
 // table and every compliance calculation, but never physically deleted. Feeds the collapsed
 // "Inactive records" section on Employee Detail.
@@ -57,10 +53,12 @@ router.get('/employee/:employeeId/inactive', (req, res) => {
 
 // Manual add/correct of a training record (spec section 9). Preserves whatever original
 // wording/date is supplied rather than overwriting silently - each save is a new row unless
-// record_id is passed to update an existing one, so history isn't lost (spec section 12).
-// The actual insert/update/duplicate-flagging logic lives in repo.saveTrainingRecord so this
-// exact same path is shared with a Training Sign-In session close-out (see sessionRecords.js) -
-// one source of truth for what it means to record a completed training.
+// record_id is passed to update an existing one, so history isn't lost. Multiple completions of
+// the same training are normal and every one gets its own row - none of them ever override or
+// get flagged against an earlier one. The actual insert/update logic lives in
+// repo.saveTrainingRecord so this exact same path is shared with a Training Sign-In session
+// close-out (see sessionRecords.js) - one source of truth for what it means to record a
+// completed training.
 router.post('/', requireAdmin, async (req, res) => {
   const { client_id, employee_id, training_id } = req.body || {};
   if (!client_id || !employee_id || !training_id) {
@@ -78,23 +76,6 @@ router.post('/', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
-
-// Duplicate resolution (Rule 15 / spec sections 18, 33): nothing is ever deleted - merges the
-// group into the chosen record (blank fields backfilled from the others, same as the employee/
-// client/trainer merges), the rest stay visible in history but stop competing for "latest".
-router.put('/:id/resolve-duplicate', requireAdmin, (req, res) => {
-  const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Record not found' });
-  const updated = repo.mergeRecordDuplicateGroup(req.params.id);
-  res.json(updated);
-});
-
-// Dismiss a flagged duplicate group without merging (Keeley's request) - for two records that
-// really are separate completions of the same training on different dates, not a mistake.
-router.put('/employee/:employeeId/training/:trainingId/ignore-duplicate', requireAdmin, (req, res) => {
-  repo.ignoreRecordDuplicateGroup(req.params.employeeId, req.params.trainingId);
-  res.json({ ok: true });
 });
 
 // Soft-delete toggle: is_inactive = true hides a record from Matrix/Dashboard/Reports and the

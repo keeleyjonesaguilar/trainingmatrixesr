@@ -13,9 +13,10 @@ const router = express.Router();
 router.get('/completed-trainings', (req, res) => {
   const { client_id, employee_id, training_id } = req.query;
 
-  // Only the active record per employee+training drives what's "true" (a superseded duplicate
-  // stays in the table for history - see repo.resolveDuplicateGroup - but isn't reported here),
-  // and completion_date IS NOT NULL is what "completed" means: a record with no completion date
+  // is_active_record = 1 excludes only a record superseded by an old merge from before Keeley
+  // asked to stop treating repeat completions as duplicates - every completion made since then
+  // is its own row and stays active. completion_date IS NOT NULL is what "completed" means: a
+  // record with no completion date
   // on file (e.g. an unresolved "YES" from an import, still Pending Review) isn't a confirmed
   // completion yet, so it's excluded rather than shown as an ambiguous row.
   const clauses = ['r.completion_date IS NOT NULL', 'r.is_active_record = 1', 'r.is_inactive = 0', 'c.is_internal = 0'];
