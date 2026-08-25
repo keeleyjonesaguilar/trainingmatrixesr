@@ -6,6 +6,50 @@ import { useIsAdmin } from '../authContext.jsx';
 const REQUIREMENT_OPTIONS = ['Required', 'Not Required', 'Optional', 'Not Applicable'];
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
 
+// At-a-glance summary (Keeley's request) - links out to the existing Dashboard drilldown/Action
+// Required page rather than re-rendering their numbers here, so this stays the one place those
+// figures actually live and this settings page never shows a stale copy of them.
+function ClientSummaryStrip({ clientId }) {
+  const navigate = useNavigate();
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    api.getDashboard(clientId).then(setSummary).catch(() => {});
+  }, [clientId]);
+
+  if (!summary) return null;
+
+  return (
+    <div className="stat-grid" style={{ marginBottom: 16 }}>
+      <div className="stat-tile clickable" onClick={() => navigate(`/matrix?client_id=${clientId}`)}>
+        <div className="stat-label">Employees</div>
+        <div className="value">{summary.totalActiveEmployees}</div>
+        <span className="caption">View Employees</span>
+      </div>
+      <div className="stat-tile clickable" onClick={() => navigate(`/?client_id=${clientId}`)}>
+        <div className="stat-label">Compliance</div>
+        <div className="value">{summary.complianceRate}%</div>
+        <span className="caption">View Client Overview</span>
+      </div>
+      <div className="stat-tile">
+        <div className="stat-label">Status</div>
+        {summary.healthStatus === 'Action Required' ? (
+          <button
+            type="button"
+            className="badge pill-action-required"
+            style={{ border: 'none', cursor: 'pointer', marginTop: 4 }}
+            onClick={() => navigate(`/action-required?client_id=${clientId}`)}
+          >
+            Action Required →
+          </button>
+        ) : (
+          <span className="badge pill-compliant" style={{ marginTop: 4 }}>Compliant</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RequirementRow({ clientId, row, onSaved, isAdmin }) {
   const [requirementStatus, setRequirementStatus] = useState(row.requirement_status);
   const [expirationUnit, setExpirationUnit] = useState(row.client_expiration_unit || '');
@@ -72,6 +116,52 @@ function RequirementRow({ clientId, row, onSaved, isAdmin }) {
         <button disabled={!dirty || saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
       </td>
     </tr>
+  );
+}
+
+// Client notes (Keeley's request) - the data column already existed (set at creation time) but
+// had no way to view or edit it afterward. Free text for whatever's useful to keep on file:
+// site contacts, address, access instructions, anything that doesn't fit the training settings.
+function ClientNotes({ client, onSaved }) {
+  const isAdmin = useIsAdmin();
+  const [notes, setNotes] = useState(client.notes || '');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.updateClient(client.client_id, { notes: notes.trim() || null });
+      setDirty(false);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2>Notes</h2>
+      {error && <div className="error-banner">{error}</div>}
+      {isAdmin ? (
+        <>
+          <textarea
+            rows={3}
+            style={{ width: '100%' }}
+            placeholder="Site contacts, address, access instructions, anything worth keeping on file for this client..."
+            value={notes}
+            onChange={(e) => { setNotes(e.target.value); setDirty(true); }}
+          />
+          <button style={{ marginTop: 8 }} disabled={!dirty || saving} onClick={save}>{saving ? 'Saving...' : 'Save Notes'}</button>
+        </>
+      ) : (
+        <p className="page-subtitle" style={{ margin: 0 }}>{client.notes || 'No notes on file.'}</p>
+      )}
+    </div>
   );
 }
 
@@ -217,6 +307,10 @@ export default function ClientDetail() {
           <button className="secondary" onClick={() => navigate('/clients')}>&larr; All Clients</button>
         </div>
       </div>
+
+      <ClientSummaryStrip clientId={clientId} />
+
+      <ClientNotes client={client} onSaved={loadClient} />
 
       <div className="card">
         <h2>Training Requirements</h2>

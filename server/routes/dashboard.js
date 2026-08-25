@@ -178,6 +178,8 @@ router.get('/', (req, res) => {
       totalActiveEmployees: employees.length,
       totalTrainingRecords: recordCount,
       counts,
+      complianceRate: complianceRate(counts),
+      healthStatus: healthStatus(counts),
       // Most Popular Trainings, scoped to just this client's employees (Keeley's request,
       // 2026-08-19) - "what does this client most often do," same ranking logic as the
       // org-wide dashboard tile.
