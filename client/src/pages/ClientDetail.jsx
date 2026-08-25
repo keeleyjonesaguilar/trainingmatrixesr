@@ -12,11 +12,13 @@ const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
 function ClientSummaryStrip({ clientId }) {
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api.getDashboard(clientId).then(setSummary).catch(() => {});
+    api.getDashboard(clientId).then(setSummary).catch((e) => setError(e.message));
   }, [clientId]);
 
+  if (error) return <div className="error-banner" style={{ marginBottom: 16 }}>Couldn't load the summary: {error}</div>;
   if (!summary) return null;
 
   return (

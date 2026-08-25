@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateClientsPanel from '../components/DuplicateClientsPanel.jsx';
@@ -89,9 +89,15 @@ function AddClientForm({ clients, onAdded, onCancel }) {
 // requirements and expiration overrides on its own page (see ClientDetail.jsx).
 export default function ClientSettings() {
   const isAdmin = useIsAdmin();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [clients, setClients] = useState([]);
   const [error, setError] = useState('');
+  // Compliance/Action-Required per client (Keeley's request: the directory itself showed no
+  // compliance info at all, only which clients are active/inactive as accounts) - one org-wide
+  // dashboard call already computes this for every client at once, so it's reused here rather
+  // than adding a second endpoint.
+  const [complianceByClient, setComplianceByClient] = useState(new Map());
   // Auto-opens the add-client form when linked here from the Dashboard's "Create a New
   // Client" button (?new=1).
   const [addingOpen, setAddingOpen] = useState(searchParams.get('new') === '1');
@@ -104,6 +110,11 @@ export default function ClientSettings() {
   // page. Wrapping it in a block body discards that return value so there's nothing for React
   // to mistake for a cleanup function.
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.getDashboard().then((d) => {
+      setComplianceByClient(new Map(d.perClient.map((c) => [c.client_id, c])));
+    }).catch(() => {});
+  }, []);
 
   const activeClients = clients.filter((c) => c.active);
   const inactiveClients = clients.filter((c) => !c.active);
@@ -140,25 +151,45 @@ export default function ClientSettings() {
               <tr>
                 <th>Client Name</th>
                 <th>Employees</th>
+                <th>Compliance</th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {activeClients.map((c) => (
-                <tr key={c.client_id}>
-                  {/* Client name goes to the Client Compliance Overview (Dashboard's client
-                      drilldown, 2026-08-19 per Keeley's request) - "Settings" (renamed from
-                      "View Settings") is the only link that goes to the requirements/overrides
-                      page instead. */}
-                  <td><Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
-                  <td>{c.employee_count ?? 0}</td>
-                  <td><span className="badge badge-current">Active</span></td>
-                  <td><Link to={`/clients/${c.client_id}`}>Settings &rarr;</Link></td>
-                </tr>
-              ))}
+              {activeClients.map((c) => {
+                const compliance = complianceByClient.get(c.client_id);
+                return (
+                  <tr key={c.client_id}>
+                    {/* Client name goes to the Client Compliance Overview (Dashboard's client
+                        drilldown, 2026-08-19 per Keeley's request) - "Settings" (renamed from
+                        "View Settings") is the only link that goes to the requirements/overrides
+                        page instead. */}
+                    <td><Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
+                    <td>{c.employee_count ?? 0}</td>
+                    <td>
+                      {compliance ? (
+                        compliance.healthStatus === 'Action Required' ? (
+                          <button
+                            type="button"
+                            className="badge pill-action-required"
+                            style={{ border: 'none', cursor: 'pointer' }}
+                            onClick={() => navigate(`/action-required?client_id=${c.client_id}`)}
+                          >
+                            {compliance.complianceRate}% — Action Required
+                          </button>
+                        ) : (
+                          <span className="badge pill-compliant">{compliance.complianceRate}% Compliant</span>
+                        )
+                      ) : '—'}
+                    </td>
+                    <td><span className="badge badge-current">Active</span></td>
+                    <td><Link to={`/clients/${c.client_id}`}>Settings &rarr;</Link></td>
+                  </tr>
+                );
+              })}
               {activeClients.length === 0 && (
-                <tr><td colSpan={4} className="empty-state">No active clients yet{isAdmin ? ' — add one above.' : '.'}</td></tr>
+                <tr><td colSpan={5} className="empty-state">No active clients yet{isAdmin ? ' — add one above.' : '.'}</td></tr>
               )}
             </tbody>
           </table>
