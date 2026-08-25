@@ -193,9 +193,6 @@ export default function Dashboard() {
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}
-        {/* Keeley's call, 2026-08-18: dropped the Current/Expired/Missing/Not Applicable/
-            No Expiration/Pending Review summary tiles here for now - she's going to spec out
-            what this client compliance overview should actually show next. */}
         <div className="stat-grid">
           <div className="stat-tile">
             <div className="stat-label">Active Employees</div>
@@ -204,6 +201,25 @@ export default function Dashboard() {
           <div className="stat-tile">
             <div className="stat-label">Training Records</div>
             <div className="value">{data.totalTrainingRecords}</div>
+          </div>
+          <div className="stat-tile">
+            <div className="stat-label">Compliance</div>
+            <div className="value">{data.complianceRate}%</div>
+          </div>
+          <div className="stat-tile">
+            <div className="stat-label">Status</div>
+            {data.healthStatus === 'Action Required' ? (
+              <button
+                type="button"
+                className="badge pill-action-required"
+                style={{ border: 'none', cursor: 'pointer', marginTop: 4 }}
+                onClick={() => navigate(`/action-required?client_id=${clientId}`)}
+              >
+                Action Required →
+              </button>
+            ) : (
+              <span className="badge pill-compliant" style={{ marginTop: 4 }}>Compliant</span>
+            )}
           </div>
         </div>
 
