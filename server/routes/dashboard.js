@@ -20,14 +20,19 @@ function zeroCounts() {
 // computes every cell's status in plain JS (statusEngine.computeStatus, no db calls) in one
 // single pass - counts, per-client breakdown, expired-gaps, and training-popularity are all
 // derived from that same pass instead of separate full scans.
-function bulkComputeForEmployees(employees, masterTrainings, { collectGaps = false, collectPopularity = false, groupByClient = false } = {}) {
+function bulkComputeForEmployees(
+  employees,
+  masterTrainings,
+  { collectGaps = false, collectPopularity = false, groupByClient = false, collectActionItems = false } = {}
+) {
   const counts = zeroCounts();
   const countsByClient = groupByClient ? new Map() : null;
   const gaps = [];
   const popularity = collectPopularity ? new Map() : null;
+  const actionItems = collectActionItems ? [] : null;
 
   if (employees.length === 0) {
-    return { counts, gaps, popularity, countsByClient };
+    return { counts, gaps, popularity, countsByClient, actionItems };
   }
 
   const employeeIds = employees.map((e) => e.employee_id);
@@ -82,6 +87,22 @@ function bulkComputeForEmployees(employees, masterTrainings, { collectGaps = fal
         });
       }
 
+      // Everything actually counting against complianceRate/healthStatus below (Expired,
+      // Missing, Pending Review) - "Action Required" on a client's dashboard row is only ever
+      // true because of cells like these, so this is the exact list that answers "required to
+      // do what, exactly."
+      if (collectActionItems && (status === 'Expired' || status === 'Missing' || status === 'Pending Review')) {
+        actionItems.push({
+          employee_id: emp.employee_id,
+          employee_name: emp.full_name,
+          training_id: mt.training_id,
+          training_name: requirement?.client_training_name || mt.training_name,
+          status,
+          completion_date: record ? record.completion_date : null,
+          expiration_date: expirationDate,
+        });
+      }
+
       if (collectPopularity && record && record.completion_date) {
         let set = popularity.get(mt.training_id);
         if (!set) { set = new Set(); popularity.set(mt.training_id, set); }
@@ -90,7 +111,7 @@ function bulkComputeForEmployees(employees, masterTrainings, { collectGaps = fal
     }
   }
 
-  return { counts, gaps, popularity, countsByClient };
+  return { counts, gaps, popularity, countsByClient, actionItems };
 }
 
 // Most Popular Trainings (Keeley's request, 2026-08-18; extended to per-client scope
@@ -124,6 +145,21 @@ function complianceRate(counts) {
 function healthStatus(counts) {
   return complianceRate(counts) >= 90 ? 'Compliant' : 'Action Required';
 }
+
+// Backs the "Action Required" button on a client's dashboard row (Keeley's request): the exact
+// list of employee+training gaps behind that client's compliance number, so there's somewhere
+// to actually go read what's needed instead of just seeing a status word.
+router.get('/action-items', (req, res) => {
+  const { client_id } = req.query;
+  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const employees = db.prepare('SELECT * FROM employees WHERE client_id = ? AND active = 1').all(client_id);
+  const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
+  const { actionItems } = bulkComputeForEmployees(employees, masterTrainings, { collectActionItems: true });
+  actionItems.sort((a, b) => a.employee_name.localeCompare(b.employee_name) || a.training_name.localeCompare(b.training_name));
+  res.json({ client, items: actionItems });
+});
 
 // Dashboard (spec section 11): org-wide totals, drillable per client via ?client_id=.
 router.get('/', (req, res) => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import ActionRequired from './pages/ActionRequired.jsx';
 import Matrix from './pages/Matrix.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import ClientSettings from './pages/ClientSettings.jsx';
@@ -66,6 +67,7 @@ export default function App() {
           <main className="app-body">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/action-required" element={<ActionRequired />} />
               <Route path="/matrix" element={<Matrix />} />
               <Route path="/employees/:employeeId" element={<EmployeeDetail />} />
               <Route path="/clients" element={<ClientSettings />} />

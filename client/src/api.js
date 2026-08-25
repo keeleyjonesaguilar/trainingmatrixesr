@@ -105,6 +105,7 @@ export const api = {
 
   // Dashboard
   getDashboard: (clientId) => request(`/dashboard${clientId ? `?client_id=${clientId}` : ''}`),
+  getActionItems: (clientId) => request(`/dashboard/action-items?client_id=${clientId}`),
 
   // Import
   importTemplateUrl: `${BASE}/import/template.csv`,

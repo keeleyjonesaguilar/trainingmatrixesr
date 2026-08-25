@@ -267,7 +267,20 @@ export default function Dashboard() {
                         <td>{c.client_name}</td>
                         <td>{c.totalActiveEmployees}</td>
                         <td>{c.complianceRate}%</td>
-                        <td><span className={`badge ${healthPillClass(c.healthStatus)}`}>{c.healthStatus}</span></td>
+                        <td>
+                          {c.healthStatus === 'Action Required' ? (
+                            <button
+                              type="button"
+                              className={`badge ${healthPillClass(c.healthStatus)}`}
+                              style={{ border: 'none', cursor: 'pointer' }}
+                              onClick={(e) => { e.stopPropagation(); navigate(`/action-required?client_id=${c.client_id}`); }}
+                            >
+                              Action Required →
+                            </button>
+                          ) : (
+                            <span className={`badge ${healthPillClass(c.healthStatus)}`}>{c.healthStatus}</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {data.perClient.length === 0 && (
