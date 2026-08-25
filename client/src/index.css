@@ -22,6 +22,8 @@
   --status-noexp-text: #35547e;
   --status-pending-bg: #fdf3d7;
   --status-pending-text: #8a6d00;
+  --status-ignored-bg: #f0e9fa;
+  --status-ignored-text: #6b3fa0;
 
   font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   color-scheme: light;
@@ -323,6 +325,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .badge-notapplicable { background: var(--status-na-bg); color: var(--status-na-text); }
 .badge-noexpiration { background: var(--status-noexp-bg); color: var(--status-noexp-text); }
 .badge-pendingreview { background: var(--status-pending-bg); color: var(--status-pending-text); }
+.badge-ignored { background: var(--status-ignored-bg); color: var(--status-ignored-text); }
 .badge-expiringsoon { background: var(--status-missing-bg); color: var(--status-missing-text); }
 
 /* Client/org health pills - distinct from per-training-record status badges above. */
@@ -346,6 +349,27 @@ tr:hover td { background: #fafbfc; }
 .matrix-scroll table { font-size: 12px; }
 .matrix-scroll th:first-child, .matrix-scroll td:first-child { position: sticky; left: 0; background: var(--color-surface); z-index: 2; }
 .matrix-scroll th:first-child { z-index: 3; background: #fafbfc; }
+
+/* Client Compliance Overview's employee grid only (Keeley's request, 2026-08-25) - the training
+   columns show the training's full name, rotated so it stays readable without widening every
+   column to fit a horizontal name; long names wrap onto a second vertical line instead of
+   truncating. The TRN-XXX code stays underneath as the actual clickable link, both because it's
+   a smaller, easier target than rotated text and so the code is still visible at a glance. */
+.matrix-scroll th.matrix-vertical-th { vertical-align: bottom; padding: 6px 3px; text-align: center; }
+.matrix-vertical-name {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-transform: none;
+  max-height: 110px;
+  line-height: 1.2;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: normal;
+  overflow: hidden;
+  margin: 0 auto 6px;
+}
+.matrix-vertical-code { display: block; font-size: 11px; }
 
 .empty-state { color: var(--color-text-muted); padding: 24px; text-align: center; }
 .error-banner { background: var(--status-expired-bg); color: var(--status-expired-text); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }

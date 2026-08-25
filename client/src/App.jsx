@@ -17,14 +17,16 @@ import SessionDetail from './pages/SessionDetail.jsx';
 import TrainingTypes from './pages/TrainingTypes.jsx';
 import TrainingTypeDetail from './pages/TrainingTypeDetail.jsx';
 import PublicSignIn from './pages/PublicSignIn.jsx';
+import PublicFeedback from './pages/PublicFeedback.jsx';
 import { api } from './api';
 import { AuthContext } from './authContext.jsx';
 
 export default function App() {
   const location = useLocation();
-  // A trainee scanning a session's QR code lands on /s/:token and never has (or needs) a
-  // login - checked before anything else below, so it never flashes the Login screen first.
-  const isPublicSignIn = location.pathname.startsWith('/s/');
+  // A trainee scanning a session's QR code lands on /s/:token (sign-in) or /feedback/:token
+  // (post-training feedback) and never has (or needs) a login - checked before anything else
+  // below, so it never flashes the Login screen first.
+  const isPublicSignIn = location.pathname.startsWith('/s/') || location.pathname.startsWith('/feedback/');
 
   const [status, setStatus] = useState('loading'); // loading | signed-out | signed-in
   const [username, setUsername] = useState('');
@@ -42,6 +44,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/s/:token" element={<PublicSignIn />} />
+        <Route path="/feedback/:token" element={<PublicFeedback />} />
       </Routes>
     );
   }

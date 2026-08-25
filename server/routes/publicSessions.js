@@ -84,12 +84,18 @@ router.post('/:token/close', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This session is already closed.' });
   }
-  const { trainer_signed_name, signature } = req.body || {};
+  const { trainer_signed_name, signature, pin } = req.body || {};
   if (!trainer_signed_name || !trainer_signed_name.trim()) {
     return res.status(400).json({ error: 'Trainer name is required to close the session.' });
   }
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A trainer signature is required to close the session.' });
+  }
+  // Only the trainer should be able to close the session (Keeley's request: trainees
+  // shouldn't be able to trigger it by accident) - a fixed, case-insensitive PIN, checked
+  // server-side since the client-side field is only a UX convenience, not the real boundary.
+  if (String(pin || '').trim().toUpperCase() !== 'ESR') {
+    return res.status(400).json({ error: 'Incorrect PIN.' });
   }
 
   db.prepare(
@@ -133,6 +139,58 @@ router.post('/:token/close', async (req, res) => {
   }
 
   res.json({ ok: true, attendee_count: attendees.length });
+});
+
+// Fetch session context for the feedback page (no auth) - same minimal shape as the sign-in
+// context fetch above, just for the second QR code's landing page.
+router.get('/:token/feedback', (req, res) => {
+  const session = getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This feedback link isn't valid." });
+  res.json({
+    client_name: session.client_name,
+    training_type_label: session.training_type_label,
+    trainer_name: session.trainer_name,
+    session_date: session.session_date,
+  });
+});
+
+// A trainee submits post-training feedback - anonymous (no attendee/employee link), so there's
+// no login/name field and no identity to attach it to even if we wanted to. Multiple
+// submissions per session are expected, one per trainee who fills out the form.
+router.post('/:token/feedback', (req, res) => {
+  const session = getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This feedback link isn't valid." });
+  const {
+    could_ask_questions = null,
+    understood_material = null,
+    needs_additional_training = null,
+    effectiveness_rating,
+    trainer_rating,
+    trainer_comment = null,
+  } = req.body || {};
+  const effectiveness = Number(effectiveness_rating);
+  const trainerScore = Number(trainer_rating);
+  if (!Number.isInteger(effectiveness) || effectiveness < 1 || effectiveness > 5) {
+    return res.status(400).json({ error: 'effectiveness_rating must be a whole number between 1 and 5.' });
+  }
+  if (!Number.isInteger(trainerScore) || trainerScore < 1 || trainerScore > 5) {
+    return res.status(400).json({ error: 'trainer_rating must be a whole number between 1 and 5.' });
+  }
+  db.prepare(
+    `INSERT INTO session_feedback
+       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    uuidv4(),
+    session.session_id,
+    could_ask_questions,
+    understood_material,
+    needs_additional_training,
+    effectiveness,
+    trainerScore,
+    trainer_comment ? String(trainer_comment).trim() : null
+  );
+  res.status(201).json({ ok: true });
 });
 
 module.exports = router;

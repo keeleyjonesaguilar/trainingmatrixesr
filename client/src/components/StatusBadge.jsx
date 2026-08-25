@@ -5,6 +5,7 @@ const CLASS_MAP = {
   'Not Applicable': 'badge-notapplicable',
   'No Expiration': 'badge-noexpiration',
   'Pending Review': 'badge-pendingreview',
+  Ignored: 'badge-ignored',
 };
 
 export default function StatusBadge({ status }) {

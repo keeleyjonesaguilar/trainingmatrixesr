@@ -4,51 +4,10 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
+import { formatCell } from '../lib/matrixCell.js';
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
-
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(`${dateStr}T00:00:00`);
-  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
-}
-
-function daysBetween(dateStr) {
-  if (!dateStr) return null;
-  return Math.round((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-}
-
-// Keeley's call: the matrix tracks completion, not compliance-against-requirements. A
-// training that hasn't been completed just shows as a plain dash - it's not flagged as
-// "Missing," since most trainings aren't required for most employees. Completed trainings
-// show the actual completion date instead of a generic "Valid" label.
-function formatCell(cell) {
-  if (!cell) return { text: '—', plain: true };
-  switch (cell.status) {
-    case 'Current': {
-      const dateText = formatDate(cell.completion_date);
-      if (cell.expiring_soon) {
-        const d = daysBetween(cell.expiration_date);
-        return { text: `${dateText} (expires in ${d}d)`, className: 'badge-expiringsoon' };
-      }
-      return { text: dateText, className: 'badge-current' };
-    }
-    case 'No Expiration':
-      return { text: formatDate(cell.completion_date), className: 'badge-noexpiration' };
-    case 'Expired': {
-      const d = daysBetween(cell.expiration_date);
-      return { text: `${formatDate(cell.completion_date)} (expired ${d !== null ? `${Math.abs(d)}d ago` : ''})`, className: 'badge-expired' };
-    }
-    case 'Not Applicable':
-      return { text: 'N/A', className: 'badge-notapplicable' };
-    case 'Pending Review':
-      return { text: 'Pending Review', className: 'badge-pendingreview' };
-    case 'Missing':
-    default:
-      return { text: '-', plain: true };
-  }
-}
 
 function TrainingFilterDropdown({ masterTrainings, selected, onChange }) {
   const [open, setOpen] = useState(false);

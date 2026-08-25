@@ -7,7 +7,6 @@ const db = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
-const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 
 const router = express.Router();
 
@@ -35,22 +34,19 @@ router.get('/', (req, res) => {
   res.json(rows);
 });
 
-// Phone number is captured here too (Keeley's call: trainings get linked to a trainer by
-// phone, since it's a more reliable identity than name) - stored on the same employee_number
-// column a regular employee's phone uses.
+// Employee ID is captured here too (Keeley's call: trainers are identified by their own
+// company Employee ID, not phone number) - stored on the same employee_number column a
+// regular employee's phone uses; free-typed, no format validation.
 router.post('/', requireAdmin, (req, res) => {
   const { full_name, job_title = null, employee_number = null } = req.body || {};
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ error: 'full_name is required' });
   }
-  if (employee_number && !isValidPhoneNumber(employee_number)) {
-    return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
-  }
   const employee_id = uuidv4();
   db.prepare(
     `INSERT INTO employees (employee_id, client_id, full_name, job_title, employee_number, active, employee_type)
      VALUES (?, ?, ?, ?, ?, 1, 'trainer')`
-  ).run(employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, formatPhoneNumber(employee_number));
+  ).run(employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, employee_number ? employee_number.trim() : null);
   res.status(201).json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id));
 });
 

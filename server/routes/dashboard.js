@@ -2,11 +2,12 @@ const express = require('express');
 const db = require('../db');
 const repo = require('../lib/repo');
 const { computeStatus } = require('../lib/statusEngine');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
 function zeroCounts() {
-  return { Current: 0, Expired: 0, Missing: 0, 'Not Applicable': 0, 'No Expiration': 0, 'Pending Review': 0 };
+  return { Current: 0, Expired: 0, Missing: 0, 'Not Applicable': 0, 'No Expiration': 0, 'Pending Review': 0, Ignored: 0 };
 }
 
 // Performance fix (2026-08-18, Keeley reported the Dashboard loading very slowly): the old
@@ -59,6 +60,13 @@ function bulkComputeForEmployees(
     if (!recordMap.has(key)) recordMap.set(key, r);
   }
 
+  // Permanently-ignored gaps (Keeley's request) - same bulk-lookup treatment as everything
+  // else in this function, so N employees never costs N ignore-table queries.
+  const ignoredRows = db
+    .prepare(`SELECT employee_id, training_id FROM ignored_compliance_gaps WHERE employee_id IN (${employeeIds.map(() => '?').join(',')})`)
+    .all(...employeeIds);
+  const ignoredSet = new Set(ignoredRows.map((r) => `${r.employee_id}|${r.training_id}`));
+
   for (const emp of employees) {
     let clientCounts = null;
     if (groupByClient) {
@@ -71,7 +79,12 @@ function bulkComputeForEmployees(
     for (const mt of masterTrainings) {
       const requirement = requirementMap.get(`${emp.client_id}|${mt.training_id}`) || null;
       const record = recordMap.get(`${emp.employee_id}|${mt.training_id}`) || null;
-      const { status, expirationDate } = computeStatus({ record, requirement, masterTraining: mt });
+      let { status, expirationDate } = computeStatus({ record, requirement, masterTraining: mt });
+
+      if ((status === 'Expired' || status === 'Missing' || status === 'Pending Review') &&
+          ignoredSet.has(`${emp.employee_id}|${mt.training_id}`)) {
+        status = 'Ignored';
+      }
 
       counts[status] = (counts[status] || 0) + 1;
       if (clientCounts) clientCounts[status] = (clientCounts[status] || 0) + 1;
@@ -90,7 +103,8 @@ function bulkComputeForEmployees(
       // Everything actually counting against complianceRate/healthStatus below (Expired,
       // Missing, Pending Review) - "Action Required" on a client's dashboard row is only ever
       // true because of cells like these, so this is the exact list that answers "required to
-      // do what, exactly."
+      // do what, exactly." An ignored gap's status is already 'Ignored' by this point, so it
+      // naturally never lands here.
       if (collectActionItems && (status === 'Expired' || status === 'Missing' || status === 'Pending Review')) {
         actionItems.push({
           employee_id: emp.employee_id,
@@ -130,11 +144,13 @@ function topPopularTrainings(masterTrainings, popularity) {
 }
 
 // "Compliant" = Current or No Expiration (already satisfied, nothing more to do). Not Applicable
-// cells don't count against a client/org either way, so they're excluded from the denominator.
+// and Ignored cells don't count against a client/org either way, so they're excluded from the
+// denominator (Ignored the same way NA already was - a permanently-dismissed gap, see repo.js's
+// computeCell).
 function complianceRate(counts) {
   const compliant = (counts.Current || 0) + (counts['No Expiration'] || 0);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const applicable = total - (counts['Not Applicable'] || 0);
+  const applicable = total - (counts['Not Applicable'] || 0) - (counts['Ignored'] || 0);
   return applicable > 0 ? Math.round((compliant / applicable) * 100) : 100;
 }
 
@@ -159,6 +175,47 @@ router.get('/action-items', (req, res) => {
   const { actionItems } = bulkComputeForEmployees(employees, masterTrainings, { collectActionItems: true });
   actionItems.sort((a, b) => a.employee_name.localeCompare(b.employee_name) || a.training_name.localeCompare(b.training_name));
   res.json({ client, items: actionItems });
+});
+
+// Permanently dismiss one employee+training gap (Keeley's request) - never counts against
+// compliance again, even if the underlying record is edited or stays Expired/Missing/Pending
+// Review. No un-ignore: a real new completion naturally takes back over on its own (see
+// repo.computeCell - the override only ever applies to a still-bad status).
+router.post('/action-items/ignore', requireAdmin, (req, res) => {
+  const { employee_id, training_id } = req.body || {};
+  if (!employee_id || !training_id) {
+    return res.status(400).json({ error: 'employee_id and training_id are required' });
+  }
+  const employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id);
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  const masterTraining = repo.getMasterTraining(training_id);
+  if (!masterTraining) return res.status(404).json({ error: 'Training not found' });
+
+  const { status } = repo.computeCell({ employeeId: employee_id, clientId: employee.client_id, trainingId: training_id, masterTraining });
+  if (!['Expired', 'Missing', 'Pending Review'].includes(status)) {
+    return res.status(400).json({ error: `Current status is "${status}" — only Expired, Missing, or Pending Review gaps can be ignored.` });
+  }
+  repo.ignoreComplianceGap(employee_id, training_id, req.user?.username || null);
+  res.status(201).json({ ok: true });
+});
+
+// Read-only audit trail for ignored gaps (Keeley's design: permanent/no un-ignore, but the
+// ignored_at/ignored_by columns exist specifically so this doesn't disappear without a trace).
+router.get('/action-items/ignored', (req, res) => {
+  const { client_id } = req.query;
+  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+  const rows = db
+    .prepare(
+      `SELECT g.employee_id, e.full_name AS employee_name, g.training_id, mt.training_name,
+              g.ignored_at, g.ignored_by
+       FROM ignored_compliance_gaps g
+       JOIN employees e ON e.employee_id = g.employee_id
+       JOIN master_trainings mt ON mt.training_id = g.training_id
+       WHERE e.client_id = ?
+       ORDER BY g.ignored_at DESC`
+    )
+    .all(client_id);
+  res.json({ items: rows });
 });
 
 // Dashboard (spec section 11): org-wide totals, drillable per client via ?client_id=.

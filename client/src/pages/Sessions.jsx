@@ -23,6 +23,11 @@ export default function Sessions() {
   const [trainerMode, setTrainerMode] = useState('select');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
   const [outlineTouched, setOutlineTouched] = useState(false);
+  // Whether the duration box is currently revealed for editing (Keeley's call, 2026-08-25):
+  // unlike outlineTouched, this deliberately resets to false every time the Training Type
+  // changes, so a fresh selection always starts from that type's own default and has to be
+  // overridden again on purpose - it never carries a previous type's override forward.
+  const [durationOverride, setDurationOverride] = useState(false);
   const [filters, setFilters] = useState({ client_name: '', status: '' });
   // Auto-opens the create form when linked here from the Dashboard's "Create New Training
   // Session" button (?new=1).
@@ -62,9 +67,13 @@ export default function Sessions() {
   const submit = async (e) => {
     e.preventDefault();
     setError('');
+    // Trainer Employee ID is the one field skipped when adding a brand-new trainer inline
+    // (Keeley's call) - there's nothing to auto-fill for someone who isn't in the system yet,
+    // so that session is flagged for review instead of blocking creation on a field they can't
+    // fill in.
     if (
       !form.client_name || !form.master_training_id || !form.trainer_name ||
-      !form.trainer_phone || !form.session_date || !form.location || !form.duration || !form.outline
+      !form.session_date || !form.location || !form.duration || !form.outline
     ) {
       setError('Every field is required to create a session.');
       return;
@@ -78,6 +87,10 @@ export default function Sessions() {
         master_training_id: form.master_training_id,
         training_type_label,
         trainer_name: form.trainer_name.trim(),
+        // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
+        // the spot, or an existing trainer who was never given one yet. The server derives the
+        // "needs review" flag from that on its own (Keeley's call: either way, review is
+        // needed before this is "done"), so nothing extra needs sending here.
         trainer_phone: form.trainer_phone,
         session_date: form.session_date,
         location: form.location,
@@ -159,6 +172,11 @@ export default function Sessions() {
                     value={form.master_training_id}
                     onChange={(e) => {
                       const t = trainings.find((x) => x.training_id === e.target.value);
+                      // Duration always resets to the newly picked type's own default (Keeley's
+                      // call) - unlike outline, it does NOT carry a previous type's override
+                      // forward, so switching types re-collapses the field back to plain text
+                      // and requires clicking "Override default duration" again on purpose.
+                      setDurationOverride(false);
                       setForm((f) => ({
                         ...f,
                         master_training_id: e.target.value,
@@ -170,6 +188,7 @@ export default function Sessions() {
                         // onto the session at creation time, so a later catalog outline edit
                         // never reaches back into sessions already created.
                         outline: outlineTouched ? f.outline : (t?.outline || ''),
+                        duration: t?.default_duration || '',
                       }));
                     }}
                     required
@@ -224,13 +243,21 @@ export default function Sessions() {
                   )}
                 </div>
                 <div className="field">
-                  <label>Trainer Phone Number</label>
-                  <input
-                    value={form.trainer_phone}
-                    onChange={(e) => setForm({ ...form, trainer_phone: e.target.value })}
-                    placeholder="(555) 123-4567"
-                    required
-                  />
+                  <label>Trainer Employee ID</label>
+                  {trainerMode === 'select' ? (
+                    <>
+                      <input value={form.trainer_phone} readOnly disabled placeholder="Auto-filled from the selected trainer" />
+                      {selectedTrainerId && !form.trainer_phone && (
+                        <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                          This trainer has no Employee ID on file - this session will be flagged for review.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="page-subtitle" style={{ margin: 0 }}>
+                      Not required for a newly added trainer - this session will be flagged for review until their Employee ID is added.
+                    </p>
+                  )}
                 </div>
                 <div className="field">
                   <label>Date</label>
@@ -252,12 +279,27 @@ export default function Sessions() {
                 </div>
                 <div className="field">
                   <label>Duration</label>
-                  <input
-                    value={form.duration}
-                    onChange={(e) => setForm({ ...form, duration: e.target.value })}
-                    placeholder="e.g. 4 hours, Half day"
-                    required
-                  />
+                  {(() => {
+                    const selectedTraining = trainings.find((t) => t.training_id === form.master_training_id);
+                    if (selectedTraining?.default_duration && !durationOverride) {
+                      return (
+                        <>
+                          <p style={{ margin: '4px 0' }}>{form.duration}</p>
+                          <button type="button" className="link-button" onClick={() => setDurationOverride(true)}>
+                            Override default duration
+                          </button>
+                        </>
+                      );
+                    }
+                    return (
+                      <input
+                        value={form.duration}
+                        onChange={(e) => setForm({ ...form, duration: e.target.value })}
+                        placeholder="e.g. 4 hours, Half day"
+                        required
+                      />
+                    );
+                  })()}
                 </div>
                 <div className="field">
                   <label>Sign-In Language</label>
@@ -331,6 +373,7 @@ export default function Sessions() {
               <th>Trainer</th>
               <th>Attendees</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -344,11 +387,16 @@ export default function Sessions() {
                 <td>
                   <StatusBadge status={s.status} />
                 </td>
+                <td>
+                  {!!s.trainer_needs_review && (
+                    <span className="badge badge-pendingreview" title="Trainer has no Employee ID on file">Needs Review</span>
+                  )}
+                </td>
               </tr>
             ))}
             {sessions.length === 0 && (
               <tr>
-                <td colSpan={6} className="empty-state">
+                <td colSpan={7} className="empty-state">
                   No sessions yet.
                 </td>
               </tr>

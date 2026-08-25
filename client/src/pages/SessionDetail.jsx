@@ -118,7 +118,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <input value={form.trainer_last_name} onChange={(e) => setForm({ ...form, trainer_last_name: e.target.value })} required />
         </div>
         <div className="field">
-          <label>Trainer Phone Number</label>
+          <label>Trainer Employee ID</label>
           <input value={form.trainer_phone} onChange={(e) => setForm({ ...form, trainer_phone: e.target.value })} required />
         </div>
         <div className="field">
@@ -256,39 +256,64 @@ export default function SessionDetail() {
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20 }}>
-        <div className="card" style={{ textAlign: 'center' }}>
-          <h3 style={{ marginTop: 0, fontSize: 14 }}>Sign-In QR Code</h3>
-          <img
-            src={`/api/training-sessions/${id}/qrcode.png`}
-            alt="Session QR code"
-            style={{ width: '100%', borderRadius: 8 }}
-          />
-          <a
-            href={`/api/training-sessions/${id}/qrcode.png`}
-            download
-            className="btn btn-secondary btn-sm"
-            style={{ marginTop: 10, width: '100%', justifyContent: 'center' }}
-          >
-            Download QR (PNG)
-          </a>
-          <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10, wordBreak: 'break-all' }}>
-            {session.public_url}
-          </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div className="card" style={{ textAlign: 'center' }}>
+            <h3 style={{ marginTop: 0, fontSize: 14 }}>Sign-In QR Code</h3>
+            <img
+              src={`/api/training-sessions/${id}/qrcode.png`}
+              alt="Session QR code"
+              style={{ width: '100%', borderRadius: 8 }}
+            />
+            <a
+              href={`/api/training-sessions/${id}/qrcode.png`}
+              download
+              className="btn btn-secondary btn-sm"
+              style={{ marginTop: 10, width: '100%', justifyContent: 'center' }}
+            >
+              Download QR (PNG)
+            </a>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10, wordBreak: 'break-all' }}>
+              {session.public_url}
+            </p>
 
-          {session.status === 'closed' && (
-            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <a href={`/api/training-sessions/${id}/roster.pdf`} className="btn btn-sm" style={{ justifyContent: 'center' }}>
-                Download Roster (PDF)
-              </a>
-              <a
-                href={`/api/training-sessions/${id}/roster.csv`}
-                className="btn btn-secondary btn-sm"
-                style={{ justifyContent: 'center' }}
-              >
-                Export Roster (CSV)
-              </a>
-            </div>
-          )}
+            {session.status === 'closed' && (
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <a href={`/api/training-sessions/${id}/roster.pdf`} className="btn btn-sm" style={{ justifyContent: 'center' }}>
+                  Download Roster (PDF)
+                </a>
+                <a
+                  href={`/api/training-sessions/${id}/roster.csv`}
+                  className="btn btn-secondary btn-sm"
+                  style={{ justifyContent: 'center' }}
+                >
+                  Export Roster (CSV)
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Always available, not gated on the session being closed (Keeley's call,
+              2026-08-25) - this is meant to be shown to trainees at the physical end of
+              training, right before the trainer does the close-out/sign-off, not after. */}
+          <div className="card" style={{ textAlign: 'center' }}>
+            <h3 style={{ marginTop: 0, fontSize: 14 }}>Feedback QR Code</h3>
+            <img
+              src={`/api/training-sessions/${id}/feedback-qrcode.png`}
+              alt="Feedback QR code"
+              style={{ width: '100%', borderRadius: 8 }}
+            />
+            <a
+              href={`/api/training-sessions/${id}/feedback-qrcode.png`}
+              download
+              className="btn btn-secondary btn-sm"
+              style={{ marginTop: 10, width: '100%', justifyContent: 'center' }}
+            >
+              Download QR (PNG)
+            </a>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10, wordBreak: 'break-all' }}>
+              {session.feedback_url}
+            </p>
+          </div>
         </div>
 
         <div className="card">
@@ -395,6 +420,39 @@ export default function SessionDetail() {
           </table>
         </div>
       </div>
+
+      {/* A collect-only feature with no way to ever see the results isn't useful, so this
+          summarizes what's come in so far - only appears once at least one trainee has
+          submitted, since there's nothing to show before that. */}
+      {session.feedback && session.feedback.length > 0 && (
+        <div className="card" style={{ marginTop: 20 }}>
+          <h3 style={{ marginTop: 0, fontSize: 14 }}>Feedback ({session.feedback.length} response{session.feedback.length === 1 ? '' : 's'})</h3>
+          <div style={{ display: 'flex', gap: 32, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Avg. Effectiveness</div>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>
+                {(session.feedback.reduce((sum, f) => sum + f.effectiveness_rating, 0) / session.feedback.length).toFixed(1)} / 5
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Avg. Trainer Rating</div>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>
+                {(session.feedback.reduce((sum, f) => sum + f.trainer_rating, 0) / session.feedback.length).toFixed(1)} / 5
+              </div>
+            </div>
+          </div>
+          {session.feedback.some((f) => f.trainer_comment) && (
+            <>
+              <strong style={{ fontSize: 13 }}>Comments</strong>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+                {session.feedback.filter((f) => f.trainer_comment).map((f) => (
+                  <li key={f.feedback_id} style={{ marginBottom: 4 }}>{f.trainer_comment}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

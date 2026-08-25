@@ -106,6 +106,9 @@ export const api = {
   // Dashboard
   getDashboard: (clientId) => request(`/dashboard${clientId ? `?client_id=${clientId}` : ''}`),
   getActionItems: (clientId) => request(`/dashboard/action-items?client_id=${clientId}`),
+  ignoreComplianceGap: (employeeId, trainingId) =>
+    request('/dashboard/action-items/ignore', { method: 'POST', body: JSON.stringify({ employee_id: employeeId, training_id: trainingId }) }),
+  getIgnoredActionItems: (clientId) => request(`/dashboard/action-items/ignored?client_id=${clientId}`),
 
   // Import
   importTemplateUrl: `${BASE}/import/template.csv`,
@@ -163,4 +166,9 @@ export const api = {
   publicSessionInfo: (token) => request(`/public/${token}`),
   publicSignIn: (token, payload) => request(`/public/${token}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
   publicCloseSession: (token, payload) => request(`/public/${token}/close`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Public post-training feedback (no auth) - reached only via a closed session's second QR
+  // code at /feedback/:token.
+  publicFeedbackInfo: (token) => request(`/public/${token}/feedback`),
+  publicSubmitFeedback: (token, payload) => request(`/public/${token}/feedback`, { method: 'POST', body: JSON.stringify(payload) }),
 };

@@ -70,7 +70,7 @@ router.get('/', (req, res) => {
         expiring_soon: expiringSoon,
       };
 
-      if (cellStatus !== 'Not Applicable') {
+      if (cellStatus !== 'Not Applicable' && cellStatus !== 'Ignored') {
         empApplicable += 1;
         orgApplicable += 1;
         if (cellStatus === 'Current' || cellStatus === 'No Expiration') { empCurrent += 1; orgCurrent += 1; }

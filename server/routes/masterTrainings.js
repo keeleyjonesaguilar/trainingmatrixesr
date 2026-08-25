@@ -83,7 +83,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: `default_expiration must be one of: ${EXPIRATION_UNITS.join(', ')}` });
   }
   db.prepare(
-    `UPDATE master_trainings SET training_name=?, category=?, training_type=?, default_expiration=?, active=?, display_order=?, outline=?
+    `UPDATE master_trainings SET training_name=?, category=?, training_type=?, default_expiration=?, active=?, display_order=?, outline=?, default_duration=?
      WHERE training_id=?`
   ).run(
     merged.training_name,
@@ -93,6 +93,7 @@ router.put('/:id', requireAdmin, (req, res) => {
     merged.active ? 1 : 0,
     merged.display_order,
     merged.outline ?? null,
+    merged.default_duration ?? null,
     req.params.id
   );
   res.json(db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(req.params.id));

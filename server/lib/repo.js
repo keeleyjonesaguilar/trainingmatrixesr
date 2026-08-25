@@ -4,7 +4,6 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { computeStatus, parseSourceValue } = require('./statusEngine');
-const { formatPhoneNumber } = require('./phone');
 
 function listMasterTrainings({ activeOnly = false } = {}) {
   const sql = `SELECT * FROM master_trainings ${activeOnly ? 'WHERE active = 1' : ''} ORDER BY display_order ASC`;
@@ -50,11 +49,33 @@ function listRecordsForEmployee(employeeId, trainingId) {
     .all(employeeId, trainingId);
 }
 
+// Permanently-ignored employee+training gaps (Keeley's request) - deliberately NOT a parameter
+// on computeStatus() itself, which stays a pure function of record/requirement/masterTraining
+// with no schema impact. Applied here as a post-processing step, after computeStatus already
+// returned, so it never touches employee_training_records.status's CHECK constraint and never
+// gets persisted by recomputeAndPersistRecord (which always writes the "true" computed status -
+// the ignore is a fresh, read-time-only override, so a real new completion naturally overrides
+// it right back without any extra logic).
+function isGapIgnored(employeeId, trainingId) {
+  return !!db
+    .prepare('SELECT 1 FROM ignored_compliance_gaps WHERE employee_id = ? AND training_id = ?')
+    .get(employeeId, trainingId);
+}
+
+function ignoreComplianceGap(employeeId, trainingId, ignoredBy) {
+  db.prepare(
+    'INSERT OR IGNORE INTO ignored_compliance_gaps (id, employee_id, training_id, ignored_at, ignored_by) VALUES (?, ?, ?, ?, ?)'
+  ).run(uuidv4(), employeeId, trainingId, new Date().toISOString(), ignoredBy || null);
+}
+
 function computeCell({ employeeId, clientId, trainingId, masterTraining, today }) {
   const requirement = getRequirement(clientId, trainingId);
   const record = getLatestRecord(employeeId, trainingId);
   const mt = masterTraining || getMasterTraining(trainingId);
-  const { status, expirationDate } = computeStatus({ record, requirement, masterTraining: mt, today });
+  let { status, expirationDate } = computeStatus({ record, requirement, masterTraining: mt, today });
+  if ((status === 'Expired' || status === 'Missing' || status === 'Pending Review') && isGapIgnored(employeeId, trainingId)) {
+    status = 'Ignored';
+  }
   return { requirement, record, status, expirationDate, masterTraining: mt };
 }
 
@@ -239,22 +260,22 @@ function generateNextTrainingId() {
 
 // Trainers are tracked as employees, but always under the one internal pseudo-client and
 // always employee_type = 'trainer' - matching is scoped to both so this can never accidentally
-// collide with a same-named trainee at a real client. Matched by PHONE NUMBER (Keeley's call:
-// more reliable than name, since two trainers could share a name but not a phone), falling
+// collide with a same-named trainee at a real client. Matched by EMPLOYEE ID (Keeley's call:
+// more reliable than name, since two trainers could share a name but not an ID), falling
 // back to creating a new profile on first use so trainers don't need to be added ahead of time
-// to be linked to their sessions. If a phone match is found under a different name (a typo
-// corrected later), the name is refreshed to match - phone is the durable identity here.
-function findOrCreateTrainerEmployee(trainerName, trainerPhone) {
+// to be linked to their sessions. If an ID match is found under a different name (a typo
+// corrected later), the name is refreshed to match - ID is the durable identity here.
+function findOrCreateTrainerEmployee(trainerName, trainerId) {
   const trimmedName = String(trainerName || '').trim();
-  const normalizedPhone = String(trainerPhone || '').replace(/\D/g, '');
-  if (!trimmedName && !normalizedPhone) return null;
+  const normalizedId = String(trainerId || '').trim().toLowerCase();
+  if (!trimmedName && !normalizedId) return null;
 
   const candidates = db
     .prepare(`SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer'`)
     .all(INTERNAL_CLIENT_ID);
 
-  if (normalizedPhone) {
-    const match = candidates.find((e) => (e.employee_number || '').replace(/\D/g, '') === normalizedPhone);
+  if (normalizedId) {
+    const match = candidates.find((e) => (e.employee_number || '').trim().toLowerCase() === normalizedId);
     if (match) {
       if (trimmedName && match.full_name !== trimmedName) {
         db.prepare('UPDATE employees SET full_name = ? WHERE employee_id = ?').run(trimmedName, match.employee_id);
@@ -278,8 +299,8 @@ function findOrCreateTrainerEmployee(trainerName, trainerPhone) {
     employee_id,
     INTERNAL_CLIENT_ID,
     trimmedName || 'Unnamed Trainer',
-    formatPhoneNumber(trainerPhone) || null,
-    'Created automatically from a Training Sessions entry (trainer name/phone).'
+    trainerId ? String(trainerId).trim() : null,
+    'Created automatically from a Training Sessions entry (trainer name/Employee ID).'
   );
   return employee_id;
 }
@@ -535,6 +556,8 @@ module.exports = {
   getRequirement,
   listRequirementsForClient,
   getLatestRecord,
+  isGapIgnored,
+  ignoreComplianceGap,
   listRecordsForEmployee,
   computeCell,
   recomputeAndPersistRecord,

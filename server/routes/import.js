@@ -48,15 +48,51 @@ function classifyIdentityColumn(header) {
   return null;
 }
 
+// Words that show up in real spreadsheets' training column headers but say nothing about
+// which training it is ("OSHA-10 Cert", "Ladder Training Completed") - stripped before the
+// fuzzy containment check below so headers like these still line up with the catalog name.
+const HEADER_NOISE_WORDS = new Set([
+  'training', 'trainings', 'cert', 'certification', 'certificate', 'certified',
+  'completed', 'completion', 'complete', 'date', 'course', 'class', 'status',
+]);
+
+function stripNoiseWords(normalized) {
+  return normalized.split(' ').filter((w) => !HEADER_NOISE_WORDS.has(w)).join(' ').trim();
+}
+
+// Auto-matching beyond an exact alias/name hit (Keeley's report, 2026-08-25: most real sheets
+// never use the catalog's exact wording, so almost every column was landing in "needs review"
+// and forcing a fully manual pass every import). Two extra, deliberately conservative passes:
+// 1) the training's own ID appears literally in the header ("TRN-001", "trn 001", etc.)
+// 2) after stripping generic noise words, the header and a training's name contain one another
+//    - and ONLY when that's true for exactly one training. Multiple candidates (e.g. a bare
+//    "Safety" header matching several trainings) stays "needs_review" rather than guessing -
+//    the whole point of this flow is to never guess silently, so ambiguity still goes to a human.
 function matchTrainingColumn(header) {
   const norm = normalize(header);
   const alias = db.prepare('SELECT training_id FROM training_aliases WHERE alias_text = ?').get(norm);
   if (alias) return { training_id: alias.training_id, confidence: 'exact_alias' };
-  const master = db
-    .prepare('SELECT training_id, training_name FROM master_trainings')
-    .all()
-    .find((mt) => normalize(mt.training_name) === norm);
-  if (master) return { training_id: master.training_id, confidence: 'exact_alias' };
+
+  const allTrainings = db.prepare('SELECT training_id, training_name FROM master_trainings').all();
+
+  const exactName = allTrainings.find((mt) => normalize(mt.training_name) === norm);
+  if (exactName) return { training_id: exactName.training_id, confidence: 'exact_alias' };
+
+  // 'fuzzy' is the only non-exact confidence value import_column_map's CHECK constraint
+  // allows, so both the ID-in-header and noise-stripped-containment passes share it.
+  const idMatch = allTrainings.find((mt) => norm.includes(normalize(mt.training_id)));
+  if (idMatch) return { training_id: idMatch.training_id, confidence: 'fuzzy' };
+
+  const strippedHeader = stripNoiseWords(norm);
+  if (strippedHeader.length >= 3) {
+    const candidates = allTrainings.filter((mt) => {
+      const strippedName = stripNoiseWords(normalize(mt.training_name));
+      if (strippedName.length < 3) return false;
+      return strippedHeader.includes(strippedName) || strippedName.includes(strippedHeader);
+    });
+    if (candidates.length === 1) return { training_id: candidates[0].training_id, confidence: 'fuzzy' };
+  }
+
   return { training_id: null, confidence: 'unmatched' };
 }
 

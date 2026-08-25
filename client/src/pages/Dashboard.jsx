@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
+import { formatCell } from '../lib/matrixCell.js';
 
 function healthPillClass(health) {
   return health === 'Compliant' ? 'pill-compliant' : 'pill-action-required';
@@ -148,6 +149,80 @@ function DuplicatesSummaryBox() {
   );
 }
 
+// Every employee at this client against the Master Training Catalog, right on the Client
+// Compliance Overview page (Keeley's request, part of a nav consolidation: fewer top-level
+// pages, more depth per client instead) - deliberately the same grid as the old standalone
+// Employees/Matrix page (same columns, same status badges via formatCell) rather than a new
+// layout, since that's the view admins already know. Reuses the existing /matrix endpoint
+// scoped to this client, so it costs nothing beyond what that page already does.
+function ClientEmployeesSection({ clientId }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams({ client_id: clientId, active: '1' });
+    if (search) params.set('search', search);
+    api.getMatrix(params).then(setData).catch((e) => setError(e.message));
+  }, [clientId, search]);
+
+  if (error) return <div className="error-banner">{error}</div>;
+  if (!data) return null;
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <h2>Employees ({data.employees.length})</h2>
+      <input
+        type="search"
+        placeholder="Filter by name..."
+        defaultValue={search}
+        onKeyDown={(e) => { if (e.key === 'Enter') setSearch(e.target.value); }}
+        onBlur={(e) => setSearch(e.target.value)}
+        style={{ marginBottom: 12, maxWidth: 260 }}
+      />
+      {data.employees.length === 0 ? (
+        <div className="empty-state">No employees match these filters.</div>
+      ) : (
+        <div className="matrix-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee / Badge</th>
+                <th>Role / Trade</th>
+                {data.masterTrainings.map((mt) => (
+                  <th key={mt.training_id} className="matrix-vertical-th" title={mt.training_name}>
+                    <div className="matrix-vertical-name">{mt.training_name}</div>
+                    <Link to={`/training-types/${mt.training_id}?client_id=${clientId}`} className="matrix-vertical-code">
+                      {mt.training_id}
+                    </Link>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.employees.map((emp) => (
+                <tr key={emp.employee_id}>
+                  <td><Link to={`/employees/${emp.employee_id}`}>{emp.full_name}</Link></td>
+                  <td>{emp.job_title || '—'}</td>
+                  {data.masterTrainings.map((mt) => {
+                    const cell = emp.cells[mt.training_id];
+                    const formatted = formatCell(cell);
+                    return (
+                      <td key={mt.training_id}>
+                        {formatted.plain ? formatted.text : <span className={`badge ${formatted.className}`}>{formatted.text}</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const isAdmin = useIsAdmin();
   // client_id lives in the URL, not local state (Keeley's request, 2026-08-19): the Clients
@@ -189,6 +264,10 @@ export default function Dashboard() {
                 requirements/overrides page - renamed from "View Settings" for consistency with
                 the same link on the Clients directory. */}
             <button className="secondary" onClick={() => navigate(`/clients/${clientId}`)}>Settings</button>
+            {/* Reports moved out of the main nav (Keeley's request) - generated in context from
+                here instead, pre-scoped to this client via the same ?client_id= filter the
+                Reports page already supported. */}
+            <button className="secondary" onClick={() => navigate(`/reports?client_id=${clientId}`)}>Generate Report</button>
             <button onClick={() => goToMatrix(undefined, clientId)}>Open Employees</button>
           </div>
         </div>
@@ -230,6 +309,8 @@ export default function Dashboard() {
           <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Ranked by how many of {data.client.client_name}'s employees have completed each one. Click a training to view its page.</p>
           <PopularityList items={data.mostPopularTrainings} forClientId={clientId} />
         </div>
+
+        <ClientEmployeesSection clientId={clientId} />
       </div>
     );
   }

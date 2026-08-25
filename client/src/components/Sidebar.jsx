@@ -5,11 +5,9 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/clients', label: 'Clients' },
   { to: '/trainers', label: 'Trainers' },
-  { to: '/matrix', label: 'Employees' },
   { to: '/sessions', label: 'Training Sessions' },
   { to: '/training-types', label: 'Training Types' },
   { to: '/import', label: 'Import Data' },
-  { to: '/reports', label: 'Reports' },
   { to: '/admin/users', label: 'Manage Users' },
 ];
 

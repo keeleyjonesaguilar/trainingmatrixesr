@@ -29,6 +29,7 @@ const STRINGS = {
   person_signed_in_suffix: { en: 'person has signed in so far.', es: 'persona se ha registrado hasta ahora.' },
   people_signed_in_suffix: { en: 'people have signed in so far.', es: 'personas se han registrado hasta ahora.' },
   trainer_name: { en: 'Trainer name', es: 'Nombre del instructor' },
+  trainer_pin: { en: 'Trainer PIN', es: 'PIN del instructor' },
   trainer_signature: { en: 'Trainer signature', es: 'Firma del instructor' },
   close_note: {
     en: 'Only close the session once everyone has signed in — the roster locks immediately and certificates are generated automatically.',
@@ -53,6 +54,7 @@ const STRINGS = {
   err_job_title: { en: 'Please enter your job title.', es: 'Por favor ingrese su puesto de trabajo.' },
   err_signature: { en: 'Please sign before submitting.', es: 'Por favor firme antes de enviar.' },
   err_trainer_name: { en: "Please enter the trainer's name.", es: 'Por favor ingrese el nombre del instructor.' },
+  err_trainer_pin: { en: 'Please enter the trainer PIN.', es: 'Por favor ingrese el PIN del instructor.' },
   err_trainer_signature: {
     en: 'Trainer signature is required to close the session.',
     es: 'Se requiere la firma del instructor para cerrar la sesión.',
@@ -81,6 +83,7 @@ export default function PublicSignIn() {
   const [phone, setPhone] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [trainerName, setTrainerName] = useState('');
+  const [pin, setPin] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [justSigned, setJustSigned] = useState(false);
@@ -139,11 +142,13 @@ export default function PublicSignIn() {
     e.preventDefault();
     setFormError('');
     if (!trainerName.trim()) return setFormError(t('err_trainer_name'));
+    if (!pin.trim()) return setFormError(t('err_trainer_pin'));
     if (sigRef.current?.isEmpty()) return setFormError(t('err_trainer_signature'));
     setSubmitting(true);
     try {
       await api.publicCloseSession(token, {
         trainer_signed_name: trainerName.trim(),
+        pin: pin.trim(),
         signature: sigRef.current.toDataURL(),
       });
       setClosedNow(true);
@@ -285,6 +290,16 @@ export default function PublicSignIn() {
                     value={trainerName}
                     onChange={(e) => setTrainerName(e.target.value)}
                     placeholder="Trainer name"
+                  />
+                </div>
+                <div className="field">
+                  <label>{t('trainer_pin')}</label>
+                  <input
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    placeholder="PIN"
+                    type="password"
+                    autoComplete="off"
                   />
                 </div>
                 <div className="field">

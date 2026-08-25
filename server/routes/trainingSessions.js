@@ -6,9 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
-const { qrPngBuffer, publicSignInUrl } = require('../lib/qr');
+const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
-const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { translateToSpanish } = require('../lib/translate');
 const fs = require('fs');
 
@@ -110,24 +109,31 @@ router.get('/:id', (req, res) => {
   const attendees = db
     .prepare('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at')
     .all(session.session_id);
-  res.json({ ...session, public_url: publicSignInUrl(session.qr_token), attendees });
+  const feedback = db
+    .prepare('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at')
+    .all(session.session_id);
+  res.json({ ...session, public_url: publicSignInUrl(session.qr_token), feedback_url: publicFeedbackUrl(session.qr_token), attendees, feedback });
 });
 
 // Every field is required to create a session (Keeley's call) - client, training type,
-// trainer name/phone, date, location, duration, and outline all need to be on file up front.
+// trainer name, date, location, duration, and outline all need to be on file up front.
+// Trainer Employee ID is the one exception: it's required when picking an existing trainer
+// (auto-filled, read-only on the client) but skipped entirely for a brand-new trainer typed
+// in on the spot - trainer_needs_review flags that session instead of blocking creation on it.
 router.post('/', requireAdmin, async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english',
   } = req.body || {};
-  if (!client_name || !training_type_label || !trainer_name || !trainer_phone || !session_date || !location || !duration || !outline) {
+  if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
-      error: 'client_name, training_type_label, trainer_name, trainer_phone, session_date, location, duration, and outline are all required',
+      error: 'client_name, training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
   }
-  if (!isValidPhoneNumber(trainer_phone)) {
-    return res.status(400).json({ error: 'trainer_phone must be a standard 10-digit phone number' });
-  }
+  // Derived purely from whether an Employee ID is present, not trusted from the client
+  // (Keeley's call) - so a session created without one, then later edited to add it, clears
+  // itself automatically instead of needing a separate "un-flag" action anywhere.
+  const trainerNeedsReview = !trainer_phone;
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
@@ -137,8 +143,8 @@ router.post('/', requireAdmin, async (req, res) => {
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
-  // Resolves to the trainer's own profile by phone number (more reliable than name - two
-  // trainers could share a name, not a phone), creating one on first use - trainer_name/
+  // Resolves to the trainer's own profile by Employee ID (more reliable than name - two
+  // trainers could share a name, not an ID), creating one on first use - trainer_name/
   // trainer_phone are kept as-typed on the session too, a frozen display fallback (matches
   // how client_name works above).
   const trainerEmployeeId = repo.findOrCreateTrainerEmployee(trainer_name, trainer_phone);
@@ -147,8 +153,8 @@ router.post('/', requireAdmin, async (req, res) => {
   const qr_token = tokenGen();
   db.prepare(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, trainer_needs_review)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     session_id,
     qr_token,
@@ -156,7 +162,7 @@ router.post('/', requireAdmin, async (req, res) => {
     master_training_id || null,
     training_type_label,
     trainer_name,
-    formatPhoneNumber(trainer_phone),
+    trainer_phone ? trainer_phone.trim() : null,
     trainerEmployeeId,
     session_date,
     outline,
@@ -165,7 +171,8 @@ router.post('/', requireAdmin, async (req, res) => {
     req.user.username,
     language,
     training_type_label_es,
-    outline_es
+    outline_es,
+    trainerNeedsReview ? 1 : 0
   );
   const session = db.prepare(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`).get(session_id);
   res.status(201).json({ ...session, public_url: publicSignInUrl(qr_token), translation_warning: warning });
@@ -183,14 +190,14 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (!merged.client_name && !existing.client_id) {
     return res.status(400).json({ error: 'client_name is required' });
   }
-  if (!merged.training_type_label || !merged.trainer_name || !merged.trainer_phone || !merged.session_date || !merged.location || !merged.duration || !merged.outline) {
+  if (!merged.training_type_label || !merged.trainer_name || !merged.session_date || !merged.location || !merged.duration || !merged.outline) {
     return res.status(400).json({
-      error: 'training_type_label, trainer_name, trainer_phone, session_date, location, duration, and outline are all required',
+      error: 'training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
   }
-  if (!isValidPhoneNumber(merged.trainer_phone)) {
-    return res.status(400).json({ error: 'trainer_phone must be a standard 10-digit phone number' });
-  }
+  // Same derived-not-trusted logic as creation: this self-clears the moment an Employee ID
+  // gets added through this same edit form, with no separate "un-flag" action needed.
+  const trainerNeedsReview = !merged.trainer_phone;
   if (!SESSION_LANGUAGES.includes(merged.language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
@@ -220,14 +227,14 @@ router.put('/:id', requireAdmin, async (req, res) => {
   db.prepare(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, trainer_needs_review=?
      WHERE session_id=?`
   ).run(
     clientId,
     merged.master_training_id ?? null,
     merged.training_type_label,
     merged.trainer_name,
-    formatPhoneNumber(merged.trainer_phone),
+    merged.trainer_phone ? merged.trainer_phone.trim() : null,
     trainerEmployeeId,
     merged.session_date,
     merged.outline,
@@ -236,6 +243,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     merged.language,
     training_type_label_es,
     outline_es,
+    trainerNeedsReview ? 1 : 0,
     req.params.id
   );
   const session = db.prepare(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`).get(req.params.id);
@@ -263,6 +271,14 @@ router.get('/:id/qrcode.png', async (req, res) => {
   const session = db.prepare('SELECT qr_token FROM training_sessions WHERE session_id = ?').get(req.params.id);
   if (!session) return res.status(404).end();
   const buf = await qrPngBuffer(session.qr_token);
+  res.set('Content-Type', 'image/png');
+  res.send(buf);
+});
+
+router.get('/:id/feedback-qrcode.png', async (req, res) => {
+  const session = db.prepare('SELECT qr_token FROM training_sessions WHERE session_id = ?').get(req.params.id);
+  if (!session) return res.status(404).end();
+  const buf = await feedbackQrPngBuffer(session.qr_token);
   res.set('Content-Type', 'image/png');
   res.send(buf);
 });

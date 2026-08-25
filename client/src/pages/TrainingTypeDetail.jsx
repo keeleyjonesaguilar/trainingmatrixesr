@@ -53,7 +53,8 @@ function SettingsPanel({ training, isAdmin, onSaved, onDeleted }) {
         <h2>Settings</h2>
         {deleteError && <div className="error-banner">{deleteError}</div>}
         <p className="page-subtitle" style={{ margin: 0 }}>
-          {training.category} · {training.training_type} · Default Expiration: {training.default_expiration} · {training.active ? 'Active' : 'Inactive'}
+          {training.category} · {training.training_type} · Default Expiration: {training.default_expiration}
+          {training.default_duration ? ` · Default Duration: ${training.default_duration}` : ''} · {training.active ? 'Active' : 'Inactive'}
         </p>
         {isAdmin && <button type="button" className="link-button" onClick={() => setEditing(true)}>Edit Settings</button>}
         {isAdmin && (
@@ -92,6 +93,15 @@ function SettingsPanel({ training, isAdmin, onSaved, onDeleted }) {
           <select value={form.default_expiration} onChange={(e) => setForm({ ...form, default_expiration: e.target.value })}>
             {EXPIRATION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
+        </div>
+        <div className="field-row">
+          <label>Default Duration</label>
+          <input
+            type="text"
+            placeholder="e.g. 4 hours, Half day"
+            value={form.default_duration || ''}
+            onChange={(e) => setForm({ ...form, default_duration: e.target.value })}
+          />
         </div>
         <div className="field-row">
           <label>Active</label>

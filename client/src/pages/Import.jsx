@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
+const CONFIDENCE_LABELS = {
+  exact_alias: 'Exact match',
+  fuzzy: 'Fuzzy match',
+  manual: 'Manual',
+  unmatched: 'No match',
+};
+
 // One raw "Client" value from the sheet that didn't exactly match an existing client - pick
 // an existing one, or create a new client from the raw name as typed. Every row that used
 // this exact raw name resolves together, since it's almost always the same client typed once
@@ -204,12 +211,24 @@ export default function Import() {
                 <tr key={col.map_id}>
                   <td>{col.source_column_header}</td>
                   <td>{col.matched_training_id || '—'}</td>
-                  <td>{col.match_confidence}</td>
+                  <td>
+                    {CONFIDENCE_LABELS[col.match_confidence] || col.match_confidence}
+                    {col.match_confidence === 'fuzzy' && (
+                      <span style={{ color: 'var(--status-expiringsoon-text, #a15c00)', marginLeft: 4 }}>(double-check)</span>
+                    )}
+                  </td>
                   <td>{col.resolution_status}</td>
                   <td>
-                    {col.resolution_status !== 'auto_matched' && col.resolution_status !== 'resolved' ? (
+                    {/* Exact catalog-name/alias matches and already human-confirmed rows stay
+                        locked - anything looser (fuzzy/ID match, or genuinely unmatched) always
+                        gets a correction control, even once auto-matched, since a fuzzy guess
+                        can be wrong and there'd otherwise be no way to fix it before committing. */}
+                    {col.resolution_status !== 'resolved' && col.match_confidence !== 'exact_alias' ? (
                       <>
-                        <select onChange={(e) => e.target.value && resolveColumn(col.map_id, e.target.value, false)} defaultValue="">
+                        <select
+                          onChange={(e) => e.target.value && resolveColumn(col.map_id, e.target.value, false)}
+                          defaultValue={col.matched_training_id || ''}
+                        >
                           <option value="" disabled>Assign training...</option>
                           {masterTrainings.map((mt) => (
                             <option key={mt.training_id} value={mt.training_id}>{mt.training_id} - {mt.training_name}</option>
