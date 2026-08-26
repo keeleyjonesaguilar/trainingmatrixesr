@@ -146,11 +146,16 @@ router.post('/:token/close', async (req, res) => {
 router.get('/:token/feedback', (req, res) => {
   const session = getSessionByToken(req.params.token);
   if (!session) return res.status(404).json({ error: "This feedback link isn't valid." });
+  // Question text comes from the admin-editable feedback_form_settings row (Keeley's request)
+  // - read here rather than through the authenticated /api/feedback-settings route, since this
+  // page has no login to read it with.
+  const labels = db.prepare('SELECT * FROM feedback_form_settings WHERE id = ?').get('default');
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
     trainer_name: session.trainer_name,
     session_date: session.session_date,
+    labels,
   });
 });
 

@@ -3,6 +3,80 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
+const FEEDBACK_LABEL_FIELDS = [
+  { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
+  { key: 'understood_material_label', label: 'Understood material (Yes/No)' },
+  { key: 'needs_additional_training_label', label: 'Needs additional training (Yes/No)' },
+  { key: 'effectiveness_label', label: 'Training effectiveness (star rating)' },
+  { key: 'trainer_rating_label', label: 'Trainer rating (star rating)' },
+  { key: 'comment_label', label: 'Trainer comment (free text)' },
+];
+
+// Admin-only editor for the question text shown on EVERY session's feedback form (Keeley's
+// request) - deliberately not scoped to this one session, since the underlying settings row
+// is shared, so the copy here is explicit that a change applies everywhere, not just here.
+function FeedbackQuestionsEditor() {
+  const [editing, setEditing] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = () => api.getFeedbackSettings().then((s) => { setSettings(s); setForm(s); }).catch((e) => setError(e.message));
+  useEffect(() => { if (editing && !settings) load(); }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.updateFeedbackSettings(form);
+      setSettings(updated);
+      setForm(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 20 }}>
+      <button type="button" className="link-button" onClick={() => setEditing((o) => !o)}>
+        {editing ? 'Hide' : 'Edit'} Feedback Questions
+      </button>
+      {editing && (
+        <div style={{ marginTop: 12 }}>
+          <p className="page-subtitle" style={{ marginTop: 0 }}>
+            These questions are shared by every session's feedback form - a change here applies everywhere, not just this session.
+          </p>
+          {error && <div className="error-banner">{error}</div>}
+          {!form ? (
+            <div className="empty-state">Loading...</div>
+          ) : (
+            <>
+              <div className="toolbar">
+                {FEEDBACK_LABEL_FIELDS.map((f) => (
+                  <div className="field-row" key={f.key}>
+                    <label>{f.label}</label>
+                    <input
+                      type="text"
+                      value={form[f.key]}
+                      onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                    />
+                  </div>
+                ))}
+              </div>
+              <button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+              <button className="secondary" onClick={() => { setForm(settings); setEditing(false); }}>Cancel</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecordStatusBadge({ status }) {
   const labels = {
     linked: 'Added to employee file',
@@ -453,6 +527,8 @@ export default function SessionDetail() {
           )}
         </div>
       )}
+
+      {isAdmin && <FeedbackQuestionsEditor />}
     </div>
   );
 }

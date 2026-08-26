@@ -3,6 +3,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const repo = require('../lib/repo');
+const { computeStatus } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
@@ -140,15 +141,23 @@ router.get('/:id/full-detail', (req, res) => {
     .all(employee.employee_id)
     .map((r) => {
       const requirement = repo.getRequirement(employee.client_id, r.training_id);
+      const masterTraining = repo.getMasterTraining(r.training_id);
+      // Status/expiration are recomputed live here (Keeley's report, 2026-08-26: this table
+      // was showing r.status/r.expiration_date straight off the DB row, frozen at whatever
+      // they were the last time the record was written - so a training that's genuinely
+      // expired by now kept showing its old status forever, unlike the stat tiles above
+      // which already recompute live via computeCell). Same computeStatus() every other page
+      // uses, just applied to every historical record here instead of only the latest one.
+      const { status, expirationDate } = computeStatus({ record: r, requirement, masterTraining });
       return {
         training_id: r.training_id,
         training_name: requirement?.client_training_name || r.master_training_name,
         master_training_name: r.master_training_name,
         original_client_training_name: r.original_client_training_name,
         completion_date: r.completion_date,
-        expiration_date: r.expiration_date,
-        status: r.status,
-        expiring_soon: repo.isExpiringSoon(r.status, r.expiration_date),
+        expiration_date: expirationDate,
+        status,
+        expiring_soon: repo.isExpiringSoon(status, expirationDate),
         notes: r.notes,
         record_id: r.record_id,
         certificate_filename: r.certificate_filename,
@@ -157,7 +166,27 @@ router.get('/:id/full-detail', (req, res) => {
       };
     });
 
-  res.json({ employee, client, trainings, completedRecords });
+  // Aggregate feedback rating for a trainer's own profile page (Keeley's request) - across
+  // every session they taught, not just their most recent one. Only meaningful for trainers,
+  // so it's skipped entirely for a regular trainee.
+  let trainerFeedbackSummary = null;
+  if (employee.employee_type === 'trainer') {
+    const agg = db
+      .prepare(
+        `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
+         FROM session_feedback sf
+         JOIN training_sessions ts ON ts.session_id = sf.session_id
+         WHERE ts.trainer_employee_id = ?`
+      )
+      .get(employee.employee_id);
+    trainerFeedbackSummary = {
+      avg_trainer_rating: agg.response_count > 0 ? agg.avg_trainer_rating : null,
+      avg_effectiveness_rating: agg.response_count > 0 ? agg.avg_effectiveness_rating : null,
+      response_count: agg.response_count,
+    };
+  }
+
+  res.json({ employee, client, trainings, completedRecords, trainerFeedbackSummary });
 });
 
 // Trainer profiles are created via the dedicated /api/trainers route, not here - this route

@@ -4,7 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
-const TYPE_OPTIONS = ['Training', 'Fit Test', 'Certification', 'License', 'Orientation'];
+const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
 
 // Merged from the old Master Trainings page (Keeley's request): the catalog editor and the
 // session-count/roster lens over the same rows are now one page. Training ID is auto-generated

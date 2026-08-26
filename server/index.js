@@ -46,6 +46,7 @@ app.use('/api/matrix', requireAuth, require('./routes/matrix'));
 app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
 app.use('/api/import', requireAuth, require('./routes/import'));
 app.use('/api/reports', requireAuth, require('./routes/reports'));
+app.use('/api/feedback-settings', requireAuth, require('./routes/feedbackSettings'));
 
 // Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
 // login as everything else above. /api/public is the trainee-facing side and is deliberately

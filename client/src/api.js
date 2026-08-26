@@ -171,4 +171,8 @@ export const api = {
   // code at /feedback/:token.
   publicFeedbackInfo: (token) => request(`/public/${token}/feedback`),
   publicSubmitFeedback: (token, payload) => request(`/public/${token}/feedback`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Feedback form question text, admin-editable, shared by every session's feedback form.
+  getFeedbackSettings: () => request('/feedback-settings'),
+  updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
 };

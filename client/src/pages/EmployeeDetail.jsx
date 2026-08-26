@@ -77,6 +77,40 @@ function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
   );
 }
 
+// A trainer's aggregate feedback rating, pulled from session_feedback across every session
+// they've taught (Keeley's request) - not just their most recent session.
+function TrainerRatingSummary({ summary }) {
+  if (!summary || !summary.response_count) {
+    return (
+      <div className="card">
+        <h2>Overall Trainer Rating</h2>
+        <p className="page-subtitle" style={{ margin: 0 }}>No feedback responses yet.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <h2>Overall Trainer Rating</h2>
+      <div className="stat-grid">
+        <div className="stat-tile">
+          <div className="stat-label">Trainer Rating</div>
+          <div className="value">★ {summary.avg_trainer_rating.toFixed(1)}</div>
+          <span className="caption">out of 5</span>
+        </div>
+        <div className="stat-tile">
+          <div className="stat-label">Training Effectiveness</div>
+          <div className="value">★ {summary.avg_effectiveness_rating.toFixed(1)}</div>
+          <span className="caption">out of 5</span>
+        </div>
+        <div className="stat-tile">
+          <div className="stat-label">Responses</div>
+          <div className="value">{summary.response_count}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // A trainer's own list of sessions they've taught, linking each to its SessionDetail page.
 function TrainingsTaughtSection({ employeeId }) {
   const [sessions, setSessions] = useState([]);
@@ -133,7 +167,7 @@ export default function EmployeeDetail() {
   if (error) return <div className="error-banner">{error}</div>;
   if (!detail) return <div className="empty-state">Loading...</div>;
 
-  const { employee, client, trainings, completedRecords } = detail;
+  const { employee, client, trainings, completedRecords, trainerFeedbackSummary } = detail;
 
   // The stat tiles are compliance-style counts - "how many training TYPES is this person
   // currently current/expiring/expired on" - so they're based on the one-cell-per-type view
@@ -253,6 +287,7 @@ export default function EmployeeDetail() {
         </div>
       )}
 
+      {isTrainer && <TrainerRatingSummary summary={trainerFeedbackSummary} />}
       {isTrainer && <TrainingsTaughtSection employeeId={employee.employee_id} />}
 
       <div className="layout-2col">

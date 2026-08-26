@@ -96,7 +96,7 @@ export default function PublicFeedback() {
             {formError && <p className="error-banner">{formError}</p>}
             <form onSubmit={submit}>
               <div className="field">
-                <label>Were you able to ask questions during the training?</label>
+                <label>{info.labels.could_ask_questions_label}</label>
                 <select value={couldAskQuestions} onChange={(e) => setCouldAskQuestions(e.target.value)}>
                   <option value="">Select…</option>
                   <option value="yes">Yes</option>
@@ -104,7 +104,7 @@ export default function PublicFeedback() {
                 </select>
               </div>
               <div className="field">
-                <label>Did you understand the material?</label>
+                <label>{info.labels.understood_material_label}</label>
                 <select value={understoodMaterial} onChange={(e) => setUnderstoodMaterial(e.target.value)}>
                   <option value="">Select…</option>
                   <option value="yes">Yes</option>
@@ -112,7 +112,7 @@ export default function PublicFeedback() {
                 </select>
               </div>
               <div className="field">
-                <label>Do you feel you need additional training on this topic?</label>
+                <label>{info.labels.needs_additional_training_label}</label>
                 <select value={needsAdditionalTraining} onChange={(e) => setNeedsAdditionalTraining(e.target.value)}>
                   <option value="">Select…</option>
                   <option value="yes">Yes</option>
@@ -120,15 +120,15 @@ export default function PublicFeedback() {
                 </select>
               </div>
               <div className="field">
-                <label>How effective was the training overall?</label>
+                <label>{info.labels.effectiveness_label}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
               </div>
               <div className="field">
-                <label>How would you rate the trainer?</label>
+                <label>{info.labels.trainer_rating_label}</label>
                 <StarRating value={trainerRating} onChange={setTrainerRating} />
               </div>
               <div className="field">
-                <label>Any comments on the trainer's performance? (optional)</label>
+                <label>{info.labels.comment_label}</label>
                 <textarea
                   rows={3}
                   value={comment}

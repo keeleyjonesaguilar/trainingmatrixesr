@@ -5,7 +5,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
-const TYPE_OPTIONS = ['Training', 'Fit Test', 'Certification', 'License', 'Orientation'];
+const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
 const SESSIONS_PER_PAGE = 5;
 
 // Settings panel (moved from the old Master Trainings page's inline row-editor): the same
