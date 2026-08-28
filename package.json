@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server/index.js",
     "seed": "node server/seed/seed.js",
-    "dev": "node server/index.js"
+    "dev": "node server/index.js",
+    "migrate:pg": "node server/scripts/migrate-sqlite-to-postgres.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
@@ -18,8 +19,10 @@
     "csv-parse": "^5.5.6",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
     "multer": "^2.0.0",
     "pdfkit": "^0.15.0",
+    "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "uuid": "^11.0.0"
   }

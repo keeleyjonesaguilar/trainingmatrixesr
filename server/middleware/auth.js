@@ -1,4 +1,4 @@
-const db = require('../db');
+const { dbGet } = require('../db');
 const { verifyToken } = require('../lib/auth');
 const { getOrCreateSessionSecret } = require('../lib/settings');
 
@@ -24,14 +24,14 @@ function parseCookies(header) {
 
 // Reads the session cookie if present and attaches req.user when it's valid. Never blocks
 // the request itself - routes that require login use requireAuth below to enforce that.
-function attachUser(req, res, next) {
+async function attachUser(req, res, next) {
   req.cookies = parseCookies(req.headers.cookie);
   const token = req.cookies[COOKIE_NAME];
   if (token) {
-    const secret = getOrCreateSessionSecret();
+    const secret = await getOrCreateSessionSecret();
     const payload = verifyToken(token, secret);
     if (payload && payload.sub) {
-      const user = db.prepare('SELECT user_id, username, role FROM app_users WHERE user_id = ?').get(payload.sub);
+      const user = await dbGet('SELECT user_id, username, role FROM app_users WHERE user_id = ?', [payload.sub]);
       if (user) req.user = user;
     }
   }

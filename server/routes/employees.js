@@ -1,7 +1,7 @@
 const fs = require('fs');
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const db = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { computeStatus } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
@@ -13,7 +13,7 @@ const router = express.Router();
 // Trainers live under the internal pseudo-client and are managed from their own dedicated
 // Trainers page (server/routes/trainers.js) - they're excluded here so they never show up in
 // the regular Clients->Employees browsing flow, Matrix filter dropdowns, or search.
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { client_id, department, job_title, search, activeOnly } = req.query;
   const clauses = [`employee_type != 'trainer'`];
   const params = [];
@@ -23,78 +23,78 @@ router.get('/', (req, res) => {
   if (search) { clauses.push('LOWER(full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
   if (activeOnly === 'true') { clauses.push('active = 1'); }
   const where = `WHERE ${clauses.join(' AND ')}`;
-  const rows = db.prepare(`SELECT * FROM employees ${where} ORDER BY full_name ASC`).all(...params);
+  const rows = await dbAll(`SELECT * FROM employees ${where} ORDER BY full_name ASC`, params);
   res.json(rows);
 });
 
 // Distinct department/job title lists, used to populate matrix filter dropdowns (spec section 8).
-router.get('/facets/list', (req, res) => {
+router.get('/facets/list', async (req, res) => {
   const { client_id } = req.query;
   const clauses = [`employee_type != 'trainer'`];
   const params = [];
   if (client_id) { clauses.push('client_id = ?'); params.push(client_id); }
   const base = clauses.join(' AND ');
-  const departments = db
-    .prepare(`SELECT DISTINCT department FROM employees WHERE ${base} AND department IS NOT NULL AND department != '' ORDER BY department`)
-    .all(...params)
-    .map((r) => r.department);
-  const jobTitles = db
-    .prepare(`SELECT DISTINCT job_title FROM employees WHERE ${base} AND job_title IS NOT NULL AND job_title != '' ORDER BY job_title`)
-    .all(...params)
-    .map((r) => r.job_title);
+  const departments = (await dbAll(
+    `SELECT DISTINCT department FROM employees WHERE ${base} AND department IS NOT NULL AND department != '' ORDER BY department`,
+    params
+  )).map((r) => r.department);
+  const jobTitles = (await dbAll(
+    `SELECT DISTINCT job_title FROM employees WHERE ${base} AND job_title IS NOT NULL AND job_title != '' ORDER BY job_title`,
+    params
+  )).map((r) => r.job_title);
   res.json({ departments, jobTitles });
 });
 
 // Possible-duplicate detection (Keeley's request): groups of trainee employees, scoped to the
 // same client, that share either a normalized name or a normalized phone number. Registered
 // before /:id so the literal path "duplicates" doesn't get swallowed by the :id param route.
-router.get('/duplicates', (req, res) => {
-  res.json(repo.findDuplicateEmployeeClusters());
+router.get('/duplicates', async (req, res) => {
+  res.json(await repo.findDuplicateEmployeeClusters());
 });
 
 // Merge one or more duplicate employee records into a single "winner" - keeps information
 // from every side (a blank field on the winner is filled in from a loser), reassigns training
 // records and sign-in-roster links, then removes the now-empty duplicate rows.
-router.post('/merge', requireAdmin, (req, res) => {
+router.post('/merge', requireAdmin, async (req, res) => {
   const { winner_id, loser_ids } = req.body || {};
   if (!winner_id || !Array.isArray(loser_ids) || loser_ids.length === 0) {
     return res.status(400).json({ error: 'winner_id and a non-empty loser_ids array are required' });
   }
-  const winner = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(winner_id);
+  const winner = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [winner_id]);
   if (!winner) return res.status(404).json({ error: 'Winner employee not found' });
 
-  repo.mergeEmployees(winner_id, loser_ids);
-  res.json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(winner_id));
+  await repo.mergeEmployees(winner_id, loser_ids);
+  res.json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [winner_id]));
 });
 
 // Dismiss a possible-duplicate grouping without merging (Keeley's request) - e.g. two
 // employees who really do share a name/phone but aren't the same person. Only affects that
 // exact grouping; a differently-shaped grouping involving one of these employees later would
 // still be flagged.
-router.post('/duplicates/ignore', requireAdmin, (req, res) => {
+router.post('/duplicates/ignore', requireAdmin, async (req, res) => {
   const { member_ids } = req.body || {};
   if (!Array.isArray(member_ids) || member_ids.length < 2) {
     return res.status(400).json({ error: 'member_ids must be an array of at least 2 employee ids' });
   }
-  repo.ignoreDuplicateCluster('employee', member_ids);
+  await repo.ignoreDuplicateCluster('employee', member_ids);
   res.json({ ok: true });
 });
 
-router.get('/:id', (req, res) => {
-  const row = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id);
+router.get('/:id', async (req, res) => {
+  const row = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Employee not found' });
   res.json(row);
 });
 
 // Employee Detail Page (spec section 9): all 52 (or however many active) Master Trainings
 // with this employee's corresponding record, status, and original client wording.
-router.get('/:id/full-detail', (req, res) => {
-  const employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id);
+router.get('/:id/full-detail', async (req, res) => {
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(employee.client_id);
-  const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
-  const trainings = masterTrainings.map((mt) => {
-    const { requirement, record, status, expirationDate } = repo.computeCell({
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [employee.client_id]);
+  const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
+  const trainings = await Promise.all(masterTrainings.map(async (mt) => {
+    const { requirement, record, status, expirationDate } = await repo.computeCell({
       employeeId: employee.employee_id,
       clientId: employee.client_id,
       trainingId: mt.training_id,
@@ -111,7 +111,7 @@ router.get('/:id/full-detail', (req, res) => {
       completion_date: record ? record.completion_date : null,
       expiration_date: expirationDate,
       status,
-      expiring_soon: repo.isExpiringSoon(status, expirationDate),
+      expiring_soon: await repo.isExpiringSoon(status, expirationDate),
       notes: record ? record.notes : null,
       record_id: record ? record.record_id : null,
       duplicate_status: record ? record.duplicate_status : 'none',
@@ -120,65 +120,63 @@ router.get('/:id/full-detail', (req, res) => {
       // Only records created by closing out a sign-in session have a captured signature - one
       // manually entered via "Record Training Completion" or brought in by CSV import has none.
       signature: record
-        ? db.prepare('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1').get(record.record_id)?.signature || null
+        ? (await dbGet('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1', [record.record_id]))?.signature || null
         : null,
     };
-  });
+  }));
 
   // Every completed record on file, not just the one "latest" one per training type (Keeley's
   // request: nothing should ever look overridden - a training taken more than once, e.g. Day
   // 1/Day 2 of a multi-day course or a later re-cert, needs its own row every time). The stat
   // tiles above and the Matrix/Dashboard still use the single-cell-per-type view above, since
   // compliance status is inherently "per training type," but this list is the actual history.
-  const completedRecords = db
-    .prepare(
-      `SELECT r.*, mt.training_name AS master_training_name
-       FROM employee_training_records r
-       JOIN master_trainings mt ON mt.training_id = r.training_id
-       WHERE r.employee_id = ? AND r.is_inactive = 0 AND r.completion_date IS NOT NULL
-       ORDER BY r.completion_date DESC, r.rowid DESC`
-    )
-    .all(employee.employee_id)
-    .map((r) => {
-      const requirement = repo.getRequirement(employee.client_id, r.training_id);
-      const masterTraining = repo.getMasterTraining(r.training_id);
-      // Status/expiration are recomputed live here (Keeley's report, 2026-08-26: this table
-      // was showing r.status/r.expiration_date straight off the DB row, frozen at whatever
-      // they were the last time the record was written - so a training that's genuinely
-      // expired by now kept showing its old status forever, unlike the stat tiles above
-      // which already recompute live via computeCell). Same computeStatus() every other page
-      // uses, just applied to every historical record here instead of only the latest one.
-      const { status, expirationDate } = computeStatus({ record: r, requirement, masterTraining });
-      return {
-        training_id: r.training_id,
-        training_name: requirement?.client_training_name || r.master_training_name,
-        master_training_name: r.master_training_name,
-        original_client_training_name: r.original_client_training_name,
-        completion_date: r.completion_date,
-        expiration_date: expirationDate,
-        status,
-        expiring_soon: repo.isExpiringSoon(status, expirationDate),
-        notes: r.notes,
-        record_id: r.record_id,
-        certificate_filename: r.certificate_filename,
-        trainer_employee_id: r.trainer_employee_id,
-        signature: db.prepare('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1').get(r.record_id)?.signature || null,
-      };
-    });
+  const completedRecordsRaw = await dbAll(
+    `SELECT r.*, mt.training_name AS master_training_name
+     FROM employee_training_records r
+     JOIN master_trainings mt ON mt.training_id = r.training_id
+     WHERE r.employee_id = ? AND r.is_inactive = 0 AND r.completion_date IS NOT NULL
+     ORDER BY r.completion_date DESC, r.insert_seq DESC`,
+    [employee.employee_id]
+  );
+  const completedRecords = await Promise.all(completedRecordsRaw.map(async (r) => {
+    const requirement = await repo.getRequirement(employee.client_id, r.training_id);
+    const masterTraining = await repo.getMasterTraining(r.training_id);
+    // Status/expiration are recomputed live here (Keeley's report, 2026-08-26: this table
+    // was showing r.status/r.expiration_date straight off the DB row, frozen at whatever
+    // they were the last time the record was written - so a training that's genuinely
+    // expired by now kept showing its old status forever, unlike the stat tiles above
+    // which already recompute live via computeCell). Same computeStatus() every other page
+    // uses, just applied to every historical record here instead of only the latest one.
+    const { status, expirationDate } = computeStatus({ record: r, requirement, masterTraining });
+    return {
+      training_id: r.training_id,
+      training_name: requirement?.client_training_name || r.master_training_name,
+      master_training_name: r.master_training_name,
+      original_client_training_name: r.original_client_training_name,
+      completion_date: r.completion_date,
+      expiration_date: expirationDate,
+      status,
+      expiring_soon: await repo.isExpiringSoon(status, expirationDate),
+      notes: r.notes,
+      record_id: r.record_id,
+      certificate_filename: r.certificate_filename,
+      trainer_employee_id: r.trainer_employee_id,
+      signature: (await dbGet('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1', [r.record_id]))?.signature || null,
+    };
+  }));
 
   // Aggregate feedback rating for a trainer's own profile page (Keeley's request) - across
   // every session they taught, not just their most recent one. Only meaningful for trainers,
   // so it's skipped entirely for a regular trainee.
   let trainerFeedbackSummary = null;
   if (employee.employee_type === 'trainer') {
-    const agg = db
-      .prepare(
-        `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
-         FROM session_feedback sf
-         JOIN training_sessions ts ON ts.session_id = sf.session_id
-         WHERE ts.trainer_employee_id = ?`
-      )
-      .get(employee.employee_id);
+    const agg = await dbGet(
+      `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
+       FROM session_feedback sf
+       JOIN training_sessions ts ON ts.session_id = sf.session_id
+       WHERE ts.trainer_employee_id = ?`,
+      [employee.employee_id]
+    );
     trainerFeedbackSummary = {
       avg_trainer_rating: agg.response_count > 0 ? agg.avg_trainer_rating : null,
       avg_effectiveness_rating: agg.response_count > 0 ? agg.avg_effectiveness_rating : null,
@@ -205,7 +203,7 @@ function assertClientTypeInvariant(clientId, employeeType) {
   }
 }
 
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   const {
     client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null,
     employee_type = 'trainee',
@@ -216,7 +214,7 @@ router.post('/', requireAdmin, (req, res) => {
   if (employee_number && !isValidPhoneNumber(employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
-  const client = db.prepare('SELECT client_id FROM clients WHERE client_id = ?').get(client_id);
+  const client = await dbGet('SELECT client_id FROM clients WHERE client_id = ?', [client_id]);
   if (!client) return res.status(400).json({ error: 'client_id does not exist' });
   try {
     assertClientTypeInvariant(client_id, employee_type);
@@ -224,15 +222,16 @@ router.post('/', requireAdmin, (req, res) => {
     return res.status(400).json({ error: err.message });
   }
   const employee_id = uuidv4();
-  db.prepare(
+  await dbRun(
     `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes, employee_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type);
-  res.status(201).json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id));
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type]
+  );
+  res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 
-router.put('/:id', requireAdmin, (req, res) => {
-  const existing = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id);
+router.put('/:id', requireAdmin, async (req, res) => {
+  const existing = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   const merged = { ...existing, ...req.body };
   try {
@@ -243,13 +242,11 @@ router.put('/:id', requireAdmin, (req, res) => {
   if (merged.employee_number && !isValidPhoneNumber(merged.employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
-  db.prepare(
-    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`
-  ).run(
-    formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes,
-    req.params.id
+  await dbRun(
+    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`,
+    [formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes, req.params.id]
   );
-  res.json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id));
+  res.json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]));
 });
 
 // Permanently delete an employee created by mistake (Keeley's request). Their training
@@ -257,25 +254,27 @@ router.put('/:id', requireAdmin, (req, res) => {
 // unlinked first. session_attendees.employee_id has no ON DELETE clause (defaults to
 // restrict), so any sign-in rows pointing at this employee are detached (set to NULL) first -
 // the sign-in record itself stays on the roster, just no longer linked to a profile.
-router.delete('/:id', requireAdmin, (req, res) => {
-  const existing = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(req.params.id);
+router.delete('/:id', requireAdmin, async (req, res) => {
+  const existing = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
 
-  const certs = db
-    .prepare('SELECT certificate_path FROM employee_training_records WHERE employee_id = ? AND certificate_path IS NOT NULL')
-    .all(req.params.id);
+  const certs = await dbAll(
+    'SELECT certificate_path FROM employee_training_records WHERE employee_id = ? AND certificate_path IS NOT NULL',
+    [req.params.id]
+  );
   for (const { certificate_path } of certs) {
     if (certificate_path && fs.existsSync(certificate_path)) fs.unlink(certificate_path, () => {});
   }
 
   // session_attendees.training_record_id also restricts deletion of the records it points to -
   // detach those too, since this employee's records are about to cascade-delete with them.
-  db.prepare(
+  await dbRun(
     `UPDATE session_attendees SET training_record_id = NULL
-     WHERE training_record_id IN (SELECT record_id FROM employee_training_records WHERE employee_id = ?)`
-  ).run(req.params.id);
-  db.prepare('UPDATE session_attendees SET employee_id = NULL WHERE employee_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM employees WHERE employee_id = ?').run(req.params.id);
+     WHERE training_record_id IN (SELECT record_id FROM employee_training_records WHERE employee_id = ?)`,
+    [req.params.id]
+  );
+  await dbRun('UPDATE session_attendees SET employee_id = NULL WHERE employee_id = ?', [req.params.id]);
+  await dbRun('DELETE FROM employees WHERE employee_id = ?', [req.params.id]);
   res.status(204).end();
 });
 

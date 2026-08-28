@@ -14,7 +14,7 @@ const express = require('express');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { parse } = require('csv-parse/sync');
-const db = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const repo = require('../lib/repo');
 const { parseSourceValue } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
@@ -68,12 +68,12 @@ function stripNoiseWords(normalized) {
 //    - and ONLY when that's true for exactly one training. Multiple candidates (e.g. a bare
 //    "Safety" header matching several trainings) stays "needs_review" rather than guessing -
 //    the whole point of this flow is to never guess silently, so ambiguity still goes to a human.
-function matchTrainingColumn(header) {
+async function matchTrainingColumn(header) {
   const norm = normalize(header);
-  const alias = db.prepare('SELECT training_id FROM training_aliases WHERE alias_text = ?').get(norm);
+  const alias = await dbGet('SELECT training_id FROM training_aliases WHERE alias_text = ?', [norm]);
   if (alias) return { training_id: alias.training_id, confidence: 'exact_alias' };
 
-  const allTrainings = db.prepare('SELECT training_id, training_name FROM master_trainings').all();
+  const allTrainings = await dbAll('SELECT training_id, training_name FROM master_trainings');
 
   const exactName = allTrainings.find((mt) => normalize(mt.training_name) === norm);
   if (exactName) return { training_id: exactName.training_id, confidence: 'exact_alias' };
@@ -101,8 +101,8 @@ function matchTrainingColumn(header) {
 // training's exact name as the header, since that's the one thing matchTrainingColumn() is
 // guaranteed to auto-match on a fresh import with no prior alias history. A cell under a
 // training's column just holds that training's completion date for that row.
-router.get('/template.csv', (req, res) => {
-  const trainings = repo.listMasterTrainings({ activeOnly: true });
+router.get('/template.csv', async (req, res) => {
+  const trainings = await repo.listMasterTrainings({ activeOnly: true });
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const header = ['Client', 'Employee First Name', 'Employee Last Name', 'Trainer', ...trainings.map((t) => t.training_name)];
   res.set('Content-Type', 'text/csv');
@@ -112,7 +112,7 @@ router.get('/template.csv', (req, res) => {
 
 // Step 1: upload + preview. Parses headers, auto-matches training columns and client names,
 // stages every raw row (nothing from the source file is ever discarded).
-router.post('/preview', requireAdmin, upload.single('file'), (req, res) => {
+router.post('/preview', requireAdmin, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'CSV file is required (field name "file")' });
 
   let records;
@@ -143,30 +143,30 @@ router.post('/preview', requireAdmin, upload.single('file'), (req, res) => {
   }
 
   const batchId = uuidv4();
-  db.prepare('INSERT INTO import_batches (batch_id, filename, imported_at, status, imported_by) VALUES (?, ?, ?, ?, ?)').run(
+  await dbRun('INSERT INTO import_batches (batch_id, filename, imported_at, status, imported_by) VALUES (?, ?, ?, ?, ?)', [
     batchId,
     req.file.originalname,
     new Date().toISOString(),
     'pending_review',
-    req.user ? req.user.username : null
-  );
+    req.user ? req.user.username : null,
+  ]);
 
-  const insertMap = db.prepare(
-    `INSERT INTO import_column_map (map_id, batch_id, source_column_header, matched_training_id, match_confidence, resolution_status)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  );
   const columnMapPreview = [];
   for (const h of trainingHeaders) {
-    const { training_id, confidence } = matchTrainingColumn(h);
+    const { training_id, confidence } = await matchTrainingColumn(h);
     const resolution = training_id ? 'auto_matched' : 'needs_review';
     const mapId = uuidv4();
-    insertMap.run(mapId, batchId, h, training_id, confidence, resolution);
+    await dbRun(
+      `INSERT INTO import_column_map (map_id, batch_id, source_column_header, matched_training_id, match_confidence, resolution_status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [mapId, batchId, h, training_id, confidence, resolution]
+    );
     columnMapPreview.push({ map_id: mapId, source_column_header: h, matched_training_id: training_id, match_confidence: confidence, resolution_status: resolution });
   }
 
   // Existing clients loaded once, matched in memory - exact, case-insensitive, same rule
   // repo.findOrCreateClientByName uses elsewhere, just without the auto-create.
-  const existingClients = db.prepare('SELECT client_id, client_name FROM clients WHERE is_internal = 0').all();
+  const existingClients = await dbAll('SELECT client_id, client_name FROM clients WHERE is_internal = 0');
   const findClientId = (rawName) => {
     const trimmed = String(rawName || '').trim().toLowerCase();
     if (!trimmed) return null;
@@ -174,14 +174,8 @@ router.post('/preview', requireAdmin, upload.single('file'), (req, res) => {
     return match ? match.client_id : null;
   };
 
-  const insertRow = db.prepare(
-    `INSERT INTO import_staged_rows
-     (staged_row_id, batch_id, employee_number_raw, full_name_raw, job_title_raw, department_raw,
-      client_name_raw, resolved_client_id, first_name_raw, last_name_raw, trainer_name_raw, raw_row_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  const txn = db.transaction((rows) => {
-    for (const row of rows) {
+  await withTransaction(async () => {
+    for (const row of records) {
       const firstName = identityHeaders.first_name ? (row[identityHeaders.first_name] || '').trim() : '';
       const lastName = identityHeaders.last_name ? (row[identityHeaders.last_name] || '').trim() : '';
       const fullName = identityHeaders.full_name
@@ -189,31 +183,35 @@ router.post('/preview', requireAdmin, upload.single('file'), (req, res) => {
         : `${firstName} ${lastName}`.trim();
       const clientNameRaw = row[identityHeaders.client] || '';
 
-      insertRow.run(
-        uuidv4(),
-        batchId,
-        identityHeaders.employee_number ? row[identityHeaders.employee_number] : null,
-        fullName || null,
-        identityHeaders.job_title ? row[identityHeaders.job_title] : null,
-        identityHeaders.department ? row[identityHeaders.department] : null,
-        clientNameRaw,
-        findClientId(clientNameRaw),
-        firstName || null,
-        lastName || null,
-        identityHeaders.trainer ? row[identityHeaders.trainer] : null,
-        JSON.stringify(row)
+      await dbRun(
+        `INSERT INTO import_staged_rows
+         (staged_row_id, batch_id, employee_number_raw, full_name_raw, job_title_raw, department_raw,
+          client_name_raw, resolved_client_id, first_name_raw, last_name_raw, trainer_name_raw, raw_row_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          batchId,
+          identityHeaders.employee_number ? row[identityHeaders.employee_number] : null,
+          fullName || null,
+          identityHeaders.job_title ? row[identityHeaders.job_title] : null,
+          identityHeaders.department ? row[identityHeaders.department] : null,
+          clientNameRaw,
+          findClientId(clientNameRaw),
+          firstName || null,
+          lastName || null,
+          identityHeaders.trainer ? row[identityHeaders.trainer] : null,
+          JSON.stringify(row),
+        ]
       );
     }
   });
-  txn(records);
 
-  const clientsNeedingReview = db
-    .prepare(
-      `SELECT client_name_raw, COUNT(*) AS row_count FROM import_staged_rows
-       WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''
-       GROUP BY client_name_raw`
-    )
-    .all(batchId);
+  const clientsNeedingReview = await dbAll(
+    `SELECT client_name_raw, COUNT(*) AS row_count FROM import_staged_rows
+     WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''
+     GROUP BY client_name_raw`,
+    [batchId]
+  );
 
   res.status(201).json({
     batch_id: batchId,
@@ -225,95 +223,96 @@ router.post('/preview', requireAdmin, upload.single('file'), (req, res) => {
   });
 });
 
-router.get('/batches/:batchId', (req, res) => {
-  const batch = db.prepare('SELECT * FROM import_batches WHERE batch_id = ?').get(req.params.batchId);
+router.get('/batches/:batchId', async (req, res) => {
+  const batch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
-  const columnMap = db.prepare('SELECT * FROM import_column_map WHERE batch_id = ?').all(req.params.batchId);
-  const rowCount = db.prepare('SELECT COUNT(*) AS n FROM import_staged_rows WHERE batch_id = ?').get(req.params.batchId).n;
-  const clientsNeedingReview = db
-    .prepare(
-      `SELECT client_name_raw, COUNT(*) AS row_count FROM import_staged_rows
-       WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''
-       GROUP BY client_name_raw`
-    )
-    .all(req.params.batchId);
+  const columnMap = await dbAll('SELECT * FROM import_column_map WHERE batch_id = ?', [req.params.batchId]);
+  const { n: rowCount } = await dbGet('SELECT COUNT(*) AS n FROM import_staged_rows WHERE batch_id = ?', [req.params.batchId]);
+  const clientsNeedingReview = await dbAll(
+    `SELECT client_name_raw, COUNT(*) AS row_count FROM import_staged_rows
+     WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''
+     GROUP BY client_name_raw`,
+    [req.params.batchId]
+  );
   res.json({ batch, column_map: columnMap, row_count: rowCount, clients_needing_review: clientsNeedingReview });
 });
 
 // Step 2a: manually resolve an ambiguous/unmatched column. Remembers the choice as a new alias
 // so the same client terminology auto-matches next time (spec section 5).
-router.put('/batches/:batchId/column-map/:mapId', requireAdmin, (req, res) => {
-  const map = db.prepare('SELECT * FROM import_column_map WHERE map_id = ? AND batch_id = ?').get(req.params.mapId, req.params.batchId);
+router.put('/batches/:batchId/column-map/:mapId', requireAdmin, async (req, res) => {
+  const map = await dbGet('SELECT * FROM import_column_map WHERE map_id = ? AND batch_id = ?', [req.params.mapId, req.params.batchId]);
   if (!map) return res.status(404).json({ error: 'Column mapping not found' });
 
   const { training_id, ignore } = req.body;
   if (ignore) {
-    db.prepare('UPDATE import_column_map SET resolution_status = ?, matched_training_id = NULL WHERE map_id = ?').run('ignored', req.params.mapId);
-    return res.json(db.prepare('SELECT * FROM import_column_map WHERE map_id = ?').get(req.params.mapId));
+    await dbRun('UPDATE import_column_map SET resolution_status = ?, matched_training_id = NULL WHERE map_id = ?', ['ignored', req.params.mapId]);
+    return res.json(await dbGet('SELECT * FROM import_column_map WHERE map_id = ?', [req.params.mapId]));
   }
   if (!training_id) return res.status(400).json({ error: 'training_id or ignore is required' });
-  const mt = repo.getMasterTraining(training_id);
+  const mt = await repo.getMasterTraining(training_id);
   if (!mt) return res.status(400).json({ error: 'training_id does not exist' });
 
-  db.prepare('UPDATE import_column_map SET matched_training_id = ?, match_confidence = ?, resolution_status = ? WHERE map_id = ?').run(
+  await dbRun('UPDATE import_column_map SET matched_training_id = ?, match_confidence = ?, resolution_status = ? WHERE map_id = ?', [
     training_id,
     'manual',
     'resolved',
-    req.params.mapId
-  );
+    req.params.mapId,
+  ]);
 
   const aliasText = normalize(map.source_column_header);
-  db.prepare(
+  await dbRun(
     `INSERT INTO training_aliases (alias_id, alias_text, training_id) VALUES (?, ?, ?)
-     ON CONFLICT(alias_text) DO UPDATE SET training_id = excluded.training_id`
-  ).run(uuidv4(), aliasText, training_id);
+     ON CONFLICT(alias_text) DO UPDATE SET training_id = excluded.training_id`,
+    [uuidv4(), aliasText, training_id]
+  );
 
-  res.json(db.prepare('SELECT * FROM import_column_map WHERE map_id = ?').get(req.params.mapId));
+  res.json(await dbGet('SELECT * FROM import_column_map WHERE map_id = ?', [req.params.mapId]));
 });
 
 // Step 2b: manually resolve a client name the automatch couldn't confidently match - either
 // point every row that used this raw name at an existing client, or create a new one from it.
-router.put('/batches/:batchId/resolve-client', requireAdmin, (req, res) => {
+router.put('/batches/:batchId/resolve-client', requireAdmin, async (req, res) => {
   const { client_name_raw, client_id, create_new } = req.body || {};
   if (!client_name_raw) return res.status(400).json({ error: 'client_name_raw is required' });
 
   let resolvedId = client_id;
   if (create_new) {
-    resolvedId = repo.findOrCreateClientByName(client_name_raw);
+    resolvedId = await repo.findOrCreateClientByName(client_name_raw);
   }
   if (!resolvedId) return res.status(400).json({ error: 'client_id or create_new is required' });
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(resolvedId);
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [resolvedId]);
   if (!client) return res.status(400).json({ error: 'client_id does not exist' });
 
-  db.prepare('UPDATE import_staged_rows SET resolved_client_id = ? WHERE batch_id = ? AND client_name_raw = ?').run(
+  await dbRun('UPDATE import_staged_rows SET resolved_client_id = ? WHERE batch_id = ? AND client_name_raw = ?', [
     resolvedId,
     req.params.batchId,
-    client_name_raw
-  );
+    client_name_raw,
+  ]);
   res.json({ client_name_raw, resolved_client_id: resolvedId, client });
 });
 
 // Step 3: commit. Every training column must be resolved (mapped or ignored), and every
 // row's client must be resolved, before anything is ever written in.
-router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
-  const batch = db.prepare('SELECT * FROM import_batches WHERE batch_id = ?').get(req.params.batchId);
+router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
+  const batch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   if (batch.status !== 'pending_review') return res.status(409).json({ error: `Batch already ${batch.status}` });
 
-  const columnMap = db.prepare('SELECT * FROM import_column_map WHERE batch_id = ?').all(req.params.batchId);
+  const columnMap = await dbAll('SELECT * FROM import_column_map WHERE batch_id = ?', [req.params.batchId]);
   const pending = columnMap.filter((c) => c.resolution_status === 'needs_review');
   if (pending.length) {
     return res.status(400).json({ error: 'Some columns still need review before committing', pending_columns: pending });
   }
-  const unresolvedClientCount = db
-    .prepare(`SELECT COUNT(*) AS n FROM import_staged_rows WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''`)
-    .get(req.params.batchId).n;
+  const { n: unresolvedClientCount } = await dbGet(
+    `SELECT COUNT(*) AS n FROM import_staged_rows WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''`,
+    [req.params.batchId]
+  );
   if (unresolvedClientCount > 0) {
     return res.status(400).json({ error: 'Some rows still need their client resolved before committing' });
   }
 
   const activeMap = columnMap.filter((c) => c.resolution_status !== 'ignored' && c.matched_training_id);
-  const stagedRows = db.prepare('SELECT * FROM import_staged_rows WHERE batch_id = ?').all(req.params.batchId);
+  const stagedRows = await dbAll('SELECT * FROM import_staged_rows WHERE batch_id = ?', [req.params.batchId]);
 
   let employeesCreated = 0;
   let recordsCreated = 0;
@@ -321,7 +320,7 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
   let rowsSkippedNoClient = 0;
   const createdRecordIds = [];
 
-  const txn = db.transaction(() => {
+  await withTransaction(async () => {
     for (const row of stagedRows) {
       const rawRow = JSON.parse(row.raw_row_json);
       const fullName = (row.full_name_raw || '').trim();
@@ -329,19 +328,21 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
       if (!row.resolved_client_id) { rowsSkippedNoClient += 1; continue; } // blank Client cell - nothing to attach this row to
 
       const clientId = row.resolved_client_id;
-      const trainerEmployeeId = row.trainer_name_raw ? repo.findOrCreateTrainerEmployee(row.trainer_name_raw) : null;
+      const trainerEmployeeId = row.trainer_name_raw ? await repo.findOrCreateTrainerEmployee(row.trainer_name_raw) : null;
 
-      let employee = db
-        .prepare('SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ? IS NULL)')
-        .get(clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw);
+      let employee = await dbGet(
+        'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ? IS NULL)',
+        [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
+      );
 
       if (!employee) {
         const employeeId = uuidv4();
-        db.prepare(
+        await dbRun(
           `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`
-        ).run(employeeId, clientId, formatPhoneNumber(row.employee_number_raw), fullName, row.job_title_raw, row.department_raw, `Created by import: ${batch.filename}`);
-        employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employeeId);
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+          [employeeId, clientId, formatPhoneNumber(row.employee_number_raw), fullName, row.job_title_raw, row.department_raw, `Created by import: ${batch.filename}`]
+        );
+        employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
         employeesCreated += 1;
       }
 
@@ -349,42 +350,42 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
         const cellValue = rawRow[col.source_column_header];
         if (cellValue === undefined || cellValue === null || String(cellValue).trim() === '') continue; // spec 13: blank isn't proof of anything - skip, don't create a false "Missing" record
         const parsed = parseSourceValue(cellValue);
-        const masterTraining = repo.getMasterTraining(col.matched_training_id);
+        const masterTraining = await repo.getMasterTraining(col.matched_training_id);
 
         const recordId = uuidv4();
         const now = new Date().toISOString();
-        db.prepare(
+        await dbRun(
           `INSERT INTO employee_training_records
            (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
             completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes,
             trainer_employee_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'Pending Review', ?, ?, NULL, ?, ?, ?)`
-        ).run(
-          recordId,
-          clientId,
-          employee.employee_id,
-          col.matched_training_id,
-          masterTraining.training_name,
-          col.source_column_header,
-          parsed.completion_date,
-          parsed.raw_source_value,
-          `Import: ${batch.filename}`,
-          trainerEmployeeId,
-          now,
-          now
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'Pending Review', ?, ?, NULL, ?, ?, ?)`,
+          [
+            recordId,
+            clientId,
+            employee.employee_id,
+            col.matched_training_id,
+            masterTraining.training_name,
+            col.source_column_header,
+            parsed.completion_date,
+            parsed.raw_source_value,
+            `Import: ${batch.filename}`,
+            trainerEmployeeId,
+            now,
+            now,
+          ]
         );
-        const persisted = repo.recomputeAndPersistRecord(recordId);
+        const persisted = await repo.recomputeAndPersistRecord(recordId);
         if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
         recordsCreated += 1;
         createdRecordIds.push(recordId);
       }
     }
-    db.prepare(
-      'UPDATE import_batches SET status = ?, records_imported = ?, records_needing_review = ? WHERE batch_id = ?'
-    ).run('committed', recordsCreated, recordsNeedingReview, req.params.batchId);
+    await dbRun(
+      'UPDATE import_batches SET status = ?, records_imported = ?, records_needing_review = ? WHERE batch_id = ?',
+      ['committed', recordsCreated, recordsNeedingReview, req.params.batchId]
+    );
   });
-
-  txn();
 
   res.json({
     batch_id: req.params.batchId,
@@ -410,10 +411,10 @@ router.post('/batches/:batchId/commit', requireAdmin, (req, res) => {
   })();
 });
 
-router.delete('/batches/:batchId', requireAdmin, (req, res) => {
-  const batch = db.prepare('SELECT * FROM import_batches WHERE batch_id = ?').get(req.params.batchId);
+router.delete('/batches/:batchId', requireAdmin, async (req, res) => {
+  const batch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
-  db.prepare('UPDATE import_batches SET status = ? WHERE batch_id = ?').run('cancelled', req.params.batchId);
+  await dbRun('UPDATE import_batches SET status = ? WHERE batch_id = ?', ['cancelled', req.params.batchId]);
   res.status(204).end();
 });
 

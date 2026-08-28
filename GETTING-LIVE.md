@@ -8,9 +8,11 @@ Total time: roughly 20-30 minutes the first time.
 One cost note up front: Render's **free** tier doesn't support the persistent storage this
 app needs (a free-tier app there would lose all your data every time it restarts). You'll
 need Render's **Starter** plan, which is about **$7/month**, plus roughly $0.25/month for
-the small amount of disk storage this app uses. If you'd rather avoid that and use a free
-trial period instead, Railway was the other option we discussed — happy to switch this guide
-back if you change your mind. Otherwise, here's Render:
+the small amount of disk storage this app uses (for certificate/roster PDFs), plus the
+separate Postgres database cost (Training-Matrix-db) shown on its own page in your Render
+dashboard. If you'd rather avoid that and use a free trial period instead, Railway was the
+other option we discussed — happy to switch this guide back if you change your mind.
+Otherwise, here's Render:
 
 ---
 
@@ -53,9 +55,12 @@ Your code is now on GitHub. You won't need to touch GitHub again unless you want
 
 Don't click Create Web Service yet — the next two parts add settings on this same page.
 
-## Part 4: Add persistent storage
+## Part 4: Add persistent storage and connect the database
 
-Without this step, your data would be erased every time the app restarts or redeploys.
+The app's data (clients, employees, training records) lives in a Postgres database
+("Training-Matrix-db"), not on this service's disk - but the disk is still needed for
+certificate/roster PDF files, which are still written to disk and just referenced from the
+database by file path.
 
 1. Still on the service setup page, click **Advanced**.
 2. Look for **Add Disk**. Set:
@@ -63,6 +68,10 @@ Without this step, your data would be erased every time the app restarts or rede
    - **Size**: 1 GB is far more than this app needs.
 3. Also in Advanced, add an environment variable:
    - `DATA_DIR` = `/opt/render/project/src/data` (same path as the disk above)
+   - `DATABASE_URL` = the **Internal Database URL** of the Training-Matrix-db Postgres instance
+     (Render dashboard -> Training-Matrix-db -> Connections -> Internal Database URL - internal
+     because this web service and the database both live on Render, which is faster and free of
+     extra data-transfer cost compared to the External URL).
 
 ## Part 5: Set your first login
 

@@ -1,6 +1,6 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const db = require('../db');
+const { dbGet, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { EXPIRATION_UNITS } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
@@ -9,11 +9,11 @@ const router = express.Router();
 
 // Client Settings screen (spec section 19): every Master Training for this client, showing
 // whichever is in effect - Master Default or Client Override - clearly labeled.
-router.get('/client/:clientId', (req, res) => {
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(req.params.clientId);
+router.get('/client/:clientId', async (req, res) => {
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [req.params.clientId]);
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  const masterTrainings = repo.listMasterTrainings();
-  const requirements = repo.listRequirementsForClient(req.params.clientId);
+  const masterTrainings = await repo.listMasterTrainings();
+  const requirements = await repo.listRequirementsForClient(req.params.clientId);
   const byTrainingId = Object.fromEntries(requirements.map((r) => [r.training_id, r]));
 
   const rows = masterTrainings.map((mt) => {
@@ -39,11 +39,11 @@ router.get('/client/:clientId', (req, res) => {
 
 // Upsert a client's override for one training. Overrides apply only to this client - the
 // Master Trainings table and other clients' requirements are never touched (spec section 19).
-router.put('/client/:clientId/training/:trainingId', requireAdmin, (req, res) => {
+router.put('/client/:clientId/training/:trainingId', requireAdmin, async (req, res) => {
   const { clientId, trainingId } = req.params;
-  const client = db.prepare('SELECT client_id FROM clients WHERE client_id = ?').get(clientId);
+  const client = await dbGet('SELECT client_id FROM clients WHERE client_id = ?', [clientId]);
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  const mt = db.prepare('SELECT * FROM master_trainings WHERE training_id = ?').get(trainingId);
+  const mt = await dbGet('SELECT * FROM master_trainings WHERE training_id = ?', [trainingId]);
   if (!mt) return res.status(404).json({ error: 'Training not found' });
 
   const { requirement_status = 'Not Required', client_expiration_unit = null, client_training_name = null, client_notes = null, effective_date } = req.body;
@@ -60,28 +60,30 @@ router.put('/client/:clientId/training/:trainingId', requireAdmin, (req, res) =>
   // backdating for a correction) so recompute only reaches forward from this point on.
   const resolvedEffectiveDate = effective_date === undefined ? new Date().toISOString().slice(0, 10) : (effective_date || null);
 
-  const existing = repo.getRequirement(clientId, trainingId);
+  const existing = await repo.getRequirement(clientId, trainingId);
   if (existing) {
-    db.prepare(
+    await dbRun(
       `UPDATE client_training_requirements
        SET requirement_status=?, client_expiration_unit=?, client_training_name=?, client_notes=?, effective_date=?
-       WHERE requirement_id=?`
-    ).run(requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate, existing.requirement_id);
+       WHERE requirement_id=?`,
+      [requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate, existing.requirement_id]
+    );
   } else {
-    db.prepare(
+    await dbRun(
       `INSERT INTO client_training_requirements
        (requirement_id, client_id, training_id, requirement_status, client_expiration_unit, client_training_name, client_notes, effective_date, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
-    ).run(uuidv4(), clientId, trainingId, requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [uuidv4(), clientId, trainingId, requirement_status, client_expiration_unit, client_training_name, client_notes, resolvedEffectiveDate]
+    );
   }
 
   // Requirement changed - refresh affected employees' computed status so the matrix never
   // shows stale data, but respect the effective date so records completed before the change
   // keep whatever they were already given (design principle: recompute, don't hand-maintain -
   // but never rewrite history either).
-  repo.recomputeAllForClientTraining(clientId, trainingId, resolvedEffectiveDate);
+  await repo.recomputeAllForClientTraining(clientId, trainingId, resolvedEffectiveDate);
 
-  res.json(repo.getRequirement(clientId, trainingId));
+  res.json(await repo.getRequirement(clientId, trainingId));
 });
 
 module.exports = router;

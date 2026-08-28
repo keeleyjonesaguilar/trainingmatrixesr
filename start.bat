@@ -9,6 +9,21 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist ".env" (
+  echo No .env file found. This app now needs a Postgres connection string to run.
+  echo Copy .env.example to .env and fill in DATABASE_URL, then re-run this file.
+  echo See .env.example for where to find that value in the Render dashboard.
+  pause
+  exit /b 1
+)
+findstr /b /r "DATABASE_URL=..*" ".env" >nul
+if errorlevel 1 (
+  echo .env exists but DATABASE_URL isn't set. This app now needs a Postgres connection string to run.
+  echo Open .env and set DATABASE_URL - see .env.example for where to find that value in the Render dashboard.
+  pause
+  exit /b 1
+)
+
 echo Installing server dependencies...
 call npm install
 if errorlevel 1 goto :error

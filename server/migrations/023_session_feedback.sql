@@ -11,6 +11,6 @@ CREATE TABLE IF NOT EXISTS session_feedback (
   effectiveness_rating       INTEGER CHECK (effectiveness_rating BETWEEN 1 AND 5),
   trainer_rating              INTEGER CHECK (trainer_rating BETWEEN 1 AND 5),
   trainer_comment             TEXT,
-  submitted_at                TEXT NOT NULL DEFAULT (datetime('now'))
+  submitted_at                TEXT NOT NULL DEFAULT now_utc_text()
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_session ON session_feedback(session_id);

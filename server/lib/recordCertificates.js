@@ -6,7 +6,7 @@
 // ones this module generated itself, so a real document is never silently replaced.
 const fs = require('fs');
 const path = require('path');
-const db = require('../db');
+const { dbGet, dbRun } = require('../db');
 const repo = require('./repo');
 const { generateCertificate } = require('./pdfGen');
 
@@ -14,17 +14,17 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data'
 const RECORD_CERT_DIR = path.join(DATA_DIR, 'certificates', 'records');
 
 async function maybeGenerateCertificate(recordId) {
-  const record = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(recordId);
+  const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [recordId]);
   if (!record) return;
   if (record.certificate_path && !record.certificate_auto_generated) return;
 
-  const employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(record.employee_id);
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(record.client_id);
-  const masterTraining = repo.getMasterTraining(record.training_id);
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [record.employee_id]);
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [record.client_id]);
+  const masterTraining = await repo.getMasterTraining(record.training_id);
   if (!employee || !client || !masterTraining) return;
 
   const trainer = record.trainer_employee_id
-    ? db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(record.trainer_employee_id)
+    ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [record.trainer_employee_id])
     : null;
 
   const filePath = path.join(RECORD_CERT_DIR, `${record.record_id}.pdf`);
@@ -50,11 +50,12 @@ async function maybeGenerateCertificate(recordId) {
   }
 
   const now = new Date().toISOString();
-  db.prepare(
+  await dbRun(
     `UPDATE employee_training_records
      SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, certificate_auto_generated = 1, updated_at = ?
-     WHERE record_id = ?`
-  ).run(`certificate-${employee.full_name}.pdf`, filePath, now, now, recordId);
+     WHERE record_id = ?`,
+    [`certificate-${employee.full_name}.pdf`, filePath, now, now, recordId]
+  );
 }
 
 fs.mkdirSync(RECORD_CERT_DIR, { recursive: true });

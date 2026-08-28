@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const multer = require('multer');
-const db = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { maybeGenerateCertificate } = require('../lib/recordCertificates');
 const { requireAdmin } = require('../middleware/auth');
@@ -39,15 +39,14 @@ const certUpload = multer({
 // Inactive (soft-deleted) records for an employee - hidden from the main Completed Trainings
 // table and every compliance calculation, but never physically deleted. Feeds the collapsed
 // "Inactive records" section on Employee Detail.
-router.get('/employee/:employeeId/inactive', (req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT r.*, m.training_name FROM employee_training_records r
+router.get('/employee/:employeeId/inactive', async (req, res) => {
+  const rows = await dbAll(
+    `SELECT r.*, m.training_name FROM employee_training_records r
        JOIN master_trainings m ON m.training_id = r.training_id
        WHERE r.employee_id = ? AND r.is_inactive = 1
-       ORDER BY r.updated_at DESC`
-    )
-    .all(req.params.employeeId);
+       ORDER BY r.updated_at DESC`,
+    [req.params.employeeId]
+  );
   res.json(rows);
 });
 
@@ -66,12 +65,12 @@ router.post('/', requireAdmin, async (req, res) => {
   }
   const isUpdate = !!req.body.record_id;
   try {
-    let updated = repo.saveTrainingRecord(req.body);
+    let updated = await repo.saveTrainingRecord(req.body);
     // Auto-generate a certificate of completion (Keeley's request) - covers both a brand new
     // manual entry and an edit to an existing one (e.g. a trainer just got added/changed), as
     // long as there's no real admin-uploaded certificate already on file for it.
     await maybeGenerateCertificate(updated.record_id);
-    updated = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(updated.record_id);
+    updated = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [updated.record_id]);
     res.status(isUpdate ? 200 : 201).json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -81,30 +80,30 @@ router.post('/', requireAdmin, async (req, res) => {
 // Soft-delete toggle: is_inactive = true hides a record from Matrix/Dashboard/Reports and the
 // employee's main Completed Trainings table (moved into a collapsed "Inactive records" section
 // instead), without ever deleting it - distinct from the real, permanent DELETE below.
-router.put('/:id/inactive', requireAdmin, (req, res) => {
-  const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+router.put('/:id/inactive', requireAdmin, async (req, res) => {
+  const existing = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
   const is_inactive = req.body?.is_inactive ? 1 : 0;
-  db.prepare('UPDATE employee_training_records SET is_inactive = ?, updated_at = ? WHERE record_id = ?').run(
+  await dbRun('UPDATE employee_training_records SET is_inactive = ?, updated_at = ? WHERE record_id = ?', [
     is_inactive,
     new Date().toISOString(),
-    req.params.id
-  );
+    req.params.id,
+  ]);
   // Reactivating: refresh status/expiration against current rules now that it's live again.
   // While inactive, there's no reason to recompute a record that's being ignored everywhere.
   if (!is_inactive) {
-    return res.json(repo.recomputeAndPersistRecord(req.params.id));
+    return res.json(await repo.recomputeAndPersistRecord(req.params.id));
   }
-  res.json(db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id));
+  res.json(await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]));
 });
 
-router.delete('/:id', requireAdmin, (req, res) => {
-  const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+router.delete('/:id', requireAdmin, async (req, res) => {
+  const existing = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Record not found' });
   if (existing.certificate_path && fs.existsSync(existing.certificate_path)) {
     fs.unlink(existing.certificate_path, () => {});
   }
-  db.prepare('DELETE FROM employee_training_records WHERE record_id = ?').run(req.params.id);
+  await dbRun('DELETE FROM employee_training_records WHERE record_id = ?', [req.params.id]);
   res.status(204).end();
 });
 
@@ -112,10 +111,10 @@ router.delete('/:id', requireAdmin, (req, res) => {
 // completion form uploads here right after saving the record) and available any time after,
 // from the Completed Trainings list on Employee Detail - so a certificate can always be added
 // later even if it wasn't on hand when the training was first recorded.
-router.post('/:id/certificate', requireAdmin, (req, res) => {
-  certUpload.single('certificate')(req, res, (err) => {
+router.post('/:id/certificate', requireAdmin, async (req, res) => {
+  certUpload.single('certificate')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
-    const existing = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+    const existing = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]);
     if (!existing) {
       if (req.file) fs.unlink(req.file.path, () => {});
       return res.status(404).json({ error: 'Record not found' });
@@ -128,20 +127,21 @@ router.post('/:id/certificate', requireAdmin, (req, res) => {
     }
 
     const now = new Date().toISOString();
-    db.prepare(
+    await dbRun(
       `UPDATE employee_training_records
        SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, certificate_auto_generated = 0, updated_at = ?
-       WHERE record_id = ?`
-    ).run(req.file.originalname, req.file.path, now, now, req.params.id);
+       WHERE record_id = ?`,
+      [req.file.originalname, req.file.path, now, now, req.params.id]
+    );
 
-    res.json(db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id));
+    res.json(await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]));
   });
 });
 
 // Download/view the certificate on file for a record. Any authenticated user can view one
 // (view-only accounts can still see certificates - requireAdmin only gates the upload/change).
-router.get('/:id/certificate', (req, res) => {
-  const record = db.prepare('SELECT * FROM employee_training_records WHERE record_id = ?').get(req.params.id);
+router.get('/:id/certificate', async (req, res) => {
+  const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]);
   if (!record || !record.certificate_path) return res.status(404).json({ error: 'No certificate on file for this record' });
   if (!fs.existsSync(record.certificate_path)) return res.status(404).json({ error: 'Certificate file is missing on disk' });
   res.download(record.certificate_path, record.certificate_filename || 'certificate');

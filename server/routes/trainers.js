@@ -3,7 +3,7 @@
 // client's roster or the org-wide employee list.
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const db = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
@@ -12,42 +12,44 @@ const router = express.Router();
 
 // Registered before the (nonexistent, but keeping the convention) generic routes so
 // "duplicates" is never mistaken for anything else.
-router.get('/duplicates', (req, res) => {
-  res.json(repo.findDuplicateTrainerClusters());
+router.get('/duplicates', async (req, res) => {
+  res.json(await repo.findDuplicateTrainerClusters());
 });
 
 // Dismiss a possible-duplicate grouping without merging (Keeley's request) - e.g. two
 // trainers who really do share a name/phone but aren't the same person.
-router.post('/duplicates/ignore', requireAdmin, (req, res) => {
+router.post('/duplicates/ignore', requireAdmin, async (req, res) => {
   const { member_ids } = req.body || {};
   if (!Array.isArray(member_ids) || member_ids.length < 2) {
     return res.status(400).json({ error: 'member_ids must be an array of at least 2 trainer ids' });
   }
-  repo.ignoreDuplicateCluster('trainer', member_ids);
+  await repo.ignoreDuplicateCluster('trainer', member_ids);
   res.json({ ok: true });
 });
 
-router.get('/', (req, res) => {
-  const rows = db
-    .prepare(`SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer' ORDER BY full_name ASC`)
-    .all(INTERNAL_CLIENT_ID);
+router.get('/', async (req, res) => {
+  const rows = await dbAll(
+    `SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer' ORDER BY full_name ASC`,
+    [INTERNAL_CLIENT_ID]
+  );
   res.json(rows);
 });
 
 // Employee ID is captured here too (Keeley's call: trainers are identified by their own
 // company Employee ID, not phone number) - stored on the same employee_number column a
 // regular employee's phone uses; free-typed, no format validation.
-router.post('/', requireAdmin, (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   const { full_name, job_title = null, employee_number = null } = req.body || {};
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ error: 'full_name is required' });
   }
   const employee_id = uuidv4();
-  db.prepare(
+  await dbRun(
     `INSERT INTO employees (employee_id, client_id, full_name, job_title, employee_number, active, employee_type)
-     VALUES (?, ?, ?, ?, ?, 1, 'trainer')`
-  ).run(employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, employee_number ? employee_number.trim() : null);
-  res.status(201).json(db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id));
+     VALUES (?, ?, ?, ?, ?, 1, 'trainer')`,
+    [employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, employee_number ? employee_number.trim() : null]
+  );
+  res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 
 module.exports = router;
