@@ -14,7 +14,7 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Incorrect username or password.' });
   }
 
-  const secret = getOrCreateSessionSecret();
+  const secret = await getOrCreateSessionSecret();
   const token = signToken({ sub: user.user_id, username: user.username }, secret, SESSION_MS);
 
   res.cookie(COOKIE_NAME, token, {

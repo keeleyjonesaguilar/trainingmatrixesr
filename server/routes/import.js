@@ -331,7 +331,9 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       const trainerEmployeeId = row.trainer_name_raw ? await repo.findOrCreateTrainerEmployee(row.trainer_name_raw) : null;
 
       let employee = await dbGet(
-        'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ? IS NULL)',
+        // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
+        // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
+        'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
         [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
       );
 
