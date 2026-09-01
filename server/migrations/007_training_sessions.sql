@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS training_sessions (
   trainer_signed_at     TEXT,
   roster_pdf_path       TEXT,
   created_by            TEXT,                        -- username of admin/user who created it
-  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at            TEXT NOT NULL DEFAULT now_utc_text(),
   closed_at             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_client ON training_sessions(client_id);
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS session_attendees (
   trainee_name         TEXT NOT NULL,
   trainee_phone        TEXT,
   signature            TEXT NOT NULL,                -- base64 PNG
-  signed_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  signed_at            TEXT NOT NULL DEFAULT now_utc_text(),
   certificate_path     TEXT,
   certificate_filename TEXT,
   employee_id          TEXT REFERENCES employees(employee_id),

@@ -4,7 +4,12 @@
 -- computed status/expiration on employee_training_records is refreshed by the engine,
 -- not hand-maintained by the UI.
 
-PRAGMA foreign_keys = ON;
+-- Matches SQLite's datetime('now') format exactly (UTC, "YYYY-MM-DD HH:MM:SS", no offset/
+-- fractional seconds) so existing TEXT-column timestamp defaults/comparisons/JS Date parsing
+-- behave the same as before the Postgres migration.
+CREATE OR REPLACE FUNCTION now_utc_text() RETURNS TEXT AS $$
+  SELECT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS');
+$$ LANGUAGE SQL;
 
 -- 1. MASTER TRAINING CATALOG
 -- Source of truth for training names, categories, types, default expiration.

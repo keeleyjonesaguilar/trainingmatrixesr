@@ -101,14 +101,21 @@ export default function Import() {
     refreshBatch();
   };
 
+  // Commit can be called more than once for the same batch: whatever's resolved right now goes
+  // in immediately, and anything still needing review is left for a later commit once it's
+  // resolved below - so the review screen stays open after a partial commit instead of closing.
   const commit = async () => {
     setBusy(true);
     setError('');
     try {
       const r = await api.commitImport(preview.batch_id);
       setResult(r);
-      setPreview(null);
-      setFile(null);
+      if (r.status === 'committed') {
+        setPreview(null);
+        setFile(null);
+      } else {
+        await refreshBatch();
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -123,15 +130,27 @@ export default function Import() {
   };
 
   const clientsNeedingReview = preview?.clients_needing_review || [];
-  const canCommit = preview && preview.needs_review_count === 0 && clientsNeedingReview.length === 0;
+  // Committing no longer requires every training/client to be resolved first - whatever's
+  // resolved goes in now, and rows using anything still unresolved are skipped and picked up
+  // by a later commit once resolved (see the server's partial-commit comment for why).
+  const canCommit = Boolean(preview) && !busy;
+  const fullyResolved = preview && preview.needs_review_count === 0 && clientsNeedingReview.length === 0;
 
   return (
     <div>
       <h1>Import Client Training Data</h1>
       <p className="page-subtitle">
         Upload a spreadsheet (CSV). Each row names its own client, so one file can cover several clients at once -
-        columns are auto-matched to the Master Training Catalog and clients are auto-matched by name where possible;
-        anything ambiguous is queued below for you to resolve manually before anything is saved. Nothing is ever guessed silently.
+        training names and clients are auto-matched where possible; anything ambiguous is queued below for you to
+        resolve manually before anything is saved. Nothing is ever guessed silently.
+      </p>
+      <p className="page-subtitle">
+        Two shapes are supported, auto-detected from the header row: one row per <strong>employee</strong> (a
+        "Client"/"Employee Name" set of columns, then one column per training holding that training's completion
+        date), or one row per <strong>training completion</strong> ("Client", "Employee Full Name", "Name" for the
+        training, "Activation"/"Expiration" dates) - the shape a certification tracker or another system's export
+        typically comes out in. A long-format row's own Expiration date is kept exactly as given, not recomputed
+        from the Master Catalog.
       </p>
       {error && <div className="error-banner">{error}</div>}
 
@@ -154,27 +173,37 @@ export default function Import() {
             <button disabled={!file || busy} onClick={upload}>{busy ? 'Uploading...' : 'Preview Import'}</button>
           </div>
           <p className="page-subtitle">
-            CSV should have one row per employee, with columns "Client", "Employee First Name", "Employee Last Name",
-            "Trainer", then one column per training (put that training's completion date in the cell). {' '}
-            <a href={api.importTemplateUrl}>Download a blank template</a> to start from.
+            One row per employee (see below) or one row per training completion - the format is auto-detected. {' '}
+            <a href={api.importTemplateUrl}>Download a blank one-row-per-employee template</a> to start from.
           </p>
         </div>
       )}
 
       {result && (
         <div className="card">
-          <h2>Import Complete</h2>
+          <h2>{result.status === 'committed' ? 'Import Complete' : 'Partial Import Committed'}</h2>
           <p>
-            Created {result.employees_created} new employee(s) and {result.records_created} training record(s).
-            {result.rows_skipped_no_client > 0 && ` ${result.rows_skipped_no_client} row(s) were skipped for having no client.`}
+            Created {result.employees_created} new employee(s) and {result.records_created} training record(s) this round.
+            {result.rows_skipped_no_client > 0 && ` ${result.rows_skipped_no_client} row(s) skipped for having no client resolved yet.`}
+            {result.rows_skipped_no_training_name > 0 && ` ${result.rows_skipped_no_training_name} row(s) skipped for having no training name.`}
           </p>
+          {result.status !== 'committed' && (
+            <p className="page-subtitle" style={{ margin: 0 }}>
+              {result.still_needs_review_count} training name(s) still need review below. Resolve them (and any
+              clients still needing review) and click Commit Import again to bring in the rest - nothing already
+              imported will be duplicated.
+            </p>
+          )}
         </div>
       )}
 
       {preview && (
         <div className="card">
           <h2>Review Import</h2>
-          <p className="page-subtitle">{preview.row_count} rows detected. Identity columns: {Object.entries(preview.identity_columns_detected).map(([k, v]) => `${k}=${v}`).join(', ') || 'none detected'}</p>
+          <p className="page-subtitle">
+            {preview.row_count} rows detected, format: <strong>{preview.format === 'long' ? 'one row per training completion' : 'one row per employee'}</strong>.
+            {' '}Identity columns: {Object.entries(preview.identity_columns_detected).map(([k, v]) => `${k}=${v}`).join(', ') || 'none detected'}
+          </p>
 
           {clientsNeedingReview.length > 0 && (
             <>
@@ -195,11 +224,11 @@ export default function Import() {
             </>
           )}
 
-          <h3 style={{ fontSize: 14 }}>Training Columns</h3>
+          <h3 style={{ fontSize: 14 }}>{preview.format === 'long' ? 'Training Names' : 'Training Columns'}</h3>
           <table>
             <thead>
               <tr>
-                <th>Source Column</th>
+                <th>{preview.format === 'long' ? 'Training Name (as in file)' : 'Source Column'}</th>
                 <th>Matched Training</th>
                 <th>Confidence</th>
                 <th>Status</th>
@@ -247,12 +276,17 @@ export default function Import() {
           </table>
 
           <div style={{ marginTop: 16 }}>
-            <button disabled={!canCommit || busy} onClick={commit}>
-              {busy
-                ? 'Committing...'
-                : `Commit Import${!canCommit ? ` (${preview.needs_review_count} column(s), ${clientsNeedingReview.length} client(s) need review)` : ''}`}
+            <button disabled={!canCommit} onClick={commit}>
+              {busy ? 'Committing...' : fullyResolved ? 'Commit Import' : 'Commit What’s Resolved'}
             </button>{' '}
             <button className="secondary" onClick={cancel}>Cancel Import</button>
+            {!fullyResolved && (
+              <p className="page-subtitle" style={{ marginTop: 8 }}>
+                {preview.needs_review_count > 0 && `${preview.needs_review_count} training name(s) still need review. `}
+                {clientsNeedingReview.length > 0 && `${clientsNeedingReview.length} client name(s) still need review. `}
+                Rows using them will be skipped for now and can be brought in with another commit once resolved.
+              </p>
+            )}
           </div>
         </div>
       )}

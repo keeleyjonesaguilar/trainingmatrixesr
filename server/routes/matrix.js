@@ -1,5 +1,5 @@
 const express = require('express');
-const db = require('../db');
+const { dbGet, dbAll } = require('../db');
 const repo = require('../lib/repo');
 
 const router = express.Router();
@@ -12,7 +12,7 @@ const router = express.Router();
 // job-site placement filter (Keeley's request) - only return employees who currently hold
 // EVERY listed training (status Current or No Expiration - an expired one doesn't count),
 // so she can quickly find someone who has, say, OSHA 30 AND First Aid AND Fall Protection.
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { client_id, department, job_title, search, status } = req.query;
   const trainingIdsFilter = [req.query.training_ids || []].flat().filter(Boolean);
   // Which set the grid itself shows - defaults to active, switches to inactive when the
@@ -27,41 +27,43 @@ router.get('/', (req, res) => {
   if (search) { sharedClauses.push('LOWER(e.full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
   const where = `WHERE e.active = ? AND ${sharedClauses.join(' AND ')}`;
 
-  const employees = db
-    .prepare(
-      `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id ${where} ORDER BY c.client_name, e.full_name`
-    )
-    .all(activeFilter, ...params);
+  const employees = await dbAll(
+    `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id ${where} ORDER BY c.client_name, e.full_name`,
+    [activeFilter, ...params]
+  );
 
   // Both counts are always computed regardless of which set the grid is currently showing, so
   // the two stat tiles stay accurate no matter which one is currently selected.
-  const activeCount = activeFilter === 1 ? employees.length : db
-    .prepare(`SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND ${sharedClauses.join(' AND ')}`)
-    .get(...params).n;
-  const inactiveCount = activeFilter === 0 ? employees.length : db
-    .prepare(`SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 0 AND ${sharedClauses.join(' AND ')}`)
-    .get(...params).n;
+  const activeCount = activeFilter === 1 ? employees.length : (await dbGet(
+    `SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND ${sharedClauses.join(' AND ')}`,
+    params
+  )).n;
+  const inactiveCount = activeFilter === 0 ? employees.length : (await dbGet(
+    `SELECT COUNT(*) AS n FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 0 AND ${sharedClauses.join(' AND ')}`,
+    params
+  )).n;
 
-  const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
+  const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
 
   let orgCurrent = 0;
   let orgExpiringSoon = 0;
   let orgExpiredOrMissing = 0;
   let orgApplicable = 0;
 
-  const rows = employees.map((emp) => {
+  const rows = [];
+  for (const emp of employees) {
     const cells = {};
     let empCurrent = 0;
     let empApplicable = 0;
     let empIssues = 0;
     for (const mt of masterTrainings) {
-      const { status: cellStatus, expirationDate, record } = repo.computeCell({
+      const { status: cellStatus, expirationDate, record } = await repo.computeCell({
         employeeId: emp.employee_id,
         clientId: emp.client_id,
         trainingId: mt.training_id,
         masterTraining: mt,
       });
-      const expiringSoon = repo.isExpiringSoon(cellStatus, expirationDate);
+      const expiringSoon = await repo.isExpiringSoon(cellStatus, expirationDate);
       cells[mt.training_id] = {
         status: cellStatus,
         expiration_date: expirationDate,
@@ -78,7 +80,7 @@ router.get('/', (req, res) => {
       }
       if (expiringSoon) orgExpiringSoon += 1;
     }
-    return {
+    rows.push({
       employee_id: emp.employee_id,
       full_name: emp.full_name,
       job_title: emp.job_title,
@@ -88,8 +90,8 @@ router.get('/', (req, res) => {
       cells,
       audit_health_percent: empApplicable > 0 ? Math.round((empCurrent / empApplicable) * 100) : 100,
       issue_count: empIssues,
-    };
-  });
+    });
+  }
 
   let filteredRows = status ? rows.filter((r) => Object.values(r.cells).some((c) => c.status === status)) : rows;
   if (trainingIdsFilter.length) {

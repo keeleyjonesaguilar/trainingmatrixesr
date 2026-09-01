@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS feedback_form_settings (
   comment_label                     TEXT NOT NULL
 );
 
-INSERT OR IGNORE INTO feedback_form_settings
+INSERT INTO feedback_form_settings
   (id, could_ask_questions_label, understood_material_label, needs_additional_training_label, effectiveness_label, trainer_rating_label, comment_label)
 VALUES
   ('default',
@@ -17,4 +17,5 @@ VALUES
    'Do you feel you need additional training on this topic?',
    'How effective was the training overall?',
    'How would you rate the trainer?',
-   'Any comments on the trainer''s performance? (optional)');
+   'Any comments on the trainer''s performance? (optional)')
+ON CONFLICT (id) DO NOTHING;

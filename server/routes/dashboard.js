@@ -1,5 +1,5 @@
 const express = require('express');
-const db = require('../db');
+const { dbGet, dbAll } = require('../db');
 const repo = require('../lib/repo');
 const { computeStatus } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
@@ -21,7 +21,7 @@ function zeroCounts() {
 // computes every cell's status in plain JS (statusEngine.computeStatus, no db calls) in one
 // single pass - counts, per-client breakdown, expired-gaps, and training-popularity are all
 // derived from that same pass instead of separate full scans.
-function bulkComputeForEmployees(
+async function bulkComputeForEmployees(
   employees,
   masterTrainings,
   { collectGaps = false, collectPopularity = false, groupByClient = false, collectActionItems = false } = {}
@@ -39,19 +39,19 @@ function bulkComputeForEmployees(
   const employeeIds = employees.map((e) => e.employee_id);
   const clientIds = [...new Set(employees.map((e) => e.client_id))];
 
-  const requirementRows = db
-    .prepare(`SELECT * FROM client_training_requirements WHERE client_id IN (${clientIds.map(() => '?').join(',')})`)
-    .all(...clientIds);
+  const requirementRows = await dbAll(
+    `SELECT * FROM client_training_requirements WHERE client_id IN (${clientIds.map(() => '?').join(',')})`,
+    clientIds
+  );
   const requirementMap = new Map();
   for (const r of requirementRows) requirementMap.set(`${r.client_id}|${r.training_id}`, r);
 
-  const recordRows = db
-    .prepare(
-      `SELECT * FROM employee_training_records
-       WHERE is_active_record = 1 AND is_inactive = 0 AND employee_id IN (${employeeIds.map(() => '?').join(',')})
-       ORDER BY employee_id, training_id, (completion_date IS NULL), completion_date DESC, rowid DESC`
-    )
-    .all(...employeeIds);
+  const recordRows = await dbAll(
+    `SELECT * FROM employee_training_records
+     WHERE is_active_record = 1 AND is_inactive = 0 AND employee_id IN (${employeeIds.map(() => '?').join(',')})
+     ORDER BY employee_id, training_id, (completion_date IS NULL), completion_date DESC, insert_seq DESC`,
+    employeeIds
+  );
   // First occurrence per (employee_id, training_id) wins - the ORDER BY above puts the same
   // "latest active record" first that repo.getLatestRecord() would pick one at a time.
   const recordMap = new Map();
@@ -62,9 +62,10 @@ function bulkComputeForEmployees(
 
   // Permanently-ignored gaps (Keeley's request) - same bulk-lookup treatment as everything
   // else in this function, so N employees never costs N ignore-table queries.
-  const ignoredRows = db
-    .prepare(`SELECT employee_id, training_id FROM ignored_compliance_gaps WHERE employee_id IN (${employeeIds.map(() => '?').join(',')})`)
-    .all(...employeeIds);
+  const ignoredRows = await dbAll(
+    `SELECT employee_id, training_id FROM ignored_compliance_gaps WHERE employee_id IN (${employeeIds.map(() => '?').join(',')})`,
+    employeeIds
+  );
   const ignoredSet = new Set(ignoredRows.map((r) => `${r.employee_id}|${r.training_id}`));
 
   for (const emp of employees) {
@@ -165,14 +166,14 @@ function healthStatus(counts) {
 // Backs the "Action Required" button on a client's dashboard row (Keeley's request): the exact
 // list of employee+training gaps behind that client's compliance number, so there's somewhere
 // to actually go read what's needed instead of just seeing a status word.
-router.get('/action-items', (req, res) => {
+router.get('/action-items', async (req, res) => {
   const { client_id } = req.query;
   if (!client_id) return res.status(400).json({ error: 'client_id is required' });
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id]);
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  const employees = db.prepare('SELECT * FROM employees WHERE client_id = ? AND active = 1').all(client_id);
-  const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
-  const { actionItems } = bulkComputeForEmployees(employees, masterTrainings, { collectActionItems: true });
+  const employees = await dbAll('SELECT * FROM employees WHERE client_id = ? AND active = 1', [client_id]);
+  const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
+  const { actionItems } = await bulkComputeForEmployees(employees, masterTrainings, { collectActionItems: true });
   actionItems.sort((a, b) => a.employee_name.localeCompare(b.employee_name) || a.training_name.localeCompare(b.training_name));
   res.json({ client, items: actionItems });
 });
@@ -181,54 +182,53 @@ router.get('/action-items', (req, res) => {
 // compliance again, even if the underlying record is edited or stays Expired/Missing/Pending
 // Review. No un-ignore: a real new completion naturally takes back over on its own (see
 // repo.computeCell - the override only ever applies to a still-bad status).
-router.post('/action-items/ignore', requireAdmin, (req, res) => {
+router.post('/action-items/ignore', requireAdmin, async (req, res) => {
   const { employee_id, training_id } = req.body || {};
   if (!employee_id || !training_id) {
     return res.status(400).json({ error: 'employee_id and training_id are required' });
   }
-  const employee = db.prepare('SELECT * FROM employees WHERE employee_id = ?').get(employee_id);
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
-  const masterTraining = repo.getMasterTraining(training_id);
+  const masterTraining = await repo.getMasterTraining(training_id);
   if (!masterTraining) return res.status(404).json({ error: 'Training not found' });
 
-  const { status } = repo.computeCell({ employeeId: employee_id, clientId: employee.client_id, trainingId: training_id, masterTraining });
+  const { status } = await repo.computeCell({ employeeId: employee_id, clientId: employee.client_id, trainingId: training_id, masterTraining });
   if (!['Expired', 'Missing', 'Pending Review'].includes(status)) {
     return res.status(400).json({ error: `Current status is "${status}" — only Expired, Missing, or Pending Review gaps can be ignored.` });
   }
-  repo.ignoreComplianceGap(employee_id, training_id, req.user?.username || null);
+  await repo.ignoreComplianceGap(employee_id, training_id, req.user?.username || null);
   res.status(201).json({ ok: true });
 });
 
 // Read-only audit trail for ignored gaps (Keeley's design: permanent/no un-ignore, but the
 // ignored_at/ignored_by columns exist specifically so this doesn't disappear without a trace).
-router.get('/action-items/ignored', (req, res) => {
+router.get('/action-items/ignored', async (req, res) => {
   const { client_id } = req.query;
   if (!client_id) return res.status(400).json({ error: 'client_id is required' });
-  const rows = db
-    .prepare(
-      `SELECT g.employee_id, e.full_name AS employee_name, g.training_id, mt.training_name,
-              g.ignored_at, g.ignored_by
-       FROM ignored_compliance_gaps g
-       JOIN employees e ON e.employee_id = g.employee_id
-       JOIN master_trainings mt ON mt.training_id = g.training_id
-       WHERE e.client_id = ?
-       ORDER BY g.ignored_at DESC`
-    )
-    .all(client_id);
+  const rows = await dbAll(
+    `SELECT g.employee_id, e.full_name AS employee_name, g.training_id, mt.training_name,
+            g.ignored_at, g.ignored_by
+     FROM ignored_compliance_gaps g
+     JOIN employees e ON e.employee_id = g.employee_id
+     JOIN master_trainings mt ON mt.training_id = g.training_id
+     WHERE e.client_id = ?
+     ORDER BY g.ignored_at DESC`,
+    [client_id]
+  );
   res.json({ items: rows });
 });
 
 // Dashboard (spec section 11): org-wide totals, drillable per client via ?client_id=.
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { client_id } = req.query;
-  const masterTrainings = repo.listMasterTrainings({ activeOnly: true });
+  const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
 
   if (client_id) {
-    const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
+    const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id]);
     if (!client) return res.status(404).json({ error: 'Client not found' });
-    const employees = db.prepare('SELECT * FROM employees WHERE client_id = ? AND active = 1').all(client_id);
-    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0').get(client_id).n;
-    const { counts, popularity } = bulkComputeForEmployees(employees, masterTrainings, { collectPopularity: true });
+    const employees = await dbAll('SELECT * FROM employees WHERE client_id = ? AND active = 1', [client_id]);
+    const { n: recordCount } = await dbGet('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0', [client_id]);
+    const { counts, popularity } = await bulkComputeForEmployees(employees, masterTrainings, { collectPopularity: true });
     return res.json({
       scope: 'client',
       client,
@@ -244,22 +244,18 @@ router.get('/', (req, res) => {
     });
   }
 
-  const totalClients = db.prepare('SELECT COUNT(*) AS n FROM clients WHERE active = 1 AND is_internal = 0').get().n;
-  const allEmployees = db
-    .prepare(
-      `SELECT e.* FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND c.is_internal = 0`
-    )
-    .all();
-  const totalRecords = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM employee_training_records r JOIN clients c ON c.client_id = r.client_id
-       WHERE c.is_internal = 0 AND r.is_inactive = 0`
-    )
-    .get().n;
+  const { n: totalClients } = await dbGet('SELECT COUNT(*) AS n FROM clients WHERE active = 1 AND is_internal = 0');
+  const allEmployees = await dbAll(
+    `SELECT e.* FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.active = 1 AND c.is_internal = 0`
+  );
+  const { n: totalRecords } = await dbGet(
+    `SELECT COUNT(*) AS n FROM employee_training_records r JOIN clients c ON c.client_id = r.client_id
+     WHERE c.is_internal = 0 AND r.is_inactive = 0`
+  );
 
   // One single pass over every employee x training cell drives org totals, the per-client
   // breakdown, the expired-training gaps list, and training popularity all at once.
-  const { counts, gaps, popularity, countsByClient } = bulkComputeForEmployees(allEmployees, masterTrainings, {
+  const { counts, gaps, popularity, countsByClient } = await bulkComputeForEmployees(allEmployees, masterTrainings, {
     collectGaps: true,
     collectPopularity: true,
     groupByClient: true,
@@ -269,22 +265,24 @@ router.get('/', (req, res) => {
   // it doesn't flag every training nobody's done as a gap, since most trainings aren't required.
   gaps.sort((a, b) => (a.expiration_date || '9999').localeCompare(b.expiration_date || '9999'));
 
-  const clients = db.prepare('SELECT * FROM clients WHERE is_internal = 0 ORDER BY client_name').all();
-  const perClient = clients.map((c) => {
-    const totalActiveEmployees = allEmployees.reduce((n, e) => n + (e.client_id === c.client_id ? 1 : 0), 0);
-    const recordCount = db.prepare('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0').get(c.client_id).n;
-    const clientCounts = countsByClient.get(c.client_id) || zeroCounts();
-    return {
-      client_id: c.client_id,
-      client_name: c.client_name,
-      totalActiveEmployees,
-      totalTrainingRecords: recordCount,
-      counts: clientCounts,
-      complianceRate: complianceRate(clientCounts),
-      flaggedCount: (clientCounts.Expired || 0) + (clientCounts.Missing || 0),
-      healthStatus: healthStatus(clientCounts),
-    };
-  });
+  const clients = await dbAll('SELECT * FROM clients WHERE is_internal = 0 ORDER BY client_name');
+  const perClient = await Promise.all(
+    clients.map(async (c) => {
+      const totalActiveEmployees = allEmployees.reduce((n, e) => n + (e.client_id === c.client_id ? 1 : 0), 0);
+      const { n: recordCount } = await dbGet('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0', [c.client_id]);
+      const clientCounts = countsByClient.get(c.client_id) || zeroCounts();
+      return {
+        client_id: c.client_id,
+        client_name: c.client_name,
+        totalActiveEmployees,
+        totalTrainingRecords: recordCount,
+        counts: clientCounts,
+        complianceRate: complianceRate(clientCounts),
+        flaggedCount: (clientCounts.Expired || 0) + (clientCounts.Missing || 0),
+        healthStatus: healthStatus(clientCounts),
+      };
+    })
+  );
 
   const mostPopularTrainings = topPopularTrainings(masterTrainings, popularity);
 

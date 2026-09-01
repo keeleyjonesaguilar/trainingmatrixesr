@@ -19,7 +19,7 @@ HTTP. One login, one database, one deploy. See "Training Sign-In" below for how 
 
 ```
 training-matrix/
-  server/           Express API + SQLite database (better-sqlite3)
+  server/           Express API + PostgreSQL database (pg)
     migrations/     Schema (runs automatically on startup)
     seed/           Master Training Catalog (52 trainings) + terminology alias dictionary
     lib/            Status calculation engine + shared data access - single source of truth;
@@ -30,7 +30,8 @@ training-matrix/
     src/pages/      Dashboard, Training Matrix, Employee Detail, Training Detail,
                     Client Settings, Master Trainings, Import, Reports, Manage Users,
                     Training Sessions, Session Detail, Training Types, Public Sign-In
-  data/             SQLite database, certificates, and roster PDFs live here (created on first run)
+  data/             Certificates and roster PDFs live here (created on first run) - the
+                    database itself is Postgres, not a file in this folder
 ```
 
 ## Running it locally
@@ -64,21 +65,22 @@ the server in another terminal.
 
 ## Deploying it so your team can use it
 
-**Deploying to Render (render.com).** One thing to know going in: Render's *free* web
-service tier does not support persistent disks - any local SQLite file would be wiped every
-time the service restarts or redeploys, silently losing your data. You'll need Render's
-**Starter** plan (about $7/month) plus a small persistent disk (~$0.25/month) to keep the
-database intact across deploys. A full click-by-click walkthrough (including creating your
-GitHub and Render accounts from scratch) is provided separately in `GETTING-LIVE.md`, since
-you're starting without either. (Railway was the other option discussed, with a cheaper
-trial-then-~$5/month path if you'd rather revisit that.)
+**Deploying to Render (render.com).** The database is a managed Postgres instance
+("Training-Matrix-db"), not a file on disk - but a small persistent disk is still needed for
+certificate/roster PDF files, which are written to disk and referenced from the database by
+file path. A full click-by-click walkthrough (including creating your GitHub and Render
+accounts from scratch) is provided separately in `GETTING-LIVE.md`, since you're starting
+without either.
 
 Quick reference once you have accounts set up:
 - Build command: `npm install && cd client && npm install && npm run build && cd ..`
 - Start command: `npm start`
 - Instance type: **Starter** or higher (not Free - Free can't hold persistent data).
+- Set `DATABASE_URL` to the Training-Matrix-db Postgres instance's **Internal Database URL**
+  (Render dashboard -> Training-Matrix-db -> Connections). Migrations run automatically on
+  boot.
 - Add a persistent disk (e.g. mounted at `/opt/render/project/src/data`), and set the
-  environment variable `DATA_DIR` to that same path, so the SQLite database survives
+  environment variable `DATA_DIR` to that same path, so certificate/roster PDFs survive
   restarts and redeploys.
 - Set `APP_USERNAME` and `APP_PASSWORD` (see "Restricting access" below) so there's an
   initial account to log in with - after that, accounts are managed from the in-app
@@ -174,9 +176,13 @@ in Client Settings to confirm that's right for your clients.
 - Accounts have an admin/user role (admins can add/edit/delete; a "user" account is
   read-only everywhere, including Manage Users itself). The app always keeps at least one
   admin account - the last one can't be demoted or deleted.
-- CSV import expects one row per employee with training columns across the top. If your
-  client spreadsheets are shaped differently (e.g. one row per training completion), the
-  import flow would need adjusting.
+- CSV import supports two shapes, auto-detected from the header row: one row per employee
+  (training columns across the top, spec section 5's original format) or one row per training
+  completion (a "Name"/"Training Name" column plus completion/expiration date columns - the
+  shape a certification tracker or another system's export typically comes out in). A
+  long-format row's own expiration date is stored as that record's explicit override, not
+  recomputed from the Master Catalog default, so migrated data keeps whatever status the
+  source system had for it.
 - PDF export wasn't built - Reports offers CSV export on the report tables that support it.
 - A few fields from an earlier UI-mockup pass (client industry, employee work location/
   safety clearance/last audit date, training record certificate ID/verified by/accredited
