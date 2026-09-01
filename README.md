@@ -176,9 +176,13 @@ in Client Settings to confirm that's right for your clients.
 - Accounts have an admin/user role (admins can add/edit/delete; a "user" account is
   read-only everywhere, including Manage Users itself). The app always keeps at least one
   admin account - the last one can't be demoted or deleted.
-- CSV import expects one row per employee with training columns across the top. If your
-  client spreadsheets are shaped differently (e.g. one row per training completion), the
-  import flow would need adjusting.
+- CSV import supports two shapes, auto-detected from the header row: one row per employee
+  (training columns across the top, spec section 5's original format) or one row per training
+  completion (a "Name"/"Training Name" column plus completion/expiration date columns - the
+  shape a certification tracker or another system's export typically comes out in). A
+  long-format row's own expiration date is stored as that record's explicit override, not
+  recomputed from the Master Catalog default, so migrated data keeps whatever status the
+  source system had for it.
 - PDF export wasn't built - Reports offers CSV export on the report tables that support it.
 - A few fields from an earlier UI-mockup pass (client industry, employee work location/
   safety clearance/last audit date, training record certificate ID/verified by/accredited
