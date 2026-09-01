@@ -163,11 +163,19 @@ async function saveTrainingRecord(opts) {
   const now = new Date().toISOString();
 
   if (existing) {
+    // training_id is always resent (it's required on every call, same as client_id/employee_id)
+    // rather than defaulted from `existing` - lets an admin correct a wrongly-matched training
+    // after the fact (Keeley's request, 2026-09-01: fixing a bad import match shouldn't mean
+    // delete-and-recreate). original_training_name is a snapshot of the catalog name at save
+    // time, so it's refreshed here too - otherwise it'd keep showing the training this record
+    // used to be, not the corrected one.
     await dbRun(
       `UPDATE employee_training_records
-       SET original_client_training_name=?, completion_date=?, source_expiration_date=?, raw_source_value=?, source=?, notes=?, trainer_employee_id=?, updated_at=?
+       SET training_id=?, original_training_name=?, original_client_training_name=?, completion_date=?, source_expiration_date=?, raw_source_value=?, source=?, notes=?, trainer_employee_id=?, updated_at=?
        WHERE record_id=?`,
       [
+        training_id,
+        masterTraining.training_name,
         original_client_training_name ?? existing.original_client_training_name,
         finalCompletionDate ?? existing.completion_date,
         source_expiration_date ?? existing.source_expiration_date,

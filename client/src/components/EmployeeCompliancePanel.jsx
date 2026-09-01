@@ -96,10 +96,11 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
   );
 }
 
-// Inline edit for an already-logged training record (Keeley's request: fix a wrong date etc
-// after the fact) - reuses api.saveTrainingRecord with record_id, which the backend already
-// supports as an update-in-place.
-function RecordEditRow({ record, employee, client, trainers, onSaved, onCancel }) {
+// Inline edit for an already-logged training record (Keeley's request: fix a wrong date, or a
+// wrongly-matched training type from an import, after the fact) - reuses api.saveTrainingRecord
+// with record_id, which the backend supports as an update-in-place, training type included.
+function RecordEditRow({ record, employee, client, trainers, trainingOptions, onSaved, onCancel }) {
+  const [trainingId, setTrainingId] = useState(record.training_id);
   const [completionDate, setCompletionDate] = useState(record.completion_date || '');
   const [expirationDate, setExpirationDate] = useState(record.expiration_date || '');
   const [trainerId, setTrainerId] = useState(record.trainer_employee_id || '');
@@ -114,7 +115,7 @@ function RecordEditRow({ record, employee, client, trainers, onSaved, onCancel }
         record_id: record.record_id,
         client_id: employee.client_id,
         employee_id: employee.employee_id,
-        training_id: record.training_id,
+        training_id: trainingId,
         completion_date: completionDate || null,
         source_expiration_date: expirationDate || null,
         trainer_employee_id: trainerId || null,
@@ -129,8 +130,11 @@ function RecordEditRow({ record, employee, client, trainers, onSaved, onCancel }
 
   return (
     <tr>
-      <td>{record.training_id}</td>
-      <td>{record.training_name}</td>
+      <td colSpan={2}>
+        <select value={trainingId} onChange={(e) => setTrainingId(e.target.value)}>
+          {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+        </select>
+      </td>
       <td>{client?.client_name || '—'}</td>
       <td><StatusBadge status={record.status} /></td>
       <td><input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} /></td>
@@ -300,6 +304,7 @@ export default function EmployeeCompliancePanel({
                         employee={employee}
                         client={client}
                         trainers={localTrainers}
+                        trainingOptions={trainingOptions}
                         onSaved={() => { setEditingRecordId(''); onReload(); }}
                         onCancel={() => setEditingRecordId('')}
                       />
