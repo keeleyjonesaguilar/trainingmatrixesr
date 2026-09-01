@@ -38,6 +38,9 @@ const IDENTITY_COLUMN_PATTERNS = {
   full_name: [/^employee\s*(full\s*)?name$/i, /^full\s*name$/i, /^employee$/i],
   job_title: [/^(job\s*)?title$/i, /^position$/i],
   department: [/^dept\.?$/i, /^department$/i],
+  // Deliberately scoped to require "Employee" so it can't collide with a long-format sheet's
+  // own record-level "Status" column (e.g. "Present/Expired") - see LONG_FORMAT_PATTERNS.status.
+  employee_status: [/^employee\s*status$/i],
 };
 // Bare "Name" - only ever claimed as the employee identity when the sheet doesn't otherwise
 // look like a long-format export (see classifyHeaders()). Kept separate for that reason.
@@ -49,7 +52,7 @@ const BARE_NAME_PATTERN = /^name$/i;
 // rows into the wide one-column-per-training layout by hand invites transcription errors, so
 // this format is detected and handled directly instead.
 const LONG_FORMAT_PATTERNS = {
-  training_name: [/^(training\s*)?name$/i, /^cert(ification)?\s*name$/i, /^record\s*name$/i],
+  training_name: [/^(training\s*)?name$/i, /^cert(ification)?\s*name$/i, /^record\s*name$/i, /^cert(ification)?$/i, /^training$/i],
   completion_date: [/^activation(\s*date)?$/i, /^completion(\s*date)?$/i, /^date\s*completed$/i, /^issue[d]?(\s*date)?$/i, /^cert(ification)?\s*date$/i, /^start(\s*date)?$/i],
   expiration_date: [/^expiration(\s*date)?$/i, /^exp(iry)?(\s*date)?$/i, /^valid\s*(through|until)$/i],
   record_type: [/^record\s*type$/i],
@@ -58,6 +61,20 @@ const LONG_FORMAT_PATTERNS = {
 
 function normalize(text) {
   return String(text).toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// An "Employee Status" column's value only ever flips a BRAND NEW employee to inactive at
+// creation - it never touches an already-existing employee, same as job title/department, which
+// the import also only ever sets once. Recognized inactive-shaped values only; anything blank,
+// unrecognized, or affirmative ("Active", "Active Employee", "Current") defaults to active rather
+// than guessing.
+const INACTIVE_EMPLOYEE_STATUS_VALUES = new Set([
+  'inactive', 'not active', 'terminated', 'termed', 'former', 'former employee',
+  'no longer employed', 'separated', 'resigned', 'released',
+]);
+function parseEmployeeActiveStatus(raw) {
+  const norm = normalize(raw);
+  return norm && INACTIVE_EMPLOYEE_STATUS_VALUES.has(norm) ? 0 : 1;
 }
 
 function classifyIdentityColumn(header) {
@@ -250,8 +267,8 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
         `INSERT INTO import_staged_rows
          (staged_row_id, batch_id, employee_number_raw, full_name_raw, job_title_raw, department_raw,
           client_name_raw, resolved_client_id, first_name_raw, last_name_raw, trainer_name_raw, raw_row_json,
-          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw, employee_status_raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           uuidv4(),
           batchId,
@@ -269,6 +286,7 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
           format === 'long' ? (row[longHeaders.completion_date] || null) : null,
           format === 'long' ? (row[longHeaders.expiration_date] || null) : null,
           format === 'long' && longHeaders.record_type ? (row[longHeaders.record_type] || null) : null,
+          identityHeaders.employee_status ? row[identityHeaders.employee_status] : null,
         ]
       );
     }
@@ -412,8 +430,17 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
         const employeeId = uuidv4();
         await dbRun(
           `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
-           VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-          [employeeId, clientId, formatPhoneNumber(row.employee_number_raw), fullName, row.job_title_raw, row.department_raw, `Created by import: ${batch.filename}`]
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            employeeId,
+            clientId,
+            formatPhoneNumber(row.employee_number_raw),
+            fullName,
+            row.job_title_raw,
+            row.department_raw,
+            parseEmployeeActiveStatus(row.employee_status_raw),
+            `Created by import: ${batch.filename}`,
+          ]
         );
         employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
         employeesCreated += 1;
