@@ -4,13 +4,24 @@ const { dbGet } = require('../db');
 const { verifyPassword, signToken } = require('../lib/auth');
 const { getOrCreateSessionSecret } = require('../lib/settings');
 const { COOKIE_NAME, SESSION_MS } = require('../middleware/auth');
+const { checkLockout, recordAttempt } = require('../lib/loginSecurity');
 
 router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
 
+  // Per-username lockout (not per-IP - a shared office network should never lock everyone out
+  // together). The blocked attempt itself is still logged, so a lockout shows up in the audit
+  // trail the same as any other attempt.
+  if (await checkLockout(username)) {
+    await recordAttempt({ username, req, success: false, blocked: true });
+    return res.status(429).json({ error: `Too many failed login attempts. Please wait 15 minutes and try again.` });
+  }
+
   const user = await dbGet('SELECT * FROM app_users WHERE username = ?', [username]);
-  if (!user || !verifyPassword(password, user.password_hash)) {
+  const valid = Boolean(user && verifyPassword(password, user.password_hash));
+  await recordAttempt({ username, req, success: valid });
+  if (!valid) {
     return res.status(401).json({ error: 'Incorrect username or password.' });
   }
 

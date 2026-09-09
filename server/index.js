@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const db = require('./db');
 
@@ -29,11 +31,63 @@ async function start() {
 
   const app = express();
   // Render sits in front of this app behind a proxy that terminates TLS - trust it so
-  // req.secure and the client's real protocol are reported correctly (needed for secure cookies).
+  // req.secure, req.ip, and the client's real protocol are reported correctly (needed for
+  // secure cookies and for login_attempts.ip_address to record the real client, not Render's).
   app.set('trust proxy', 1);
-  app.use(cors());
+
+  // Security headers (Keeley's request, 2026-09-09 - hardening pass ahead of a penetration
+  // test). CSP is explicit rather than helmet's default: the app renders every style as an
+  // inline `style={{...}}` attribute (style-src needs 'unsafe-inline' or the whole UI breaks),
+  // signatures captured during Training Sign-In are rendered as data: image URIs, and QR codes
+  // load from this app's own /api routes - nothing else needs to be allowed.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:'],
+          fontSrc: ["'self'"],
+          connectSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'self'"],
+        },
+      },
+    })
+  );
+
+  // This app is always served same-origin (client/dist and the API are one process) - there's
+  // no legitimate browser use case for a cross-origin request, so CORS is scoped to the app's
+  // own public URL instead of the previous unrestricted default (which reflected any origin).
+  // Requests with no Origin header (server-to-server, curl, same-origin fetches) are unaffected.
+  const allowedOrigins = [process.env.PUBLIC_APP_URL, 'http://localhost:4000', 'http://localhost:5173'].filter(Boolean);
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error('Not allowed by CORS'));
+      },
+      credentials: true,
+    })
+  );
+
   app.use(express.json({ limit: '5mb' }));
   app.use(attachUser);
+
+  // Coarse, IP-based defense against a scripted brute-force run across many usernames from one
+  // source, on top of the per-username lockout inside the login route itself (see
+  // server/lib/loginSecurity.js). Generous enough not to lock out a shared office connection
+  // during normal (if fumbling) use.
+  const loginRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many login attempts from this network. Please try again later.' },
+  });
+  app.use('/api/auth/login', loginRateLimiter);
 
   // Login/logout/session-check are public; everything else below requires a session.
   app.use('/api/auth', require('./routes/auth'));
@@ -71,9 +125,15 @@ async function start() {
   // Centralized error handler so a thrown error returns JSON instead of crashing the process.
   // express-async-errors (required above) forwards a rejected promise from any async route
   // handler/middleware here automatically, the same as a synchronously thrown error.
+  //
+  // Every route that wants to surface a specific message to the client already does so itself
+  // (res.status(4xx).json({error: ...})) before returning - those never reach this handler.
+  // What lands here is genuinely unexpected (a DB failure, a programming bug), so the response
+  // is deliberately generic - the real error (which can include raw Postgres error text, file
+  // paths, etc.) is only ever logged server-side, never handed to whoever triggered it.
   app.use((err, req, res, next) => {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error' });
   });
 
   const PORT = process.env.PORT || 4000;
