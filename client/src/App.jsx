@@ -11,6 +11,7 @@ import Trainers from './pages/Trainers.jsx';
 import Import from './pages/Import.jsx';
 import Reports from './pages/Reports.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
+import Security from './pages/Security.jsx';
 import Login from './pages/Login.jsx';
 import Sessions from './pages/Sessions.jsx';
 import SessionDetail from './pages/SessionDetail.jsx';
@@ -83,6 +84,7 @@ export default function App() {
               <Route path="/import" element={<Import />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/admin/users" element={<AdminUsers currentUsername={username} />} />
+              <Route path="/security" element={<Security />} />
             </Routes>
           </main>
         </div>

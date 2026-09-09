@@ -9,6 +9,13 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+// super_admin is a strict superset of admin - anywhere that gates on "is this an admin",
+// a Super Admin should see/do the same thing a regular admin would.
 export function useIsAdmin() {
-  return useContext(AuthContext).role === 'admin';
+  const role = useContext(AuthContext).role;
+  return role === 'admin' || role === 'super_admin';
+}
+
+export function useIsSuperAdmin() {
+  return useContext(AuthContext).role === 'super_admin';
 }

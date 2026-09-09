@@ -38,6 +38,13 @@ export const api = {
   updateUserRole: (userId, role) => request(`/users/${userId}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
 
+  // Security / login audit (Super Admin only screen)
+  getLoginAttempts: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request(`/audit/login-attempts${suffix}`);
+  },
+
   // Clients
   listClients: () => request('/clients'),
   getClient: (id) => request(`/clients/${id}`),

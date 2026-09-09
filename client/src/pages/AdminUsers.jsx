@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { useIsAdmin } from '../authContext.jsx';
+import { useIsAdmin, useIsSuperAdmin } from '../authContext.jsx';
+
+const ROLE_LABELS = { user: 'User', admin: 'Admin', super_admin: 'Super Admin' };
 
 export default function AdminUsers({ currentUsername }) {
   const isAdmin = useIsAdmin();
+  const isSuperAdmin = useIsSuperAdmin();
   const [users, setUsers] = useState([]);
   const [error, setError] = useState('');
   const [newUsername, setNewUsername] = useState('');
@@ -74,6 +77,8 @@ export default function AdminUsers({ currentUsername }) {
       <p className="page-subtitle">
         Add or remove login accounts for the Training Matrix. <strong>Admin</strong> accounts can add/edit clients, employees, training
         records, import data, and manage other users. <strong>User</strong> accounts can view everything but can&apos;t make changes.
+        {' '}<strong>Super Admin</strong> is everything Admin can do, plus the Security page (login/IP audit log) and the only role that
+        can grant or remove Super Admin itself.
       </p>
       {error && <div className="error-banner">{error}</div>}
 
@@ -86,6 +91,7 @@ export default function AdminUsers({ currentUsername }) {
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               <option value="user">User (view only)</option>
               <option value="admin">Admin (full access)</option>
+              {isSuperAdmin && <option value="super_admin">Super Admin (full access + Security)</option>}
             </select>
             <button type="submit" disabled={creating || !newUsername || !newPassword}>{creating ? 'Adding...' : 'Add User'}</button>
           </form>
@@ -108,21 +114,37 @@ export default function AdminUsers({ currentUsername }) {
               <tr key={u.user_id}>
                 <td>{u.username}{u.username === currentUsername ? ' (you)' : ''}</td>
                 <td>
-                  {isAdmin ? (
+                  {/* Granting/removing Super Admin is Super Admin-only (enforced server-side
+                      too) - a regular admin sees a locked badge instead of a dropdown that
+                      would just fail, for any row already at Super Admin. */}
+                  {isAdmin && (isSuperAdmin || u.role !== 'super_admin') ? (
                     <select value={u.role} onChange={(e) => changeRole(u, e.target.value)}>
                       <option value="user">User</option>
                       <option value="admin">Admin</option>
+                      {isSuperAdmin && <option value="super_admin">Super Admin</option>}
                     </select>
                   ) : (
-                    <span className={`badge ${u.role === 'admin' ? 'badge-current' : 'badge-notapplicable'}`}>{u.role}</span>
+                    <span className={`badge ${u.role === 'user' ? 'badge-notapplicable' : 'badge-current'}`}>{ROLE_LABELS[u.role] || u.role}</span>
                   )}
                 </td>
                 <td>{new Date(u.created_at).toLocaleDateString()}</td>
                 {isAdmin && (
                   <td>
-                    <button className="secondary" onClick={() => { setResetTarget(u); setResetPassword(''); }}>Reset Password</button>
+                    <button
+                      className="secondary"
+                      onClick={() => { setResetTarget(u); setResetPassword(''); }}
+                      disabled={u.role === 'super_admin' && !isSuperAdmin}
+                    >
+                      Reset Password
+                    </button>
                     {' '}
-                    <button className="secondary" onClick={() => removeUser(u)} disabled={users.length <= 1}>Remove</button>
+                    <button
+                      className="secondary"
+                      onClick={() => removeUser(u)}
+                      disabled={users.length <= 1 || (u.role === 'super_admin' && !isSuperAdmin)}
+                    >
+                      Remove
+                    </button>
                   </td>
                 )}
               </tr>

@@ -27,7 +27,7 @@ async function start() {
   // server/lib/oneTimeFixes.js for what they do and why).
   await require('./lib/oneTimeFixes').runOneTimeFixes();
 
-  const { attachUser, requireAuth } = require('./middleware/auth');
+  const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 
   const app = express();
   // Render sits in front of this app behind a proxy that terminates TLS - trust it so
@@ -105,6 +105,7 @@ async function start() {
   app.use('/api/import', requireAuth, require('./routes/import'));
   app.use('/api/reports', requireAuth, require('./routes/reports'));
   app.use('/api/feedback-settings', requireAuth, require('./routes/feedbackSettings'));
+  app.use('/api/audit', requireAuth, requireSuperAdmin, require('./routes/audit'));
 
   // Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
   // login as everything else above. /api/public is the trainee-facing side and is deliberately

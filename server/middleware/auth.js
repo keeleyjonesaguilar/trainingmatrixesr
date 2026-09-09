@@ -43,13 +43,29 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// Three roles: "user" (view only), "admin" (full access), "super_admin" (full access, plus
+// account/security administration - who can grant super_admin, and the login audit log).
+// super_admin is a strict superset of admin: isAdminRole() is what regular admin-gated routes
+// should check, so a super_admin never loses ordinary admin capability.
+function isAdminRole(role) {
+  return role === 'admin' || role === 'super_admin';
+}
+
 // Admin/User roles: a plain "user" can view everything but can't add/edit/delete anything.
 // Apply this to individual mutating routes (POST/PUT/DELETE), not whole routers, so GET
 // routes on the same router stay open to read-only users.
 function requireAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Login required.' });
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'This action requires an admin account.' });
+  if (!isAdminRole(req.user.role)) return res.status(403).json({ error: 'This action requires an admin account.' });
   next();
 }
 
-module.exports = { attachUser, requireAuth, requireAdmin, COOKIE_NAME, SESSION_MS };
+// Super Admin only: account/security administration - granting super_admin itself, and the
+// login audit log (server/routes/audit.js). A regular admin never sees or reaches these.
+function requireSuperAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Login required.' });
+  if (req.user.role !== 'super_admin') return res.status(403).json({ error: 'This action requires a Super Admin account.' });
+  next();
+}
+
+module.exports = { attachUser, requireAuth, requireAdmin, requireSuperAdmin, isAdminRole, COOKIE_NAME, SESSION_MS };

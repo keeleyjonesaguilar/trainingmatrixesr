@@ -28,6 +28,15 @@ async function runOneTimeFixes() {
     await dbRun('DELETE FROM clients');
   });
 
+  // Security hardening pass (Keeley's request, 2026-09-09): introduces a super_admin role
+  // (account/security administration - granting super_admin itself, and the new login audit
+  // log) sitting above the existing admin/user roles. Bootstraps it onto whichever admin
+  // account(s) exist right now, since from here on granting super_admin requires already
+  // being one - there'd otherwise be no way for anyone to ever become the first.
+  await runOnce('fix_bootstrap_super_admin_v1', 'promoted existing admin account(s) to super_admin', async () => {
+    await dbRun("UPDATE app_users SET role = 'super_admin' WHERE role = 'admin'");
+  });
+
   // Trainers feature: existing training_sessions.trainer_name values predate
   // trainer_employee_id. Backfill a Trainer profile for each distinct name on file so
   // "Trainings Taught" is populated for historical sessions too, not just new ones.

@@ -9,9 +9,13 @@ const NAV_ITEMS = [
   { to: '/training-types', label: 'Training Types' },
   { to: '/import', label: 'Import Data' },
   { to: '/admin/users', label: 'Manage Users' },
+  // Super Admin only - login/IP audit trail. Hidden rather than shown-disabled for everyone
+  // else, same as this app hides other things a given role can't reach.
+  { to: '/security', label: 'Security', superAdminOnly: true },
 ];
 
 export default function Sidebar({ username, role, onLogout }) {
+  const visibleItems = NAV_ITEMS.filter((item) => !item.superAdminOnly || role === 'super_admin');
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -19,14 +23,16 @@ export default function Sidebar({ username, role, onLogout }) {
         <span className="sidebar-brand-name">Safety Training Matrix</span>
       </div>
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map((item) => (
+        {visibleItems.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end}>{item.label}</NavLink>
         ))}
       </nav>
       <div className="sidebar-footer">
         <div className="sidebar-user-avatar">{username ? username[0].toUpperCase() : '?'}</div>
         <div className="sidebar-user-info">
-          <div className="sidebar-user-name" title={username}>{username}{role ? ` (${role})` : ''}</div>
+          <div className="sidebar-user-name" title={username}>
+            {username}{role ? ` (${role === 'super_admin' ? 'Super Admin' : role})` : ''}
+          </div>
           <button type="button" className="link-button" onClick={onLogout}>Log Out</button>
         </div>
       </div>
