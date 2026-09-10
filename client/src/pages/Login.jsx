@@ -5,6 +5,7 @@ import esrLogo from '../assets/brand/esr-logo-full.png';
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -18,7 +19,7 @@ export default function Login({ onLogin }) {
     setError('');
     setSubmitting(true);
     try {
-      const result = await api.login(username.trim(), password);
+      const result = await api.login(username.trim(), password, rememberMe);
       if (result.mfaRequired) {
         setMfaToken(result.mfaToken);
       } else {
@@ -113,6 +114,15 @@ export default function Login({ onLogin }) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+        </div>
+        <div className="field-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <input
+            id="login-remember-me"
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+          />
+          <label htmlFor="login-remember-me" style={{ fontWeight: 400 }}>Remember me on this device</label>
         </div>
 
         <button type="submit" disabled={submitting || !username || !password}>

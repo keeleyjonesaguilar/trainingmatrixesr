@@ -1,8 +1,10 @@
-require('dotenv').config({ quiet: true });
-require('express-async-errors');
-
 const path = require('path');
 const fs = require('fs');
+// Explicit path (not dotenv's cwd-relative default) so this still finds .env when launched from
+// a different working directory (e.g. the Claude Code preview tool, which doesn't run npm/node
+// from this project's root the way a manual `node server/index.js` does).
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
+require('express-async-errors');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

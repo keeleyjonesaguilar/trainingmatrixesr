@@ -13,21 +13,27 @@ const { checkLockout, recordAttempt } = require('../lib/loginSecurity');
 const MFA_LOGIN_TTL_MS = 5 * 60 * 1000;
 const MFA_SETUP_TTL_MS = 10 * 60 * 1000;
 
-function issueSessionCookie(req, res, user) {
+// rememberMe controls only the cookie's persistence, not the session's actual validity window -
+// the signed token itself is always good for SESSION_MS either way, so a "remembered" browser
+// session never unexpectedly logs out early. Omitting `maxAge` makes it a browser session cookie
+// (cleared when the browser fully closes); defaults to true so existing behavior (always
+// persistent) doesn't change for anyone who doesn't interact with the new checkbox.
+function issueSessionCookie(req, res, user, rememberMe = true) {
   return getOrCreateSessionSecret().then((secret) => {
     const token = signToken({ sub: user.user_id, username: user.username }, secret, SESSION_MS);
-    res.cookie(COOKIE_NAME, token, {
+    const cookieOptions = {
       httpOnly: true,
       sameSite: 'lax',
       secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-      maxAge: SESSION_MS,
-    });
+    };
+    if (rememberMe) cookieOptions.maxAge = SESSION_MS;
+    res.cookie(COOKIE_NAME, token, cookieOptions);
     res.json({ ok: true, username: user.username, role: user.role });
   });
 }
 
 router.post('/login', async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, password, rememberMe = true } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Username and password are required.' });
 
   // Per-username lockout (not per-IP - a shared office network should never lock everyone out
@@ -50,11 +56,13 @@ router.post('/login', async (req, res) => {
   // real session cookie is issued. Accounts without MFA enabled are unaffected (existing flow).
   if (user.mfa_enabled) {
     const secret = await getOrCreateSessionSecret();
-    const mfaToken = signToken({ sub: user.user_id, username: user.username, stage: 'mfa' }, secret, MFA_LOGIN_TTL_MS);
+    // rememberMe travels inside this signed token (rather than being re-collected on the MFA
+    // screen) so the eventual session cookie still respects the choice made on the password step.
+    const mfaToken = signToken({ sub: user.user_id, username: user.username, stage: 'mfa', rememberMe: Boolean(rememberMe) }, secret, MFA_LOGIN_TTL_MS);
     return res.json({ mfaRequired: true, mfaToken });
   }
 
-  await issueSessionCookie(req, res, user);
+  await issueSessionCookie(req, res, user, rememberMe);
 });
 
 // Second step of login for accounts with MFA enabled. Not behind requireAuth (there's no real
@@ -97,7 +105,7 @@ router.post('/mfa/verify-login', async (req, res) => {
     await dbRun('UPDATE app_users SET mfa_backup_codes = ? WHERE user_id = ?', [remaining, user.user_id]);
   }
 
-  await issueSessionCookie(req, res, user);
+  await issueSessionCookie(req, res, user, payload.rememberMe);
 });
 
 router.post('/logout', async (req, res) => {
