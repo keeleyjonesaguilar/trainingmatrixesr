@@ -27,6 +27,10 @@ async function start() {
   // server/lib/oneTimeFixes.js for what they do and why).
   await require('./lib/oneTimeFixes').runOneTimeFixes();
 
+  // Daily automated database backup (Keeley's request, 2026-09-09) - runs inside this process so
+  // it's always-on regardless of any local PC's power state. See server/lib/backupScheduler.js.
+  require('./lib/backupScheduler').start();
+
   const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 
   const app = express();
