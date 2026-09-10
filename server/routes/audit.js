@@ -55,4 +55,51 @@ router.get('/login-attempts', async (req, res) => {
   });
 });
 
+// Privileged-action audit trail (server/lib/adminAudit.js writes these) - account creation/
+// deletion, role changes, password resets, MFA on/off, email changes. This is the record of
+// what happened to account access itself, as distinct from login-attempts above (which only
+// covers logging in).
+router.get('/account-changes', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const clauses = [];
+  const params = [];
+
+  if (req.query.username) {
+    const needle = String(req.query.username).trim();
+    clauses.push('(actor_username = ? OR target_username = ?)');
+    params.push(needle, needle);
+  }
+  if (req.query.action) {
+    clauses.push('action = ?');
+    params.push(String(req.query.action));
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const changes = await dbAll(
+    `SELECT * FROM admin_actions ${where} ORDER BY created_at DESC LIMIT ?`,
+    [...params, limit]
+  );
+
+  res.json({ changes });
+});
+
+// Snapshot of who currently holds privileged access and how well-protected those accounts are -
+// the single most actionable thing a security review of this app would want to see at a glance:
+// exactly which admin/super_admin accounts do NOT have MFA turned on.
+router.get('/access-roster', async (req, res) => {
+  const users = await dbAll(
+    `SELECT username, role, email, mfa_enabled, created_at FROM app_users
+     WHERE role IN ('admin', 'super_admin') ORDER BY role DESC, username ASC`,
+    []
+  );
+  const totals = await dbGet('SELECT COUNT(*) AS n FROM app_users', []);
+
+  res.json({
+    total_accounts: totals.n,
+    privileged_accounts: users,
+    privileged_without_mfa: users.filter((u) => !u.mfa_enabled).map((u) => u.username),
+    privileged_without_email: users.filter((u) => !u.email).map((u) => u.username),
+  });
+});
+
 module.exports = router;

@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { hashPassword } = require('../lib/auth');
 const { requireAdmin, isAdminRole } = require('../middleware/auth');
+const { logAdminAction } = require('../lib/adminAudit');
 
 const VALID_ROLES = ['user', 'admin', 'super_admin'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -49,6 +50,11 @@ router.post('/', requireAdmin, async (req, res) => {
   await dbRun('INSERT INTO app_users (user_id, username, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     [user.user_id, user.username, user.email, user.password_hash, user.role, user.created_at]);
 
+  await logAdminAction({
+    actor: req.user, action: 'user_created', targetUserId: user.user_id, targetUsername: user.username,
+    details: `role=${user.role}`, req,
+  });
+
   res.status(201).json({ user_id: user.user_id, username: user.username, email: user.email, role: user.role, created_at: user.created_at });
 });
 
@@ -69,6 +75,10 @@ router.put('/:userId/email', requireAdmin, async (req, res) => {
   if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
 
   await dbRun('UPDATE app_users SET email = ? WHERE user_id = ?', [cleanEmail, user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'email_changed_by_admin', targetUserId: user.user_id, targetUsername: user.username,
+    details: `new email=${cleanEmail}`, req,
+  });
   res.json({ ok: true, email: cleanEmail });
 });
 
@@ -85,6 +95,9 @@ router.put('/:userId/password', requireAdmin, async (req, res) => {
   }
 
   await dbRun('UPDATE app_users SET password_hash = ? WHERE user_id = ?', [hashPassword(password), user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'password_reset_by_admin', targetUserId: user.user_id, targetUsername: user.username, req,
+  });
   res.json({ ok: true });
 });
 
@@ -113,6 +126,10 @@ router.put('/:userId/role', requireAdmin, async (req, res) => {
   }
 
   await dbRun('UPDATE app_users SET role = ? WHERE user_id = ?', [role, user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'role_changed', targetUserId: user.user_id, targetUsername: user.username,
+    details: `${user.role} -> ${role}`, req,
+  });
   res.json({ ok: true });
 });
 
@@ -135,6 +152,12 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
   }
 
   await dbRun('DELETE FROM app_users WHERE user_id = ?', [req.params.userId]);
+  // target_user_id has no foreign key on it (unlike actor_user_id), so recording the now-deleted
+  // id here is safe and still useful for cross-referencing against other tables/logs later.
+  await logAdminAction({
+    actor: req.user, action: 'user_deleted', targetUserId: user.user_id, targetUsername: user.username,
+    details: `role=${user.role}`, req,
+  });
   res.json({ ok: true });
 });
 
@@ -149,6 +172,9 @@ router.delete('/:userId/mfa', requireAdmin, async (req, res) => {
     return res.status(403).json({ error: "Only a Super Admin can disable a Super Admin account's MFA." });
   }
   await dbRun('UPDATE app_users SET mfa_secret = NULL, mfa_enabled = false, mfa_backup_codes = ? WHERE user_id = ?', [[], user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'mfa_disabled_by_admin', targetUserId: user.user_id, targetUsername: user.username, req,
+  });
   res.json({ ok: true });
 });
 

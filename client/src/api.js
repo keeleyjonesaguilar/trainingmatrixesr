@@ -59,6 +59,12 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     return request(`/audit/login-attempts${suffix}`);
   },
+  getAccountChanges: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request(`/audit/account-changes${suffix}`);
+  },
+  getAccessRoster: () => request('/audit/access-roster'),
 
   // Clients
   listClients: () => request('/clients'),

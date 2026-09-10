@@ -10,6 +10,7 @@ const { getOrCreateSessionSecret } = require('../lib/settings');
 const { COOKIE_NAME, SESSION_MS, requireAuth } = require('../middleware/auth');
 const { checkLockout, recordAttempt } = require('../lib/loginSecurity');
 const { sendEmail } = require('../lib/email');
+const { logAdminAction } = require('../lib/adminAudit');
 
 // How long a user has to enter their MFA code after a correct password, and to finish scanning
 // a QR code during setup, before that in-flight token expires and they have to start over.
@@ -167,6 +168,7 @@ router.post('/mfa/enable', requireAuth, async (req, res) => {
     hashedCodes,
     req.user.user_id,
   ]);
+  await logAdminAction({ actor: req.user, action: 'mfa_enabled', targetUserId: req.user.user_id, targetUsername: req.user.username, req });
   // Shown to the user exactly once - only the hashes are kept from here on.
   res.json({ ok: true, backupCodes });
 });
@@ -178,6 +180,7 @@ router.post('/mfa/disable', requireAuth, async (req, res) => {
     return res.status(401).json({ error: 'Incorrect password.' });
   }
   await dbRun('UPDATE app_users SET mfa_secret = NULL, mfa_enabled = false, mfa_backup_codes = ? WHERE user_id = ?', [[], req.user.user_id]);
+  await logAdminAction({ actor: req.user, action: 'mfa_disabled', targetUserId: req.user.user_id, targetUsername: req.user.username, req });
   res.json({ ok: true });
 });
 
@@ -197,6 +200,10 @@ router.put('/email', requireAuth, async (req, res) => {
   if (existing) return res.status(409).json({ error: 'That email address is already in use by another account.' });
 
   await dbRun('UPDATE app_users SET email = ? WHERE user_id = ?', [clean, req.user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'email_changed', targetUserId: req.user.user_id, targetUsername: req.user.username,
+    details: `new email=${clean}`, req,
+  });
   res.json({ ok: true, email: clean });
 });
 
@@ -263,8 +270,15 @@ router.post('/reset-password', async (req, res) => {
   );
   if (!row) return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
 
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [row.user_id]);
   await dbRun('UPDATE app_users SET password_hash = ? WHERE user_id = ?', [hashPassword(newPassword), row.user_id]);
   await dbRun('UPDATE password_reset_tokens SET used_at = now() WHERE token_id = ?', [row.token_id]);
+  // No req.user here (this happens before any login) - the account itself is both actor and
+  // target, which is exactly the useful signal: a password changed itself via an emailed link,
+  // from this IP, at this time.
+  await logAdminAction({
+    actor: user, action: 'password_reset_via_email_link', targetUserId: user.user_id, targetUsername: user.username, req,
+  });
   res.json({ ok: true });
 });
 
