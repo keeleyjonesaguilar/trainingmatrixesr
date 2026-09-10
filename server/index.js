@@ -95,6 +95,17 @@ async function start() {
   });
   app.use('/api/auth/login', loginRateLimiter);
 
+  // Separate, tighter limit on forgot-password - this one sends an email (a real cost, and a
+  // spam vector) rather than just checking a database row.
+  const forgotPasswordRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many password reset requests from this network. Please try again later.' },
+  });
+  app.use('/api/auth/forgot-password', forgotPasswordRateLimiter);
+
   // Login/logout/session-check are public; everything else below requires a session.
   app.use('/api/auth', require('./routes/auth'));
   app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));

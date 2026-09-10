@@ -5,6 +5,13 @@ export default function Account({ username }) {
   const [mfaEnabled, setMfaEnabled] = useState(null); // null = still loading
   const [error, setError] = useState('');
 
+  // Email on file (required for "forgot password" to work for this account).
+  const [email, setEmail] = useState(null); // null = still loading
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailSaved, setEmailSaved] = useState(false);
+
   // Setup-in-progress state (QR shown, waiting for the user to confirm with a code).
   const [setupToken, setSetupToken] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -22,6 +29,23 @@ export default function Account({ username }) {
 
   const load = () => api.getMfaStatus().then((res) => setMfaEnabled(res.mfaEnabled)).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
+  useEffect(() => { api.getMyEmail().then((res) => setEmail(res.email)).catch((e) => setError(e.message)); }, []);
+
+  const submitEmail = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSavingEmail(true);
+    try {
+      const res = await api.updateMyEmail(emailInput.trim());
+      setEmail(res.email);
+      setEditingEmail(false);
+      setEmailSaved(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
 
   const startSetup = async () => {
     setError('');
@@ -82,6 +106,35 @@ export default function Account({ username }) {
       <h1>My Account</h1>
       <p className="page-subtitle">Signed in as <strong>{username}</strong>.</p>
       {error && <div className="error-banner">{error}</div>}
+
+      <div className="card">
+        <h2>Email Address</h2>
+        <p>Used only for &quot;forgot password&quot; links - required before that will work for your account.</p>
+        {email === null ? (
+          <p>Loading...</p>
+        ) : editingEmail ? (
+          <form onSubmit={submitEmail} className="toolbar">
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              autoFocus
+            />
+            <button type="submit" disabled={savingEmail || !emailInput}>{savingEmail ? 'Saving...' : 'Save'}</button>
+            <button type="button" className="secondary" onClick={() => setEditingEmail(false)}>Cancel</button>
+          </form>
+        ) : (
+          <p>
+            {email ? <span className="badge badge-current">{email}</span> : <span className="badge badge-notapplicable">No email on file</span>}
+            {' '}
+            <button type="button" className="secondary" onClick={() => { setEmailInput(email || ''); setEditingEmail(true); setEmailSaved(false); }}>
+              {email ? 'Change' : 'Add Email'}
+            </button>
+            {emailSaved && !editingEmail && ' Saved.'}
+          </p>
+        )}
+      </div>
 
       <div className="card">
         <h2>Two-Factor Authentication</h2>

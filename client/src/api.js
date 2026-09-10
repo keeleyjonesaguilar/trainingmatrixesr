@@ -38,6 +38,12 @@ export const api = {
   enableMfa: (setupToken, code) => request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ setupToken, code }) }),
   disableMfa: (password) => request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) }),
 
+  // Self-service email (needed on file for "forgot password" to work) + the forgot/reset flow
+  getMyEmail: () => request('/auth/email'),
+  updateMyEmail: (email) => request('/auth/email', { method: 'PUT', body: JSON.stringify({ email }) }),
+  forgotPassword: (username) => request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ username }) }),
+  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
+
   // User management (Manage Users admin screen)
   listUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: JSON.stringify(data) }),
@@ -45,6 +51,7 @@ export const api = {
   updateUserRole: (userId, role) => request(`/users/${userId}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
   adminDisableMfa: (userId) => request(`/users/${userId}/mfa`, { method: 'DELETE' }),
+  adminUpdateUserEmail: (userId, email) => request(`/users/${userId}/email`, { method: 'PUT', body: JSON.stringify({ email }) }),
 
   // Security / login audit (Super Admin only screen)
   getLoginAttempts: (params = {}) => {

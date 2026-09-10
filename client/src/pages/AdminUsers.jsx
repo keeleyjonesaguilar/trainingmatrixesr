@@ -10,11 +10,14 @@ export default function AdminUsers({ currentUsername }) {
   const [users, setUsers] = useState([]);
   const [error, setError] = useState('');
   const [newUsername, setNewUsername] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('user');
   const [creating, setCreating] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
+  const [emailTarget, setEmailTarget] = useState(null);
+  const [emailInput, setEmailInput] = useState('');
 
   const load = () => api.listUsers().then(setUsers).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -25,8 +28,9 @@ export default function AdminUsers({ currentUsername }) {
     if (newPassword.length < 8) { setError('Password must be at least 8 characters.'); return; }
     setCreating(true);
     try {
-      await api.createUser({ username: newUsername.trim(), password: newPassword, role: newRole });
+      await api.createUser({ username: newUsername.trim(), email: newEmail.trim(), password: newPassword, role: newRole });
       setNewUsername('');
+      setNewEmail('');
       setNewPassword('');
       setNewRole('user');
       await load();
@@ -34,6 +38,19 @@ export default function AdminUsers({ currentUsername }) {
       setError(err.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const submitEmail = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await api.adminUpdateUserEmail(emailTarget.user_id, emailInput.trim());
+      setEmailTarget(null);
+      setEmailInput('');
+      await load();
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -98,6 +115,7 @@ export default function AdminUsers({ currentUsername }) {
           <h2>Add a user</h2>
           <form onSubmit={addUser} className="toolbar">
             <input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+            <input type="email" placeholder="Email (optional)" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
             <input type="password" placeholder="Password (8+ characters)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               <option value="user">User (view only)</option>
@@ -115,6 +133,7 @@ export default function AdminUsers({ currentUsername }) {
           <thead>
             <tr>
               <th>Username</th>
+              <th>Email</th>
               <th>Role</th>
               <th>2FA</th>
               <th>Added</th>
@@ -125,6 +144,17 @@ export default function AdminUsers({ currentUsername }) {
             {users.map((u) => (
               <tr key={u.user_id}>
                 <td>{u.username}{u.username === currentUsername ? ' (you)' : ''}</td>
+                <td>
+                  {u.email || <span className="badge badge-notapplicable">None</span>}
+                  {isAdmin && (u.role !== 'super_admin' || isSuperAdmin) && (
+                    <>
+                      {' '}
+                      <button className="link-button" onClick={() => { setEmailTarget(u); setEmailInput(u.email || ''); }}>
+                        {u.email ? 'Change' : 'Add'}
+                      </button>
+                    </>
+                  )}
+                </td>
                 <td>
                   {/* Granting/removing Super Admin is Super Admin-only (enforced server-side
                       too) - a regular admin sees a locked badge instead of a dropdown that
@@ -185,6 +215,17 @@ export default function AdminUsers({ currentUsername }) {
             <input type="password" placeholder="New password (8+ characters)" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} />
             <button type="submit">Save New Password</button>
             <button type="button" className="secondary" onClick={() => setResetTarget(null)}>Cancel</button>
+          </form>
+        </div>
+      )}
+
+      {isAdmin && emailTarget && (
+        <div className="card">
+          <h2>Email for {emailTarget.username}</h2>
+          <form onSubmit={submitEmail} className="toolbar">
+            <input type="email" placeholder="you@example.com" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} autoFocus />
+            <button type="submit" disabled={!emailInput}>Save Email</button>
+            <button type="button" className="secondary" onClick={() => { setEmailTarget(null); setEmailInput(''); }}>Cancel</button>
           </form>
         </div>
       )}

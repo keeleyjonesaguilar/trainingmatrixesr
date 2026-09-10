@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const QRCode = require('qrcode');
 const { dbGet, dbRun } = require('../db');
 const { verifyPassword, hashPassword, signToken, verifyToken } = require('../lib/auth');
@@ -7,11 +9,17 @@ const { generateSecret, verifyTotp, otpauthUri, generateBackupCode } = require('
 const { getOrCreateSessionSecret } = require('../lib/settings');
 const { COOKIE_NAME, SESSION_MS, requireAuth } = require('../middleware/auth');
 const { checkLockout, recordAttempt } = require('../lib/loginSecurity');
+const { sendEmail } = require('../lib/email');
 
 // How long a user has to enter their MFA code after a correct password, and to finish scanning
 // a QR code during setup, before that in-flight token expires and they have to start over.
 const MFA_LOGIN_TTL_MS = 5 * 60 * 1000;
 const MFA_SETUP_TTL_MS = 10 * 60 * 1000;
+
+// How long a password reset link stays valid after being requested.
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // rememberMe controls only the cookie's persistence, not the session's actual validity window -
 // the signed token itself is always good for SESSION_MS either way, so a "remembered" browser
@@ -170,6 +178,93 @@ router.post('/mfa/disable', requireAuth, async (req, res) => {
     return res.status(401).json({ error: 'Incorrect password.' });
   }
   await dbRun('UPDATE app_users SET mfa_secret = NULL, mfa_enabled = false, mfa_backup_codes = ? WHERE user_id = ?', [[], req.user.user_id]);
+  res.json({ ok: true });
+});
+
+// --- Self-service email (needed on file before "forgot password" can work for an account) ---
+
+router.get('/email', requireAuth, async (req, res) => {
+  const user = await dbGet('SELECT email FROM app_users WHERE user_id = ?', [req.user.user_id]);
+  res.json({ email: (user && user.email) || '' });
+});
+
+router.put('/email', requireAuth, async (req, res) => {
+  const { email } = req.body || {};
+  const clean = (email || '').trim();
+  if (!clean || !EMAIL_PATTERN.test(clean)) return res.status(400).json({ error: 'Enter a valid email address.' });
+
+  const existing = await dbGet('SELECT 1 FROM app_users WHERE email = ? AND user_id != ?', [clean, req.user.user_id]);
+  if (existing) return res.status(409).json({ error: 'That email address is already in use by another account.' });
+
+  await dbRun('UPDATE app_users SET email = ? WHERE user_id = ?', [clean, req.user.user_id]);
+  res.json({ ok: true, email: clean });
+});
+
+// --- Forgot / reset password ---
+
+// Always responds with the same generic message regardless of whether the username exists or
+// has an email on file, so this can't be used to enumerate valid accounts.
+const GENERIC_FORGOT_PASSWORD_RESPONSE = {
+  ok: true,
+  message: 'If that username exists and has an email address on file, a password reset link has been sent to it.',
+};
+
+router.post('/forgot-password', async (req, res) => {
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+
+  const user = await dbGet('SELECT * FROM app_users WHERE username = ?', [username]);
+  if (!user || !user.email) {
+    return res.json(GENERIC_FORGOT_PASSWORD_RESPONSE);
+  }
+
+  // A random 256-bit token is itself the whole secret (unlike a password, nothing about it is
+  // guessable or reused), so it's hashed with a fast, unsalted SHA-256 rather than the slow,
+  // salted scrypt used for passwords - that also lets the lookup below match by hash directly
+  // instead of having to scan and compare every outstanding token.
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS).toISOString();
+
+  await dbRun(
+    'INSERT INTO password_reset_tokens (token_id, user_id, token_hash, expires_at, requested_ip) VALUES (?, ?, ?, ?, ?)',
+    [uuidv4(), user.user_id, tokenHash, expiresAt, req.ip]
+  );
+
+  const base = (process.env.PUBLIC_APP_URL || 'http://localhost:4000').replace(/\/$/, '');
+  const resetUrl = `${base}/reset-password?token=${rawToken}`;
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: 'Reset your Safety Training Matrix password',
+      html: `
+        <p>Someone requested a password reset for the account <strong>${user.username}</strong>.</p>
+        <p><a href="${resetUrl}">Click here to choose a new password</a>. This link expires in 1 hour.</p>
+        <p>If you didn't request this, you can safely ignore this email - your password won't change.</p>
+      `,
+    });
+  } catch (err) {
+    // Logged, not surfaced - the response is deliberately identical either way (see above).
+    console.error(`Password reset email failed for "${user.username}":`, err.message);
+  }
+
+  res.json(GENERIC_FORGOT_PASSWORD_RESPONSE);
+});
+
+router.post('/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) return res.status(400).json({ error: 'Missing reset token or new password.' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const row = await dbGet(
+    'SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()',
+    [tokenHash]
+  );
+  if (!row) return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+
+  await dbRun('UPDATE app_users SET password_hash = ? WHERE user_id = ?', [hashPassword(newPassword), row.user_id]);
+  await dbRun('UPDATE password_reset_tokens SET used_at = now() WHERE token_id = ?', [row.token_id]);
   res.json({ ok: true });
 });
 

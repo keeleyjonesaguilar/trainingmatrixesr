@@ -14,6 +14,11 @@ export default function Login({ onLogin }) {
   const [mfaToken, setMfaToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
 
+  // Forgot-password sub-view.
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotUsername, setForgotUsername] = useState('');
+  const [forgotMessage, setForgotMessage] = useState('');
+
   const submit = async (e) => {
     e.preventDefault();
     setError('');
@@ -45,6 +50,65 @@ export default function Login({ onLogin }) {
       setSubmitting(false);
     }
   };
+
+  const submitForgotPassword = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      const result = await api.forgotPassword(forgotUsername.trim());
+      setForgotMessage(result.message);
+    } catch (err) {
+      setError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (showForgotPassword) {
+    return (
+      <div className="login-screen">
+        <form className="login-card" onSubmit={submitForgotPassword}>
+          <div className="login-brand">
+            <img src={esrLogo} alt="Evolution Safety Resources" />
+          </div>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          {forgotMessage ? (
+            <p className="login-footnote">{forgotMessage}</p>
+          ) : (
+            <>
+              <div className="field-row">
+                <label htmlFor="forgot-username">Username</label>
+                <input
+                  id="forgot-username"
+                  type="text"
+                  autoFocus
+                  autoComplete="username"
+                  value={forgotUsername}
+                  onChange={(e) => setForgotUsername(e.target.value)}
+                />
+              </div>
+              <p className="login-footnote">
+                If your account has an email address on file, we&apos;ll send a password reset link to it.
+              </p>
+              <button type="submit" disabled={submitting || !forgotUsername}>
+                {submitting ? 'Sending...' : 'Send Reset Link'}
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => { setShowForgotPassword(false); setForgotUsername(''); setForgotMessage(''); setError(''); }}
+          >
+            Back to sign in
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   if (mfaToken) {
     return (
@@ -127,6 +191,9 @@ export default function Login({ onLogin }) {
 
         <button type="submit" disabled={submitting || !username || !password}>
           {submitting ? 'Signing in...' : 'Sign in'}
+        </button>
+        <button type="button" className="link-button" onClick={() => setShowForgotPassword(true)}>
+          Forgot password?
         </button>
 
         <p className="login-footnote">Safety Training Matrix &mdash; authorized personnel only.</p>

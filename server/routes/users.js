@@ -6,22 +6,25 @@ const { hashPassword } = require('../lib/auth');
 const { requireAdmin, isAdminRole } = require('../middleware/auth');
 
 const VALID_ROLES = ['user', 'admin', 'super_admin'];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Mounted with requireAuth in server/index.js - every route below already requires a
 // logged-in session. Managing accounts/roles is admin-only; viewing the list is fine for
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
-  const users = await dbAll('SELECT user_id, username, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
+  const users = await dbAll('SELECT user_id, username, email, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
   res.json(users);
 });
 
 router.post('/', requireAdmin, async (req, res) => {
-  const { username, password, role = 'user' } = req.body || {};
+  const { username, password, role = 'user', email } = req.body || {};
   const cleanUsername = (username || '').trim();
+  const cleanEmail = (email || '').trim();
   if (!cleanUsername || !password) return res.status(400).json({ error: 'Username and password are required.' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: "Role must be 'user', 'admin', or 'super_admin'." });
+  if (cleanEmail && !EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
   // Granting super_admin is itself a super_admin-only action - a regular admin can create other
   // admins, but can never create (or promote anyone to) a Super Admin account.
   if (role === 'super_admin' && req.user.role !== 'super_admin') {
@@ -30,18 +33,43 @@ router.post('/', requireAdmin, async (req, res) => {
 
   const existing = await dbGet('SELECT 1 FROM app_users WHERE username = ?', [cleanUsername]);
   if (existing) return res.status(409).json({ error: 'That username is already in use.' });
+  if (cleanEmail) {
+    const existingEmail = await dbGet('SELECT 1 FROM app_users WHERE email = ?', [cleanEmail]);
+    if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
+  }
 
   const user = {
     user_id: uuidv4(),
     username: cleanUsername,
+    email: cleanEmail || null,
     password_hash: hashPassword(password),
     role,
     created_at: new Date().toISOString(),
   };
-  await dbRun('INSERT INTO app_users (user_id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)',
-    [user.user_id, user.username, user.password_hash, user.role, user.created_at]);
+  await dbRun('INSERT INTO app_users (user_id, username, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [user.user_id, user.username, user.email, user.password_hash, user.role, user.created_at]);
 
-  res.status(201).json({ user_id: user.user_id, username: user.username, role: user.role, created_at: user.created_at });
+  res.status(201).json({ user_id: user.user_id, username: user.username, email: user.email, role: user.role, created_at: user.created_at });
+});
+
+// Lets an admin put an email on file for someone else's account (e.g. onboarding a user who
+// hasn't set their own yet) - "forgot password" only works for an account that has one.
+router.put('/:userId/email', requireAdmin, async (req, res) => {
+  const { email } = req.body || {};
+  const cleanEmail = (email || '').trim();
+  if (!cleanEmail || !EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
+
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: "Only a Super Admin can change a Super Admin account's email." });
+  }
+
+  const existingEmail = await dbGet('SELECT 1 FROM app_users WHERE email = ? AND user_id != ?', [cleanEmail, user.user_id]);
+  if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
+
+  await dbRun('UPDATE app_users SET email = ? WHERE user_id = ?', [cleanEmail, user.user_id]);
+  res.json({ ok: true, email: cleanEmail });
 });
 
 router.put('/:userId/password', requireAdmin, async (req, res) => {
