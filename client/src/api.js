@@ -31,12 +31,20 @@ export const api = {
   logout: () => request('/auth/logout', { method: 'POST' }),
   me: () => request('/auth/me'),
 
+  // Two-factor authentication (self-service enrollment + the second login step)
+  verifyMfaLogin: (mfaToken, code) => request('/auth/mfa/verify-login', { method: 'POST', body: JSON.stringify({ mfaToken, code }) }),
+  getMfaStatus: () => request('/auth/mfa/status'),
+  startMfaSetup: () => request('/auth/mfa/setup', { method: 'POST' }),
+  enableMfa: (setupToken, code) => request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ setupToken, code }) }),
+  disableMfa: (password) => request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) }),
+
   // User management (Manage Users admin screen)
   listUsers: () => request('/users'),
   createUser: (data) => request('/users', { method: 'POST', body: JSON.stringify(data) }),
   resetUserPassword: (userId, password) => request(`/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ password }) }),
   updateUserRole: (userId, role) => request(`/users/${userId}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
+  adminDisableMfa: (userId) => request(`/users/${userId}/mfa`, { method: 'DELETE' }),
 
   // Security / login audit (Super Admin only screen)
   getLoginAttempts: (params = {}) => {

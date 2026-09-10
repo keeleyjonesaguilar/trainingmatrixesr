@@ -12,7 +12,7 @@ const VALID_ROLES = ['user', 'admin', 'super_admin'];
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
-  const users = await dbAll('SELECT user_id, username, role, created_at FROM app_users ORDER BY created_at ASC', []);
+  const users = await dbAll('SELECT user_id, username, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
   res.json(users);
 });
 
@@ -107,6 +107,20 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
   }
 
   await dbRun('DELETE FROM app_users WHERE user_id = ?', [req.params.userId]);
+  res.json({ ok: true });
+});
+
+// Recovery path for a lost/reset authenticator app: without this, a user who loses their device
+// AND their backup codes could never pass login again (self-service disable in server/routes/
+// auth.js requires already being logged in, which requires the code they no longer have). Gated
+// like password reset - a Super Admin's own MFA can only be turned off by another Super Admin.
+router.delete('/:userId/mfa', requireAdmin, async (req, res) => {
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: "Only a Super Admin can disable a Super Admin account's MFA." });
+  }
+  await dbRun('UPDATE app_users SET mfa_secret = NULL, mfa_enabled = false, mfa_backup_codes = ? WHERE user_id = ?', [[], user.user_id]);
   res.json({ ok: true });
 });
 

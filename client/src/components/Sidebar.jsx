@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/training-types', label: 'Training Types' },
   { to: '/import', label: 'Import Data' },
   { to: '/admin/users', label: 'Manage Users' },
+  { to: '/account', label: 'My Account' },
   // Super Admin only - login/IP audit trail. Hidden rather than shown-disabled for everyone
   // else, same as this app hides other things a given role can't reach.
   { to: '/security', label: 'Security', superAdminOnly: true },

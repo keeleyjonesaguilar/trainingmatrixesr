@@ -58,6 +58,17 @@ export default function AdminUsers({ currentUsername }) {
     }
   };
 
+  const disableMfaFor = async (user) => {
+    if (!window.confirm(`Turn off Two-Factor Authentication for "${user.username}"? Use this only if they've lost access to their authenticator app and backup codes.`)) return;
+    setError('');
+    try {
+      await api.adminDisableMfa(user.user_id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const submitReset = async (e) => {
     e.preventDefault();
     setError('');
@@ -105,6 +116,7 @@ export default function AdminUsers({ currentUsername }) {
             <tr>
               <th>Username</th>
               <th>Role</th>
+              <th>2FA</th>
               <th>Added</th>
               {isAdmin && <th></th>}
             </tr>
@@ -127,6 +139,9 @@ export default function AdminUsers({ currentUsername }) {
                     <span className={`badge ${u.role === 'user' ? 'badge-notapplicable' : 'badge-current'}`}>{ROLE_LABELS[u.role] || u.role}</span>
                   )}
                 </td>
+                <td>
+                  <span className={`badge ${u.mfa_enabled ? 'badge-current' : 'badge-notapplicable'}`}>{u.mfa_enabled ? 'On' : 'Off'}</span>
+                </td>
                 <td>{new Date(u.created_at).toLocaleDateString()}</td>
                 {isAdmin && (
                   <td>
@@ -137,6 +152,16 @@ export default function AdminUsers({ currentUsername }) {
                     >
                       Reset Password
                     </button>
+                    {' '}
+                    {u.mfa_enabled && (
+                      <button
+                        className="secondary"
+                        onClick={() => disableMfaFor(u)}
+                        disabled={u.role === 'super_admin' && !isSuperAdmin}
+                      >
+                        Disable 2FA
+                      </button>
+                    )}
                     {' '}
                     <button
                       className="secondary"

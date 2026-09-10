@@ -61,6 +61,7 @@ async function runBackup() {
 }
 
 function start() {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
   cron.schedule(
     '0 2 * * *',
     () => {
