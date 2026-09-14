@@ -68,7 +68,21 @@ async function start() {
   // no legitimate browser use case for a cross-origin request, so CORS is scoped to the app's
   // own public URL instead of the previous unrestricted default (which reflected any origin).
   // Requests with no Origin header (server-to-server, curl, same-origin fetches) are unaffected.
+  //
+  // Both the bare and "www." form of PUBLIC_APP_URL are allowed (whichever one isn't set as the
+  // canonical URL still needs to work if DNS/the domain registrar ever sends a visitor there
+  // before any www<->bare redirect happens) - a browser still attaches an Origin header on a
+  // same-site request in some cases, and this middleware would otherwise reject it outright.
   const allowedOrigins = [process.env.PUBLIC_APP_URL, 'http://localhost:4000', 'http://localhost:5173'].filter(Boolean);
+  for (const origin of [...allowedOrigins]) {
+    try {
+      const url = new URL(origin);
+      const altHost = url.hostname.startsWith('www.') ? url.hostname.slice(4) : `www.${url.hostname}`;
+      allowedOrigins.push(`${url.protocol}//${altHost}${url.port ? `:${url.port}` : ''}`);
+    } catch {
+      /* not a full URL (shouldn't happen for these three) - skip */
+    }
+  }
   app.use(
     cors({
       origin(origin, callback) {
