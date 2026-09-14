@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import esrLogo from '../assets/brand/esr-logo-full.png';
+import { APP_VERSION } from '../version';
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -105,6 +106,7 @@ export default function Login({ onLogin }) {
           >
             Back to sign in
           </button>
+          <p className="login-version">{APP_VERSION}</p>
         </form>
       </div>
     );
@@ -144,6 +146,7 @@ export default function Login({ onLogin }) {
           <button type="button" className="link-button" onClick={() => { setMfaToken(''); setMfaCode(''); setError(''); }}>
             Back to sign in
           </button>
+          <p className="login-version">{APP_VERSION}</p>
         </form>
       </div>
     );
@@ -197,6 +200,7 @@ export default function Login({ onLogin }) {
         </button>
 
         <p className="login-footnote">Safety Training Matrix &mdash; authorized personnel only.</p>
+        <p className="login-version">{APP_VERSION}</p>
       </form>
     </div>
   );
