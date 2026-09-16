@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatCell } from '../lib/matrixCell.js';
+import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 
 function healthPillClass(health) {
   return health === 'Compliant' ? 'pill-compliant' : 'pill-action-required';
@@ -155,31 +156,76 @@ function DuplicatesSummaryBox() {
 // Employees/Matrix page (same columns, same status badges via formatCell) rather than a new
 // layout, since that's the view admins already know. Reuses the existing /matrix endpoint
 // scoped to this client, so it costs nothing beyond what that page already does.
+//
+// Carries the same filter options and Active/Inactive summary tiles as the main Employee Matrix
+// page (Keeley's request, 2026-09-16) - this used to be just a bare name search, noticeably
+// weaker than what /matrix itself offers for the exact same data. No Client Account filter here
+// since this section is already scoped to one client.
 function ClientEmployeesSection({ clientId }) {
+  const [allMasterTrainings, setAllMasterTrainings] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [trainingIds, setTrainingIds] = useState([]);
+  const [activeParam, setActiveParam] = useState('1');
 
   useEffect(() => {
-    const params = new URLSearchParams({ client_id: clientId, active: '1' });
+    api.listMasterTrainings(true).then(setAllMasterTrainings).catch((e) => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams({ client_id: clientId, active: activeParam });
     if (search) params.set('search', search);
+    for (const tid of trainingIds) params.append('training_ids', tid);
     api.getMatrix(params).then(setData).catch((e) => setError(e.message));
-  }, [clientId, search]);
+  }, [clientId, search, trainingIds.join(','), activeParam]);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (!data) return null;
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <h2>Employees ({data.employees.length})</h2>
-      <input
-        type="search"
-        placeholder="Filter by name..."
-        defaultValue={search}
-        onKeyDown={(e) => { if (e.key === 'Enter') setSearch(e.target.value); }}
-        onBlur={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 12, maxWidth: 260 }}
-      />
+      <h2>Employees</h2>
+
+      <div className="stat-grid">
+        <div className={`stat-tile clickable${activeParam === '1' ? ' selected' : ''}`} onClick={() => setActiveParam('1')}>
+          <div className="stat-label">Active Employees</div>
+          <div className="value">{data.stats.audited_employees}</div>
+        </div>
+        <div className={`stat-tile clickable${activeParam === '0' ? ' selected' : ''}`} onClick={() => setActiveParam('0')}>
+          <div className="stat-label">Inactive Employees</div>
+          <div className="value">{data.stats.inactive_employees}</div>
+        </div>
+      </div>
+
+      <div className="filter-bar">
+        <div className="field-row">
+          <label>Search Employee</label>
+          <input
+            type="search"
+            placeholder="Type name..."
+            defaultValue={search}
+            onKeyDown={(e) => { if (e.key === 'Enter') setSearch(e.target.value); }}
+            onBlur={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <TrainingFilterDropdown masterTrainings={allMasterTrainings} selected={trainingIds} onChange={setTrainingIds} />
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => { setSearch(''); setTrainingIds([]); setActiveParam('1'); }}
+        >
+          Reset Filters
+        </button>
+      </div>
+
+      {trainingIds.length > 0 && (
+        <p className="page-subtitle" style={{ marginTop: -8 }}>
+          Showing employees who currently hold <strong>all</strong> of:{' '}
+          {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
+        </p>
+      )}
+
       {data.employees.length === 0 ? (
         <div className="empty-state">No employees match these filters.</div>
       ) : (
@@ -243,13 +289,6 @@ export default function Dashboard() {
     api.getDashboard(clientId || undefined).then(setData).catch((e) => setError(e.message));
   }, [clientId]);
 
-  const goToMatrix = (status, forClientId) => {
-    const params = new URLSearchParams();
-    if (forClientId || clientId) params.set('client_id', forClientId || clientId);
-    if (status) params.set('status', status);
-    navigate(`/matrix?${params.toString()}`);
-  };
-
   if (clientId && data && data.scope === 'client') {
     return (
       <div>
@@ -268,7 +307,6 @@ export default function Dashboard() {
                 here instead, pre-scoped to this client via the same ?client_id= filter the
                 Reports page already supported. */}
             <button className="secondary" onClick={() => navigate(`/reports?client_id=${clientId}`)}>Generate Report</button>
-            <button onClick={() => goToMatrix(undefined, clientId)}>Open Employees</button>
           </div>
         </div>
         {error && <div className="error-banner">{error}</div>}
@@ -323,7 +361,7 @@ export default function Dashboard() {
         </div>
         <div className="page-header-actions">
           <button onClick={() => navigate('/sessions?new=1')}>Create New Training Session</button>
-          {isAdmin && <button className="secondary" onClick={() => navigate('/clients?new=1')}>Create a New Client</button>}
+          <button className="secondary" onClick={() => navigate('/clients?new=1')}>Create a New Client</button>
         </div>
       </div>
       {error && <div className="error-banner">{error}</div>}

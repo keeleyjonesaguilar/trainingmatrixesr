@@ -248,11 +248,14 @@ export default function Import() {
                   </td>
                   <td>{col.resolution_status}</td>
                   <td>
-                    {/* Exact catalog-name/alias matches and already human-confirmed rows stay
-                        locked - anything looser (fuzzy/ID match, or genuinely unmatched) always
-                        gets a correction control, even once auto-matched, since a fuzzy guess
-                        can be wrong and there'd otherwise be no way to fix it before committing. */}
-                    {col.resolution_status !== 'resolved' && col.match_confidence !== 'exact_alias' ? (
+                    {/* Only an exact catalog-name/alias auto-match stays locked - that's the one
+                        case the app is fully certain about. Everything else - fuzzy/ID matches,
+                        genuinely unmatched columns, and anything a human has already manually
+                        assigned or ignored - keeps its correction control forever, so a mapping
+                        can always be changed or reversed right up until the batch is committed
+                        (Keeley's request, 2026-09-16: a manual pick was permanently locking the
+                        row, with no way to fix a mistaken assignment or un-ignore a column). */}
+                    {col.match_confidence !== 'exact_alias' ? (
                       <>
                         <select
                           onChange={(e) => e.target.value && resolveColumn(col.map_id, e.target.value, false)}

@@ -64,7 +64,11 @@ router.get('/:id', async (req, res) => {
   res.json(row);
 });
 
-router.post('/', requireAdmin, async (req, res) => {
+// Creating a client (but not editing, deleting, or merging one) is open to the plain 'user'
+// role too (Keeley's request, 2026-09-16) - that role exists for people finding employees for
+// job placements, who need to be able to add a client/trainer/employee/session they encounter
+// without being a full admin.
+router.post('/', async (req, res) => {
   const { client_name, active = 1, notes = null } = req.body;
   if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'client_name is required' });
   const client_id = uuidv4();

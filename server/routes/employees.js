@@ -203,7 +203,9 @@ function assertClientTypeInvariant(clientId, employeeType) {
   }
 }
 
-router.post('/', requireAdmin, async (req, res) => {
+// Open to the plain 'user' role too (Keeley's request, 2026-09-16) - see the matching note on
+// server/routes/clients.js's POST /.
+router.post('/', async (req, res) => {
   const {
     client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null,
     employee_type = 'trainee',

@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { useIsAdmin } from '../authContext.jsx';
 
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
 }
 
 export default function Sessions() {
-  const isAdmin = useIsAdmin();
   const [searchParams] = useSearchParams();
   const clientIdFilter = searchParams.get('client_id') || '';
   const [sessions, setSessions] = useState([]);
@@ -119,9 +117,8 @@ export default function Sessions() {
 
       {error && <p className="error-banner">{error}</p>}
 
-      {isAdmin && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          {!showForm ? (
+      <div className="card" style={{ marginBottom: 20 }}>
+        {!showForm ? (
             <button className="btn btn-accent" onClick={() => setShowForm(true)}>
               + New Session
             </button>
@@ -342,8 +339,7 @@ export default function Sessions() {
               </div>
             </form>
           )}
-        </div>
-      )}
+      </div>
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 10 }}>
         <input

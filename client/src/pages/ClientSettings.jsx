@@ -126,7 +126,7 @@ export default function ClientSettings() {
           <h1>Clients</h1>
           <p className="page-subtitle">Every client on the Training Matrix. Click a client's name for their Compliance Overview, or Settings to edit training requirements and expiration overrides.</p>
         </div>
-        {isAdmin && !addingOpen && (
+        {!addingOpen && (
           <div className="page-header-actions">
             <button onClick={() => setAddingOpen(true)}>+ Add Client</button>
           </div>
@@ -189,7 +189,7 @@ export default function ClientSettings() {
                 );
               })}
               {activeClients.length === 0 && (
-                <tr><td colSpan={5} className="empty-state">No active clients yet{isAdmin ? ' — add one above.' : '.'}</td></tr>
+                <tr><td colSpan={5} className="empty-state">No active clients yet — add one above.</td></tr>
               )}
             </tbody>
           </table>

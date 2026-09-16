@@ -4,54 +4,11 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
+import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import { formatCell } from '../lib/matrixCell.js';
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
-
-function TrainingFilterDropdown({ masterTrainings, selected, onChange }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const filtered = masterTrainings.filter(
-    (mt) => !search || mt.training_name.toLowerCase().includes(search.toLowerCase()) || mt.training_id.toLowerCase().includes(search.toLowerCase())
-  );
-  const toggle = (id) => {
-    if (selected.includes(id)) onChange(selected.filter((s) => s !== id));
-    else onChange([...selected, id]);
-  };
-
-  return (
-    <div className="field-row" style={{ position: 'relative' }}>
-      <label>Has All Selected Trainings</label>
-      <button type="button" className="secondary" onClick={() => setOpen((o) => !o)}>
-        {selected.length ? `${selected.length} training${selected.length === 1 ? '' : 's'} selected` : 'Select trainings...'}
-      </button>
-      {open && (
-        <div className="card" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 20, width: 340, maxHeight: 380, overflowY: 'auto' }}>
-          <input
-            type="search"
-            placeholder="Search trainings..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ marginBottom: 8, width: '100%' }}
-          />
-          {filtered.map((mt) => (
-            <label key={mt.training_id} style={{ display: 'block', fontSize: 13, padding: '4px 0', cursor: 'pointer' }}>
-              <input type="checkbox" checked={selected.includes(mt.training_id)} onChange={() => toggle(mt.training_id)} />{' '}
-              {mt.training_id} - {mt.training_name}
-            </label>
-          ))}
-          {filtered.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No matches.</p>}
-          <div style={{ marginTop: 8 }}>
-            {selected.length > 0 && <button type="button" className="secondary" onClick={() => onChange([])}>Clear</button>}
-            {' '}
-            <button type="button" onClick={() => setOpen(false)}>Done</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // Manually add an employee without going through the CSV import flow (Keeley's request) -
 // First/Last name combine into the existing single full_name column (same convention used for
@@ -203,7 +160,7 @@ export default function Matrix() {
           <h1>Employees</h1>
           <p className="page-subtitle">Every employee against the Master Training Catalog. Click a name or training column for details.</p>
         </div>
-        {isAdmin && !addingOpen && (
+        {!addingOpen && (
           <div className="page-header-actions">
             <button onClick={() => setAddingOpen(true)}>+ Add Employee</button>
           </div>

@@ -109,7 +109,10 @@ router.get('/:id', async (req, res) => {
 // Trainer Employee ID is the one exception: it's required when picking an existing trainer
 // (auto-filled, read-only on the client) but skipped entirely for a brand-new trainer typed
 // in on the spot - trainer_needs_review flags that session instead of blocking creation on it.
-router.post('/', requireAdmin, async (req, res) => {
+//
+// Open to the plain 'user' role too (Keeley's request, 2026-09-16) - see the matching note on
+// server/routes/clients.js's POST /.
+router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english',

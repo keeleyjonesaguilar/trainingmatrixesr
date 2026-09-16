@@ -107,7 +107,7 @@ export default function Trainers() {
           <h1>Trainers</h1>
           <p className="page-subtitle">Everyone who conducts trainings, tracked separately from the clients/employees they train — never counted in client compliance totals.</p>
         </div>
-        {isAdmin && !addingOpen && (
+        {!addingOpen && (
           <div className="page-header-actions">
             <button onClick={() => setAddingOpen(true)}>+ Add Trainer</button>
           </div>
@@ -180,7 +180,7 @@ export default function Trainers() {
                 <tr>
                   <td colSpan={4} className="empty-state">
                     {trainers.length === 0
-                      ? `No trainers yet${isAdmin ? ' — add one above.' : '.'}`
+                      ? 'No trainers yet — add one above.'
                       : showActive ? 'No active trainers.' : 'No inactive trainers.'}
                   </td>
                 </tr>

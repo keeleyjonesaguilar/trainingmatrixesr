@@ -38,7 +38,10 @@ router.get('/', async (req, res) => {
 // Employee ID is captured here too (Keeley's call: trainers are identified by their own
 // company Employee ID, not phone number) - stored on the same employee_number column a
 // regular employee's phone uses; free-typed, no format validation.
-router.post('/', requireAdmin, async (req, res) => {
+//
+// Open to the plain 'user' role too (Keeley's request, 2026-09-16) - see the matching note on
+// server/routes/clients.js's POST /.
+router.post('/', async (req, res) => {
   const { full_name, job_title = null, employee_number = null } = req.body || {};
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ error: 'full_name is required' });
