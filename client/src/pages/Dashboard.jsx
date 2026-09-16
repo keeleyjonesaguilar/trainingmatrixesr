@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatCell } from '../lib/matrixCell.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 function healthPillClass(health) {
   return health === 'Compliant' ? 'pill-compliant' : 'pill-action-required';
@@ -165,6 +166,7 @@ function ClientEmployeesSection({ clientId }) {
   const [allMasterTrainings, setAllMasterTrainings] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [trainingIds, setTrainingIds] = useState([]);
   const [activeParam, setActiveParam] = useState('1');
@@ -174,14 +176,16 @@ function ClientEmployeesSection({ clientId }) {
   }, []);
 
   useEffect(() => {
+    setLoading(true);
+    setError('');
     const params = new URLSearchParams({ client_id: clientId, active: activeParam });
     if (search) params.set('search', search);
     for (const tid of trainingIds) params.append('training_ids', tid);
-    api.getMatrix(params).then(setData).catch((e) => setError(e.message));
+    api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [clientId, search, trainingIds.join(','), activeParam]);
 
   if (error) return <div className="error-banner">{error}</div>;
-  if (!data) return null;
+  if (loading || !data) return <div className="card" style={{ marginTop: 16 }}><h2>Employees</h2><LoadingState label="Loading employees..." /></div>;
 
   return (
     <div className="card" style={{ marginTop: 16 }}>

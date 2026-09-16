@@ -5,6 +5,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 import { formatCell } from '../lib/matrixCell.js';
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
@@ -227,7 +228,7 @@ export default function Matrix() {
         </p>
       )}
 
-      {loading && <div className="empty-state">Loading matrix...</div>}
+      {loading && <LoadingState label="Loading employees..." />}
 
       {data && !loading && (
         data.employees.length === 0 ? (

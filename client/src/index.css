@@ -372,6 +372,27 @@ tr:hover td { background: #fafbfc; }
 .matrix-vertical-code { display: block; font-size: 11px; }
 
 .empty-state { color: var(--color-text-muted); padding: 24px; text-align: center; }
+
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: loading-spin 0.7s linear infinite;
+}
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
 .error-banner { background: var(--status-expired-bg); color: var(--status-expired-text); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14px; }
 
 .field-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
