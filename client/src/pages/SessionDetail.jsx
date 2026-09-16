@@ -362,6 +362,16 @@ export default function SessionDetail() {
                 >
                   Export Roster (CSV)
                 </a>
+                {/* One ZIP, every attendee's certificate already named "Training Title_Client_
+                    Trainer_Date_Trainee Name.pdf" (Keeley's request, 2026-09-16) - nothing to
+                    separate or rename by hand before handing them out. */}
+                <a
+                  href={`/api/training-sessions/${id}/certificates.zip`}
+                  className="btn btn-secondary btn-sm"
+                  style={{ justifyContent: 'center' }}
+                >
+                  Download All Certificates (ZIP)
+                </a>
               </div>
             )}
           </div>

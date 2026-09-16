@@ -3,12 +3,14 @@
 // below additionally require requireAdmin, matching the rest of the app's convention.
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const archiver = require('archiver');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
+const { buildCertificateFilename } = require('../lib/certificateFilename');
 const fs = require('fs');
 
 const router = express.Router();
@@ -286,12 +288,52 @@ router.get('/:id/roster.pdf', async (req, res) => {
 });
 
 router.get('/:sessionId/attendees/:attendeeId/certificate.pdf', async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
   const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [
     req.params.attendeeId,
     req.params.sessionId,
   ]);
   if (!attendee || !attendee.certificate_path) return res.status(404).json({ error: 'Certificate not available yet' });
-  res.download(attendee.certificate_path, attendee.certificate_filename || 'certificate.pdf');
+  // Computed fresh rather than using the stored certificate_filename column (Keeley's request,
+  // 2026-09-16: "Training Title_Client_Trainer_Date_Trainee Name") - this way every download,
+  // including a certificate generated before that request, gets the current naming convention
+  // without needing to regenerate the PDF itself.
+  res.download(attendee.certificate_path, buildCertificateFilename(session, attendee));
+});
+
+// Every attendee's certificate in one ZIP, named the same way as the individual download
+// (Keeley's request, 2026-09-16) - so a whole session's certificates can be handed out without
+// downloading and renaming each one separately. Only ever includes attendees who actually have
+// a certificate on file (skips anyone whose generation failed, rather than erroring the whole
+// download over one bad row).
+router.get('/:sessionId/certificates.zip', async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const attendees = (await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]))
+    .filter((a) => a.certificate_path && fs.existsSync(a.certificate_path));
+  if (attendees.length === 0) {
+    return res.status(404).json({ error: 'No certificates available yet - close the session first.' });
+  }
+
+  const zipName = ['certificates', session.training_type_label, session.client_name, session.session_date]
+    .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
+    .join('_');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${zipName}.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => {
+    // Headers are already sent by the time archiver can fail mid-stream, so the best that can be
+    // done is end the response - a JSON error body here would just corrupt the partial zip.
+    console.error(`Certificate ZIP failed for session ${session.session_id}:`, err);
+    res.end();
+  });
+  archive.pipe(res);
+  for (const attendee of attendees) {
+    archive.file(attendee.certificate_path, { name: buildCertificateFilename(session, attendee) });
+  }
+  await archive.finalize();
 });
 
 // Manual correction of a typo'd attendee entry (name/phone), while the session is still open.

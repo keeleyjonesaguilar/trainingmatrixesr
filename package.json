@@ -14,6 +14,7 @@
     "migrate:pg": "node server/scripts/migrate-sqlite-to-postgres.js"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "better-sqlite3": "^11.3.0",
     "cors": "^2.8.5",
     "csv-parse": "^7.0.2",
