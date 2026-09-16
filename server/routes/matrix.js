@@ -45,6 +45,16 @@ router.get('/', async (req, res) => {
 
   const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
 
+  // Performance fix (Keeley reported the Employees page/client compliance overview loading very
+  // slowly, 2026-09-16): this used to call repo.computeCell() once per (employee, training) pair,
+  // each running 2-3 fresh db round trips - the exact same bottleneck already fixed on the
+  // Dashboard on 2026-08-18 (see repo.js's loadCellLookups), just never applied here too. Bulk-
+  // loads everything relevant to these employees in 3 queries total, then computes every cell in
+  // plain JS with no db calls in the loop.
+  const employeeIds = employees.map((e) => e.employee_id);
+  const clientIds = [...new Set(employees.map((e) => e.client_id))];
+  const { requirementMap, recordMap, ignoredSet } = await repo.loadCellLookups(employeeIds, clientIds);
+
   let orgCurrent = 0;
   let orgExpiringSoon = 0;
   let orgExpiredOrMissing = 0;
@@ -57,13 +67,16 @@ router.get('/', async (req, res) => {
     let empApplicable = 0;
     let empIssues = 0;
     for (const mt of masterTrainings) {
-      const { status: cellStatus, expirationDate, record } = await repo.computeCell({
+      const { status: cellStatus, expirationDate, record } = repo.computeCellFromLookups({
         employeeId: emp.employee_id,
         clientId: emp.client_id,
         trainingId: mt.training_id,
         masterTraining: mt,
+        requirementMap,
+        recordMap,
+        ignoredSet,
       });
-      const expiringSoon = await repo.isExpiringSoon(cellStatus, expirationDate);
+      const expiringSoon = repo.isExpiringSoon(cellStatus, expirationDate);
       cells[mt.training_id] = {
         status: cellStatus,
         expiration_date: expirationDate,

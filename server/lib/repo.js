@@ -75,6 +75,61 @@ async function computeCell({ employeeId, clientId, trainingId, masterTraining, t
   return { requirement, record, status, expirationDate, masterTraining: mt };
 }
 
+// Bulk-lookup version of getRequirement/getLatestRecord/isGapIgnored, for any route that needs
+// computeCell for MANY (employee, training) pairs at once (the Matrix/Employees grid, the
+// Dashboard) - each of those was previously calling computeCell in a nested loop, which ran 2-3
+// fresh db round trips PER CELL (e.g. 159 employees x 52 trainings = ~8,270 cells is 16,000+
+// round trips for one page load - see dashboard.js's 2026-08-18 fix, which this generalizes so
+// the Matrix page gets the same treatment instead of a second copy of this same bulk-query logic).
+// Loads everything relevant to the given employees/clients in exactly 3 queries, so callers can
+// then compute every cell with statusEngine.computeStatus (pure JS, no db calls) in a plain loop.
+async function loadCellLookups(employeeIds, clientIds) {
+  if (employeeIds.length === 0) {
+    return { requirementMap: new Map(), recordMap: new Map(), ignoredSet: new Set() };
+  }
+
+  const requirementRows = await dbAll(
+    `SELECT * FROM client_training_requirements WHERE client_id IN (${clientIds.map(() => '?').join(',')})`,
+    clientIds
+  );
+  const requirementMap = new Map();
+  for (const r of requirementRows) requirementMap.set(`${r.client_id}|${r.training_id}`, r);
+
+  const recordRows = await dbAll(
+    `SELECT * FROM employee_training_records
+     WHERE is_active_record = 1 AND is_inactive = 0 AND employee_id IN (${employeeIds.map(() => '?').join(',')})
+     ORDER BY employee_id, training_id, (completion_date IS NULL), completion_date DESC, insert_seq DESC`,
+    employeeIds
+  );
+  // First occurrence per (employee_id, training_id) wins - the ORDER BY above puts the same
+  // "latest active record" first that getLatestRecord() would pick one at a time.
+  const recordMap = new Map();
+  for (const r of recordRows) {
+    const key = `${r.employee_id}|${r.training_id}`;
+    if (!recordMap.has(key)) recordMap.set(key, r);
+  }
+
+  const ignoredRows = await dbAll(
+    `SELECT employee_id, training_id FROM ignored_compliance_gaps WHERE employee_id IN (${employeeIds.map(() => '?').join(',')})`,
+    employeeIds
+  );
+  const ignoredSet = new Set(ignoredRows.map((r) => `${r.employee_id}|${r.training_id}`));
+
+  return { requirementMap, recordMap, ignoredSet };
+}
+
+// Sync counterpart to computeCell, for use against loadCellLookups()'s maps instead of a fresh
+// db round trip per cell.
+function computeCellFromLookups({ employeeId, clientId, trainingId, masterTraining, requirementMap, recordMap, ignoredSet, today }) {
+  const requirement = requirementMap.get(`${clientId}|${trainingId}`) || null;
+  const record = recordMap.get(`${employeeId}|${trainingId}`) || null;
+  let { status, expirationDate } = computeStatus({ record, requirement, masterTraining, today });
+  if ((status === 'Expired' || status === 'Missing' || status === 'Pending Review') && ignoredSet.has(`${employeeId}|${trainingId}`)) {
+    status = 'Ignored';
+  }
+  return { requirement, record, status, expirationDate, masterTraining };
+}
+
 async function recomputeAndPersistRecord(recordId, { today } = {}) {
   const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [recordId]);
   if (!record) return null;
@@ -574,6 +629,8 @@ module.exports = {
   ignoreComplianceGap,
   listRecordsForEmployee,
   computeCell,
+  loadCellLookups,
+  computeCellFromLookups,
   recomputeAndPersistRecord,
   recomputeAllForClientTraining,
   isExpiringSoon,
