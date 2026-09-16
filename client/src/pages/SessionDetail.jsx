@@ -515,16 +515,35 @@ export default function SessionDetail() {
               </div>
             </div>
           </div>
-          {session.feedback.some((f) => f.trainer_comment) && (
-            <>
-              <strong style={{ fontSize: 13 }}>Comments</strong>
-              <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
-                {session.feedback.filter((f) => f.trainer_comment).map((f) => (
-                  <li key={f.feedback_id} style={{ marginBottom: 4 }}>{f.trainer_comment}</li>
-                ))}
-              </ul>
-            </>
-          )}
+          {/* Every individual response, not just the pooled comment list (Keeley's request,
+              2026-09-16) - the averages above are useful for a quick read, but seeing each
+              trainee's full answer set together (both yes/no questions and both star ratings,
+              not just whichever ones happened to include a comment) is what actually shows
+              whether one bad rating is an outlier or several people agree. Feedback has no
+              trainee identity by design (session_feedback is anonymous - see migration
+              023_session_feedback.sql), so responses are numbered in submission order rather
+              than attributed to anyone. */}
+          <strong style={{ fontSize: 13 }}>Individual Responses</strong>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+            {session.feedback.map((f, i) => (
+              <div key={f.feedback_id} className="card" style={{ background: 'var(--color-bg, #f7f7f7)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+                  <span>Response {i + 1}</span>
+                  <span>{new Date(f.submitted_at).toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, fontSize: 13 }}>
+                  <div><strong>Training Effectiveness:</strong> {'★'.repeat(f.effectiveness_rating)}{'☆'.repeat(5 - f.effectiveness_rating)}</div>
+                  <div><strong>Trainer Rating:</strong> {'★'.repeat(f.trainer_rating)}{'☆'.repeat(5 - f.trainer_rating)}</div>
+                  <div><strong>Could Ask Questions:</strong> {f.could_ask_questions ? f.could_ask_questions[0].toUpperCase() + f.could_ask_questions.slice(1) : '—'}</div>
+                  <div><strong>Understood Material:</strong> {f.understood_material ? f.understood_material[0].toUpperCase() + f.understood_material.slice(1) : '—'}</div>
+                  <div><strong>Needs Additional Training:</strong> {f.needs_additional_training ? f.needs_additional_training[0].toUpperCase() + f.needs_additional_training.slice(1) : '—'}</div>
+                </div>
+                {f.trainer_comment && (
+                  <p style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>&ldquo;{f.trainer_comment}&rdquo;</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -177,9 +177,13 @@ router.get('/:id/full-detail', async (req, res) => {
        WHERE ts.trainer_employee_id = ?`,
       [employee.employee_id]
     );
+    // AVG() on an integer column returns Postgres NUMERIC, which the pg driver hands back as a
+    // string (same reason COUNT(*)/BIGINT needed the type-parser fix in server/db.js - this just
+    // wasn't covered by that fix, since it's a different OID) - left as a string, the frontend's
+    // .toFixed(1) call throws outright.
     trainerFeedbackSummary = {
-      avg_trainer_rating: agg.response_count > 0 ? agg.avg_trainer_rating : null,
-      avg_effectiveness_rating: agg.response_count > 0 ? agg.avg_effectiveness_rating : null,
+      avg_trainer_rating: agg.response_count > 0 ? Number(agg.avg_trainer_rating) : null,
+      avg_effectiveness_rating: agg.response_count > 0 ? Number(agg.avg_effectiveness_rating) : null,
       response_count: agg.response_count,
     };
   }
