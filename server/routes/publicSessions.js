@@ -90,9 +90,11 @@ router.post('/:token/close', async (req, res) => {
     return res.status(400).json({ error: 'A trainer signature is required to close the session.' });
   }
   // Only the trainer should be able to close the session (Keeley's request: trainees
-  // shouldn't be able to trigger it by accident) - a fixed, case-insensitive PIN, checked
-  // server-side since the client-side field is only a UX convenience, not the real boundary.
-  if (String(pin || '').trim().toUpperCase() !== 'ESR') {
+  // shouldn't be able to trigger it by accident) - an admin-editable, case-insensitive PIN
+  // (trainer_close_pin_settings, defaults to "2026"), checked server-side since the client-side
+  // field is only a UX convenience, not the real boundary.
+  const pinSetting = await dbGet('SELECT pin FROM trainer_close_pin_settings WHERE id = ?', ['default']);
+  if (String(pin || '').trim().toUpperCase() !== String(pinSetting?.pin || '').trim().toUpperCase()) {
     return res.status(400).json({ error: 'Incorrect PIN.' });
   }
 

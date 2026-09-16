@@ -203,4 +203,6 @@ export const api = {
   // Feedback form question text, admin-editable, shared by every session's feedback form.
   getFeedbackSettings: () => request('/feedback-settings'),
   updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getTrainerClosePinSettings: () => request('/trainer-close-pin-settings'),
+  updateTrainerClosePinSettings: (data) => request('/trainer-close-pin-settings', { method: 'PUT', body: JSON.stringify(data) }),
 };

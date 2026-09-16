@@ -77,6 +77,64 @@ function FeedbackQuestionsEditor() {
   );
 }
 
+// Admin-only editor for the PIN a trainer enters to close out ANY Training Sign-In session
+// (Keeley's request, 2026-09-16) - shared across every session, same pattern as
+// FeedbackQuestionsEditor above. Defaults to "2026" (set by the 038_trainer_close_pin.sql
+// migration) but is editable here in case that ever needs to change.
+function TrainerClosePinEditor() {
+  const [editing, setEditing] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [pin, setPin] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = () => api.getTrainerClosePinSettings().then((s) => { setSettings(s); setPin(s.pin); }).catch((e) => setError(e.message));
+  useEffect(() => { if (editing && !settings) load(); }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.updateTrainerClosePinSettings({ pin });
+      setSettings(updated);
+      setPin(updated.pin);
+      setEditing(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 20 }}>
+      <button type="button" className="link-button" onClick={() => setEditing((o) => !o)}>
+        {editing ? 'Hide' : 'Edit'} Trainer Close PIN
+      </button>
+      {editing && (
+        <div style={{ marginTop: 12 }}>
+          <p className="page-subtitle" style={{ marginTop: 0 }}>
+            This PIN is shared by every session - a trainer enters it to close out sign-in and generate certificates. Changing it here applies everywhere, not just this session.
+          </p>
+          {error && <div className="error-banner">{error}</div>}
+          {!settings ? (
+            <div className="empty-state">Loading...</div>
+          ) : (
+            <>
+              <div className="field-row" style={{ maxWidth: 200 }}>
+                <label>Trainer Close PIN</label>
+                <input type="text" value={pin} onChange={(e) => setPin(e.target.value)} />
+              </div>
+              <button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+              <button className="secondary" onClick={() => { setPin(settings.pin); setEditing(false); }}>Cancel</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecordStatusBadge({ status }) {
   const labels = {
     linked: 'Added to employee file',
@@ -558,6 +616,7 @@ export default function SessionDetail() {
       )}
 
       {isAdmin && <FeedbackQuestionsEditor />}
+      {isAdmin && <TrainerClosePinEditor />}
     </div>
   );
 }

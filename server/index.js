@@ -136,6 +136,7 @@ async function start() {
   app.use('/api/import', requireAuth, require('./routes/import'));
   app.use('/api/reports', requireAuth, require('./routes/reports'));
   app.use('/api/feedback-settings', requireAuth, require('./routes/feedbackSettings'));
+  app.use('/api/trainer-close-pin-settings', requireAuth, require('./routes/trainerClosePinSettings'));
   app.use('/api/audit', requireAuth, requireSuperAdmin, require('./routes/audit'));
 
   // Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
