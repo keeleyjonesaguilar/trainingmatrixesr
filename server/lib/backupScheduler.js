@@ -12,12 +12,17 @@
 // This mirrors server/scripts/backup-db.js (kept separately for manual/local-machine backups
 // against the external DB URL) but reuses this process's existing pg pool instead of opening a
 // second connection, and shares the table list via server/lib/backupTables.js.
+//
+// Also pushes the same backup to a private GitHub repo, off Render entirely (Keeley's request,
+// 2026-09-16 - OSHA compliance data, "I can't lose data from this application") - see
+// server/lib/githubBackup.js for that half.
 const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const { pool } = require('../db');
 const { DATA_DIR } = require('./paths');
 const { TABLES_IN_DEPENDENCY_ORDER } = require('./backupTables');
+const { pushBackupToGitHub } = require('./githubBackup');
 
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const LATEST_PATH = path.join(BACKUP_DIR, 'training-matrix-backup-latest.json');
@@ -58,6 +63,20 @@ async function runBackup() {
 
   const sizeMb = (Buffer.byteLength(json) / (1024 * 1024)).toFixed(2);
   log(`Backup complete: ${TABLES_IN_DEPENDENCY_ORDER.length} tables, ${totalRows} rows, ${sizeMb} MB -> ${LATEST_PATH}`);
+
+  // Off-Render copy, independent of this app's own infrastructure - see server/lib/
+  // githubBackup.js. Failure here is logged loudly (this is the whole point of the exercise) but
+  // doesn't undo the local backup above, which already succeeded.
+  try {
+    const result = await pushBackupToGitHub(dump);
+    if (result.skipped) {
+      log('GitHub off-Render backup skipped (GITHUB_BACKUP_TOKEN/GITHUB_BACKUP_REPO not set).');
+    } else {
+      log(`GitHub off-Render backup pushed to ${process.env.GITHUB_BACKUP_REPO}.`);
+    }
+  } catch (err) {
+    log(`GITHUB BACKUP PUSH FAILED: ${err.message}`);
+  }
 }
 
 function start() {
