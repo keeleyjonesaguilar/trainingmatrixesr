@@ -9,9 +9,34 @@ const path = require('path');
 const { dbGet, dbRun } = require('../db');
 const repo = require('./repo');
 const { generateCertificate } = require('./pdfGen');
+const { buildCertificateFilename } = require('./certificateFilename');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const RECORD_CERT_DIR = path.join(DATA_DIR, 'certificates', 'records');
+
+// Same "Training Title_Client_Trainer_Date_Trainee Name.pdf" convention as a Training Sign-In
+// certificate (Keeley's request, 2026-09-16) - used both when a record's certificate is first
+// auto-generated and by the download route below, computed fresh each time (not trusted from the
+// stored certificate_filename column) so it also applies to records generated before this change.
+async function computeFilenameForRecord(record) {
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [record.employee_id]);
+  const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [record.client_id]);
+  const masterTraining = await repo.getMasterTraining(record.training_id);
+  if (!employee || !client || !masterTraining) return null;
+  const trainer = record.trainer_employee_id
+    ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [record.trainer_employee_id])
+    : null;
+  return buildCertificateFilename(
+    {
+      training_type_label: record.original_client_training_name || masterTraining.training_name,
+      client_name: client.client_name,
+      trainer_signed_name: trainer ? trainer.full_name : null,
+      trainer_name: trainer ? trainer.full_name : null,
+      session_date: record.completion_date,
+    },
+    { trainee_name: employee.full_name }
+  );
+}
 
 async function maybeGenerateCertificate(recordId) {
   const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [recordId]);
@@ -50,14 +75,24 @@ async function maybeGenerateCertificate(recordId) {
   }
 
   const now = new Date().toISOString();
+  const filename = buildCertificateFilename(
+    {
+      training_type_label: record.original_client_training_name || masterTraining.training_name,
+      client_name: client.client_name,
+      trainer_signed_name: trainer ? trainer.full_name : null,
+      trainer_name: trainer ? trainer.full_name : null,
+      session_date: record.completion_date,
+    },
+    { trainee_name: employee.full_name }
+  );
   await dbRun(
     `UPDATE employee_training_records
      SET certificate_filename = ?, certificate_path = ?, certificate_uploaded_at = ?, certificate_auto_generated = 1, updated_at = ?
      WHERE record_id = ?`,
-    [`certificate-${employee.full_name}.pdf`, filePath, now, now, recordId]
+    [filename, filePath, now, now, recordId]
   );
 }
 
 fs.mkdirSync(RECORD_CERT_DIR, { recursive: true });
 
-module.exports = { maybeGenerateCertificate };
+module.exports = { maybeGenerateCertificate, computeFilenameForRecord };

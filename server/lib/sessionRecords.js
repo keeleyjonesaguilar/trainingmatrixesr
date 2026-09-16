@@ -8,6 +8,7 @@ const { dbAll, dbRun } = require('./../db');
 const { v4: uuidv4 } = require('uuid');
 const repo = require('./repo');
 const { formatPhoneNumber } = require('./phone');
+const { buildCertificateFilename } = require('./certificateFilename');
 
 // Matches an attendee to an existing employee at this client by name or phone, or creates a
 // new one - same matching rule the old cross-app sync used (name OR phone, scoped to the
@@ -51,10 +52,12 @@ async function findOrCreateEmployee(clientId, attendee) {
 async function processAttendee(session, attendee, certificatePath) {
   // Save the certificate onto the attendee's own row first (independent of what happens
   // below) so the roster page's "Download" link works even if employee/record linkage fails.
+  const certificateFilename = certificatePath ? buildCertificateFilename(session, attendee) : null;
+
   if (certificatePath) {
     await dbRun('UPDATE session_attendees SET certificate_path = ?, certificate_filename = ? WHERE attendee_id = ?', [
       certificatePath,
-      `certificate-${attendee.trainee_name}.pdf`,
+      certificateFilename,
       attendee.attendee_id,
     ]);
   }
@@ -90,7 +93,7 @@ async function processAttendee(session, attendee, certificatePath) {
 
     if (certificatePath) {
       await repo.attachCertificateFile(record.record_id, {
-        filename: `certificate-${attendee.trainee_name}.pdf`,
+        filename: certificateFilename,
         filePath: certificatePath,
       });
     }

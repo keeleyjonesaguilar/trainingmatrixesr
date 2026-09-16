@@ -7,15 +7,72 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
-const LOGO_PATH = path.join(__dirname, '..', 'assets', 'esr-logo-full.png');
-
-// ESR brand colors for the certificate (Keeley's requested redesign) - not defined elsewhere
-// in the codebase (the app's own UI uses a neutral gray palette), so picked to match the ESR
-// logo/letterhead itself. Background is left plain white (not a cream wash) because the
-// captured signature images are painted on an opaque white canvas (SignaturePad.jsx) - anything
-// other than white behind them would show as a visible box around the signature.
+// The actual approved letterhead (Keeley's request, 2026-09-16 - after two hand-drawn attempts
+// at recreating the background graphic didn't match, she supplied this exported PNG directly).
+// Everything static (logo, address, chevron graphic, headings, footer labels/lines) is baked
+// into this image; the code below only draws the 4 dynamic fields on top of it.
+const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'Training Certificate Template.png');
 const ESR_GREEN = '#1B5E42';
-const ESR_GOLD = '#C9A227';
+
+// Simulates the template's small-caps display font (a tall initial capital, smaller capitals
+// for the rest of each word) using the built-in Times-Roman font, since PDFKit can't apply an
+// OpenType small-caps feature and no matching font file was supplied. Returns the y one line
+// below what was drawn, for stacking multiple centered lines.
+function measureSmallCapsWord(doc, word, bigSize, smallSize) {
+  const first = word.charAt(0).toUpperCase();
+  const rest = word.slice(1).toUpperCase();
+  doc.fontSize(bigSize);
+  const firstWidth = doc.widthOfString(first);
+  doc.fontSize(smallSize);
+  const restWidth = doc.widthOfString(rest);
+  return { first, rest, width: firstWidth + restWidth, firstWidth };
+}
+
+function drawSmallCapsLine(doc, text, { x, width, baselineY, bigSize, smallSize, color, font = 'Times-Roman' }) {
+  doc.font(font).fillColor(color);
+  const words = text.split(' ').filter(Boolean);
+  const spaceWidth = (() => {
+    doc.fontSize(smallSize);
+    return doc.widthOfString(' ');
+  })();
+  const measured = words.map((w) => measureSmallCapsWord(doc, w, bigSize, smallSize));
+  const totalWidth = measured.reduce((sum, m) => sum + m.width, 0) + spaceWidth * (words.length - 1);
+
+  let cursorX = x + (width - totalWidth) / 2;
+  const bigY = baselineY - bigSize * 0.72;
+  const smallY = baselineY - smallSize * 0.72;
+  for (const m of measured) {
+    doc.font(font).fontSize(bigSize).text(m.first, cursorX, bigY, { lineBreak: false });
+    cursorX += m.firstWidth;
+    doc.font(font).fontSize(smallSize).text(m.rest, cursorX, smallY, { lineBreak: false });
+    cursorX += m.width - m.firstWidth + spaceWidth;
+  }
+}
+
+// Wraps `text` into lines that each fit within `width` at smallSize (a reasonable estimate given
+// the actual line also has some bigger initial-capital letters, which only makes lines a little
+// tighter - fine for the short training titles this renders), then draws each line centered,
+// stacked downward from `startY`.
+function drawWrappedSmallCaps(doc, text, { x, width, startY, lineGap, bigSize, smallSize, color }) {
+  doc.font('Times-Roman').fontSize(smallSize);
+  const words = text.split(' ').filter(Boolean);
+  const lines = [];
+  let current = [];
+  for (const word of words) {
+    const candidate = [...current, word].join(' ').toUpperCase();
+    if (current.length > 0 && doc.widthOfString(candidate) > width) {
+      lines.push(current.join(' '));
+      current = [word];
+    } else {
+      current.push(word);
+    }
+  }
+  if (current.length) lines.push(current.join(' '));
+
+  lines.forEach((line, i) => {
+    drawSmallCapsLine(doc, line, { x, width, baselineY: startY + i * lineGap, bigSize, smallSize, color });
+  });
+}
 
 function b64ToBuffer(dataUrl) {
   if (!dataUrl) return null;
@@ -39,12 +96,13 @@ function formatDate(d) {
   });
 }
 
-// One certificate of completion per attendee - matches the ESR letterhead template (Keeley's
-// redesign request): cream background, green chevron border bleeding off both edges, logo +
-// address block, gold divider, "CERTIFICATE / OF TRAINING" heading, and a single Trainer
-// Name/Trainer Signature sign-off (the trainee's own signature isn't repeated here since their
-// name is already the certificate's subject - it's shown instead in the app's Completed
-// Trainings table for each employee).
+// One certificate of completion per attendee - the ESR letterhead template the president
+// approved (Keeley's request, 2026-09-16, blank PNG export supplied after two hand-drawn
+// attempts didn't match) is the actual background image; only the 4 dynamic fields (trainee
+// name, training title, training date, trainer name) are drawn on top of it, positioned to land
+// in the blanks the template already lays out. The trainee's own signature isn't repeated here
+// since their name is already the certificate's subject - it's shown instead in the app's
+// Completed Trainings table for each employee.
 function generateCertificate(session, attendee, outputPath) {
   let filePath = outputPath;
   if (!filePath) {
@@ -62,96 +120,44 @@ function generateCertificate(session, attendee, outputPath) {
   const pageWidth = doc.page.width;
   const pageHeight = doc.page.height;
 
-  const contentLeft = 90;
-  const contentWidth = pageWidth - contentLeft * 2;
+  doc.image(TEMPLATE_PATH, 0, 0, { width: pageWidth, height: pageHeight });
 
-  let logoBottom = 40;
-  if (fs.existsSync(LOGO_PATH)) {
-    try {
-      doc.image(LOGO_PATH, pageWidth / 2 - 110, 30, { width: 220 });
-      logoBottom = 30 + 60;
-    } catch {
-      /* ignore bad logo file */
-    }
-  }
+  // Text region the template reserves for "CERTIFICATE OF TRAINING" / "Proudly presented to :" /
+  // "For successfully..." - name and training title are centered within this same column.
+  const contentLeft = pageWidth * 0.365;
+  const contentWidth = pageWidth * 0.95 - contentLeft;
 
-  doc
-    .fillColor('#333333')
-    .font('Helvetica')
-    .fontSize(10)
-    .text('5171 Glenwood Ave, Suite 365 Raleigh NC 27612', contentLeft, logoBottom, { width: contentWidth, align: 'center' })
-    .text('Tel: 919-858-6781', contentLeft, doc.y, { width: contentWidth, align: 'center' })
-    .text('info@evolutionsafetyresources.com', contentLeft, doc.y, { width: contentWidth, align: 'center' });
+  drawSmallCapsLine(doc, attendee.trainee_name, {
+    x: contentLeft,
+    width: contentWidth,
+    baselineY: pageHeight * 0.565,
+    bigSize: 32,
+    smallSize: 22,
+    color: '#1A1A1A',
+  });
 
-  const dividerY = doc.y + 12;
-  doc
-    .strokeColor(ESR_GOLD)
-    .lineWidth(1.5)
-    .moveTo(contentLeft + 30, dividerY)
-    .lineTo(pageWidth - contentLeft - 30, dividerY)
-    .stroke();
+  drawWrappedSmallCaps(doc, session.training_type_label, {
+    x: contentLeft,
+    width: contentWidth,
+    startY: pageHeight * 0.715,
+    lineGap: pageHeight * 0.072,
+    bigSize: 28,
+    smallSize: 19,
+    color: '#1A1A1A',
+  });
 
-  doc
-    .fillColor(ESR_GREEN)
-    .font('Helvetica-Bold')
-    .fontSize(34)
-    .text('CERTIFICATE', contentLeft, dividerY + 20, { width: contentWidth, align: 'center', characterSpacing: 6 });
-
-  doc
-    .font('Helvetica')
-    .fontSize(17)
-    .text('OF TRAINING', contentLeft, doc.y + 2, { width: contentWidth, align: 'center', characterSpacing: 5 });
-
-  doc
-    .font('Helvetica')
-    .fontSize(13)
-    .text('This certifies that', contentLeft, doc.y + 22, { width: contentWidth, align: 'center' });
-
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(24)
-    .text(attendee.trainee_name, contentLeft, doc.y + 10, { width: contentWidth, align: 'center' });
-
-  doc
-    .font('Helvetica')
-    .fontSize(13)
-    .text('has successfully completed the training', contentLeft, doc.y + 12, { width: contentWidth, align: 'center' });
-
-  doc
-    .font('Helvetica-Bold')
-    .fontSize(19)
-    .text(session.training_type_label, contentLeft, doc.y + 8, { width: contentWidth, align: 'center' });
-
-  doc
-    .font('Helvetica')
-    .fontSize(13)
-    .text(`Completed on ${formatDate(session.session_date)}`, contentLeft, doc.y + 18, { width: contentWidth, align: 'center' });
-
-  // Trainer sign-off - two columns: typed name on the left, the trainer's own captured
-  // signature image on the right, matching the template's "Trainer Name" / "Trainer Signature".
-  const sigLineY = pageHeight - 90;
-  const colWidth = 220;
-  const leftX = contentLeft + 20;
-  const rightX = pageWidth - contentLeft - 20 - colWidth;
-
+  // The two sign-off values sit just above the template's own gold lines/labels.
+  const footerValueY = pageHeight * 0.855;
   doc
     .fillColor(ESR_GREEN)
     .font('Helvetica')
     .fontSize(13)
-    .text(session.trainer_signed_name || session.trainer_name || '', leftX, sigLineY - 20, { width: colWidth, align: 'center' });
-  doc.strokeColor(ESR_GOLD).lineWidth(1.5).moveTo(leftX, sigLineY).lineTo(leftX + colWidth, sigLineY).stroke();
-  doc.fillColor(ESR_GREEN).font('Helvetica').fontSize(11).text('Trainer Name', leftX, sigLineY + 6, { width: colWidth, align: 'center' });
-
-  const trainerSig = b64ToBuffer(session.trainer_signature);
-  if (trainerSig) {
-    try {
-      doc.image(trainerSig, rightX + (colWidth - 140) / 2, sigLineY - 45, { width: 140, height: 40, fit: [140, 40] });
-    } catch {
-      /* ignore bad image data */
-    }
-  }
-  doc.strokeColor(ESR_GOLD).lineWidth(1.5).moveTo(rightX, sigLineY).lineTo(rightX + colWidth, sigLineY).stroke();
-  doc.fillColor(ESR_GREEN).font('Helvetica').fontSize(11).text('Trainer Signature', rightX, sigLineY + 6, { width: colWidth, align: 'center' });
+    .text(formatDate(session.session_date), pageWidth * 0.365, footerValueY, { width: pageWidth * 0.565 - pageWidth * 0.365, align: 'center' });
+  doc
+    .fillColor(ESR_GREEN)
+    .font('Helvetica')
+    .fontSize(13)
+    .text(session.trainer_signed_name || session.trainer_name || '', pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
 
   doc.end();
   return new Promise((resolve, reject) => {
