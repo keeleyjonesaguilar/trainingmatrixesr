@@ -10,7 +10,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
-const { buildCertificateFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
+const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
 const fs = require('fs');
 
 const router = express.Router();
@@ -37,6 +37,20 @@ async function translateSessionFields(trainingTypeLabel, outline, language) {
   } catch (err) {
     return { training_type_label_es: null, outline_es: null, warning: err.message };
   }
+}
+
+// Whether a session's trainer still needs a human to double-check them (Keeley's report,
+// 2026-09-17: a session she'd already fixed - the trainer had a real Employee ID on file, just
+// resolved by name rather than typed into this session's own form - was still stuck flagged).
+// An Employee ID typed into THIS save always clears it. Otherwise, it only clears if
+// findOrCreateTrainerEmployee resolved to an EXISTING employee that already has an Employee ID
+// on file - i.e. a genuinely known, previously-verified trainer - not just any name match,
+// since two people can share a name and a same-named stub with no ID is still unverified.
+async function resolveTrainerNeedsReview(trainerPhone, trainerEmployeeId) {
+  if (trainerPhone) return false;
+  if (!trainerEmployeeId) return true;
+  const employee = await dbGet('SELECT employee_number FROM employees WHERE employee_id = ?', [trainerEmployeeId]);
+  return !employee?.employee_number;
 }
 
 async function attendeeCount(sessionId) {
@@ -124,10 +138,6 @@ router.post('/', async (req, res) => {
       error: 'client_name, training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
   }
-  // Derived purely from whether an Employee ID is present, not trusted from the client
-  // (Keeley's call) - so a session created without one, then later edited to add it, clears
-  // itself automatically instead of needing a separate "un-flag" action anywhere.
-  const trainerNeedsReview = !trainer_phone;
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
@@ -142,6 +152,7 @@ router.post('/', async (req, res) => {
   // trainer_phone are kept as-typed on the session too, a frozen display fallback (matches
   // how client_name works above).
   const trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_name, trainer_phone);
+  const trainerNeedsReview = await resolveTrainerNeedsReview(trainer_phone, trainerEmployeeId);
   const { training_type_label_es, outline_es, warning } = await translateSessionFields(training_type_label, outline, language);
   const session_id = uuidv4();
   const qr_token = tokenGen();
@@ -190,9 +201,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
       error: 'training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
   }
-  // Same derived-not-trusted logic as creation: this self-clears the moment an Employee ID
-  // gets added through this same edit form, with no separate "un-flag" action needed.
-  const trainerNeedsReview = !merged.trainer_phone;
   if (!SESSION_LANGUAGES.includes(merged.language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
@@ -209,6 +217,10 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (req.body.trainer_name || req.body.trainer_phone) {
     trainerEmployeeId = await repo.findOrCreateTrainerEmployee(merged.trainer_name, merged.trainer_phone);
   }
+  // Same derived-not-trusted logic as creation: this self-clears the moment the trainer is
+  // properly on file, whether that's an Employee ID typed into this save or an existing,
+  // already-identified trainer profile resolved by name.
+  const trainerNeedsReview = await resolveTrainerNeedsReview(merged.trainer_phone, trainerEmployeeId);
 
   // Re-translates whenever Spanish/Both is in effect, since the name/outline/language could
   // each have just changed and there's no cheap way to tell from here - this only runs when an
@@ -280,11 +292,11 @@ router.get('/:id/feedback-qrcode.png', async (req, res) => {
 });
 
 router.get('/:id/roster.pdf', async (req, res) => {
-  const session = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session || !session.roster_pdf_path) {
     return res.status(404).json({ error: 'Roster PDF not available yet — close the session first' });
   }
-  res.download(session.roster_pdf_path, `roster-${session.session_date}.pdf`);
+  res.download(session.roster_pdf_path, buildRosterFilename(session, 'pdf'));
 });
 
 router.get('/:sessionId/attendees/:attendeeId/certificate.pdf', async (req, res) => {
@@ -411,7 +423,7 @@ router.get('/:id/roster.csv', async (req, res) => {
     );
   }
   res.set('Content-Type', 'text/csv');
-  res.set('Content-Disposition', `attachment; filename="roster-${session.session_date}.csv"`);
+  res.set('Content-Disposition', `attachment; filename="${buildRosterFilename(session, 'csv')}"`);
   res.send(lines.join('\n'));
 });
 

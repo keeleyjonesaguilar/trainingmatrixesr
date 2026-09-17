@@ -28,4 +28,19 @@ function buildCertificateFilename(session, attendee) {
   return `${parts.join('_')}.pdf`;
 }
 
-module.exports = { buildCertificateFilename, stripTrainingIdPrefix };
+// Same convention, minus the trainee name (a roster covers every attendee, not one) - so a
+// downloaded roster lands with a name that already says what it is instead of "roster-<date>",
+// which every session was producing identically-prefixed files under (Keeley's request,
+// 2026-09-16: keep this consistent with the certificate naming so nothing needs renaming by hand).
+function buildRosterFilename(session, ext) {
+  const parts = [
+    stripTrainingIdPrefix(session.training_type_label),
+    session.client_name,
+    session.trainer_signed_name || session.trainer_name,
+    session.session_date,
+    'Roster',
+  ].map(sanitizeFilenamePart);
+  return `${parts.join('_')}.${ext}`;
+}
+
+module.exports = { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix };
