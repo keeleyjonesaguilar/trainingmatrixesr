@@ -200,7 +200,7 @@ function generateRosterPdf(session, attendees) {
     const rowLeft = doc.x;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(`${i + 1}. ${a.trainee_name}`);
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
-    doc.text(`Phone: ${a.trainee_phone || '—'}    Signed: ${new Date(a.signed_at).toLocaleString()}`);
+    doc.text(`Phone: ${a.trainee_phone || '—'}    Email: ${a.trainee_email || '—'}    Signed: ${new Date(a.signed_at).toLocaleString()}`);
     const imageTop = doc.y + 2;
     const sig = b64ToBuffer(a.signature);
     let bottom = imageTop;
@@ -226,6 +226,7 @@ function generateRosterPdf(session, attendees) {
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text('Trainer Sign-Off');
   doc.font('Helvetica').fontSize(10).fillColor('#333333');
   doc.text(`Trainer: ${session.trainer_signed_name || session.trainer_name}`);
+  doc.text(`Trainer Email: ${session.trainer_email || '—'}`);
   doc.text(`Closed: ${session.closed_at ? new Date(session.closed_at).toLocaleString() : '—'}`);
   const trainerImageTop = doc.y + 2;
   const trainerSig = b64ToBuffer(session.trainer_signature);

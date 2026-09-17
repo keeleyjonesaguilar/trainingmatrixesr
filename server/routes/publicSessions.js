@@ -10,6 +10,10 @@ const { processAttendee } = require('../lib/sessionRecords');
 
 const router = express.Router();
 
+// Same pattern as server/routes/auth.js's EMAIL_PATTERN - duplicated locally rather than
+// shared, since these public routes intentionally have no dependency on the authenticated side.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 async function getSessionByToken(token) {
   return dbGet(
     `SELECT ts.*, c.client_name FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id WHERE ts.qr_token = ?`,
@@ -48,7 +52,7 @@ router.post('/:token/attendees', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This training session has been closed and can no longer accept sign-ins.' });
   }
-  const { trainee_name, trainee_phone, trainee_job_title, signature } = req.body || {};
+  const { trainee_name, trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
   if (!trainee_name || !trainee_name.trim()) {
     return res.status(400).json({ error: 'Name is required.' });
   }
@@ -61,14 +65,28 @@ router.post('/:token/attendees', async (req, res) => {
   if (!trainee_job_title || !trainee_job_title.trim()) {
     return res.status(400).json({ error: 'Job title is required.' });
   }
+  if (!trainee_email || !trainee_email.trim()) {
+    return res.status(400).json({ error: 'Email address is required.' });
+  }
+  if (!EMAIL_PATTERN.test(trainee_email.trim())) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A signature is required.' });
   }
   const attendee_id = uuidv4();
   await dbRun(
-    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, signature)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [attendee_id, session.session_id, trainee_name.trim(), formatPhoneNumber(trainee_phone), trainee_job_title.trim(), signature]
+    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, trainee_email, signature)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      attendee_id,
+      session.session_id,
+      trainee_name.trim(),
+      formatPhoneNumber(trainee_phone),
+      trainee_job_title.trim(),
+      trainee_email.trim().toLowerCase(),
+      signature,
+    ]
   );
   res.status(201).json({ ok: true });
 });
@@ -82,9 +100,15 @@ router.post('/:token/close', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This session is already closed.' });
   }
-  const { trainer_signed_name, signature, pin } = req.body || {};
+  const { trainer_signed_name, trainer_email, signature, pin } = req.body || {};
   if (!trainer_signed_name || !trainer_signed_name.trim()) {
     return res.status(400).json({ error: 'Trainer name is required to close the session.' });
+  }
+  if (!trainer_email || !trainer_email.trim()) {
+    return res.status(400).json({ error: 'Trainer email is required to close the session.' });
+  }
+  if (!EMAIL_PATTERN.test(trainer_email.trim())) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A trainer signature is required to close the session.' });
@@ -100,10 +124,10 @@ router.post('/:token/close', async (req, res) => {
 
   await dbRun(
     `UPDATE training_sessions
-     SET status = 'closed', trainer_signed_name = ?, trainer_signature = ?,
+     SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_signature = ?,
          trainer_signed_at = now_utc_text(), closed_at = now_utc_text()
      WHERE session_id = ?`,
-    [trainer_signed_name.trim(), signature, session.session_id]
+    [trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), signature, session.session_id]
   );
 
   const updatedSession = await dbGet(

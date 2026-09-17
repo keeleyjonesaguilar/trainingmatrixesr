@@ -306,6 +306,7 @@ export default function SessionDetail() {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [retryingId, setRetryingId] = useState(null);
   const [editingSession, setEditingSession] = useState(false);
   const [clients, setClients] = useState([]);
@@ -343,7 +344,7 @@ export default function SessionDetail() {
   }, [isAdmin]);
 
   const saveEdit = async (attendeeId) => {
-    await api.updateSessionAttendee(id, attendeeId, { trainee_name: editName, trainee_phone: editPhone });
+    await api.updateSessionAttendee(id, attendeeId, { trainee_name: editName, trainee_phone: editPhone, trainee_email: editEmail });
     setEditingId(null);
     load();
   };
@@ -379,6 +380,7 @@ export default function SessionDetail() {
       </h1>
       <p className="page-subtitle">
         {session.client_name} · {session.session_date} · Trainer: {session.trainer_signed_name || session.trainer_name}
+        {session.trainer_email ? ` (${session.trainer_email})` : ''}
         {session.location ? ` · ${session.location}` : ''}
         {session.duration ? ` · ${session.duration}` : ''}{' '}
         · <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
@@ -501,6 +503,7 @@ export default function SessionDetail() {
               <tr>
                 <th>Name</th>
                 <th>Phone</th>
+                <th>Email</th>
                 <th>Signed At</th>
                 {session.status === 'closed' && <th>Certificate</th>}
                 {session.status === 'closed' && <th>Employee File</th>}
@@ -519,6 +522,9 @@ export default function SessionDetail() {
                       <td>
                         <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} />
                       </td>
+                      <td>
+                        <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} type="email" />
+                      </td>
                       <td colSpan={2}>
                         <button className="btn btn-sm" onClick={() => saveEdit(a.attendee_id)}>
                           Save
@@ -532,6 +538,7 @@ export default function SessionDetail() {
                     <>
                       <td>{a.employee_id ? <Link to={`/employees/${a.employee_id}`}>{a.trainee_name}</Link> : a.trainee_name}</td>
                       <td>{a.trainee_phone || '—'}</td>
+                      <td>{a.trainee_email || '—'}</td>
                       <td>{new Date(a.signed_at).toLocaleString()}</td>
                       {session.status === 'closed' && (
                         <td>
@@ -555,6 +562,7 @@ export default function SessionDetail() {
                               setEditingId(a.attendee_id);
                               setEditName(a.trainee_name);
                               setEditPhone(a.trainee_phone || '');
+                              setEditEmail(a.trainee_email || '');
                             }}
                           >
                             Edit

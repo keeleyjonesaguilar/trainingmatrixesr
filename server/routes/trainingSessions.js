@@ -396,17 +396,17 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
   await archive.finalize();
 });
 
-// Manual correction of a typo'd attendee entry (name/phone), while the session is still open.
+// Manual correction of a typo'd attendee entry (name/phone/email), while the session is still open.
 router.patch('/:sessionId/attendees/:attendeeId', requireAdmin, async (req, res) => {
-  const { trainee_name, trainee_phone } = req.body || {};
+  const { trainee_name, trainee_phone, trainee_email } = req.body || {};
   const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [
     req.params.attendeeId,
     req.params.sessionId,
   ]);
   if (!attendee) return res.status(404).json({ error: 'Attendee not found' });
   await dbRun(
-    'UPDATE session_attendees SET trainee_name = COALESCE(?, trainee_name), trainee_phone = COALESCE(?, trainee_phone) WHERE attendee_id = ?',
-    [trainee_name || null, trainee_phone || null, attendee.attendee_id]
+    'UPDATE session_attendees SET trainee_name = COALESCE(?, trainee_name), trainee_phone = COALESCE(?, trainee_phone), trainee_email = COALESCE(?, trainee_email) WHERE attendee_id = ?',
+    [trainee_name || null, trainee_phone || null, trainee_email || null, attendee.attendee_id]
   );
   res.json(await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee.attendee_id]));
 });
@@ -450,6 +450,7 @@ router.get('/:id/roster.csv', async (req, res) => {
     'Session Date',
     'Trainee Name',
     'Trainee Phone',
+    'Trainee Email',
     'Signed At',
     'Employee Record Status',
   ];
@@ -463,6 +464,7 @@ router.get('/:id/roster.csv', async (req, res) => {
         session.session_date,
         a.trainee_name,
         a.trainee_phone,
+        a.trainee_email,
         a.signed_at,
         a.processing_status,
       ]

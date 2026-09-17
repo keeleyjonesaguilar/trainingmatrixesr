@@ -23,6 +23,7 @@ const STRINGS = {
   last_name: { en: 'Last name', es: 'Apellido' },
   phone_number: { en: 'Phone number', es: 'Número de teléfono' },
   job_title: { en: 'Job title', es: 'Puesto de trabajo' },
+  email: { en: 'Email address', es: 'Correo electrónico' },
   signature: { en: 'Signature', es: 'Firma' },
   sign_in_button: { en: 'Sign In', es: 'Registrarse' },
   signing_in_ellipsis: { en: 'Signing in…', es: 'Registrando…' },
@@ -52,8 +53,13 @@ const STRINGS = {
   err_last_name: { en: 'Please enter your last name.', es: 'Por favor ingrese su apellido.' },
   err_phone: { en: 'Please enter your phone number.', es: 'Por favor ingrese su número de teléfono.' },
   err_job_title: { en: 'Please enter your job title.', es: 'Por favor ingrese su puesto de trabajo.' },
+  err_email: { en: 'Please enter a valid email address.', es: 'Por favor ingrese un correo electrónico válido.' },
   err_signature: { en: 'Please sign before submitting.', es: 'Por favor firme antes de enviar.' },
   err_trainer_name: { en: "Please enter the trainer's name.", es: 'Por favor ingrese el nombre del instructor.' },
+  err_trainer_email: {
+    en: "Please enter the trainer's email address.",
+    es: 'Por favor ingrese el correo electrónico del instructor.',
+  },
   err_trainer_pin: { en: 'Please enter the trainer PIN.', es: 'Por favor ingrese el PIN del instructor.' },
   err_trainer_signature: {
     en: 'Trainer signature is required to close the session.',
@@ -63,6 +69,8 @@ const STRINGS = {
 
 // Returns the phrase for `key` in the session's language: English, Spanish, or (for "both")
 // "English/Spanish" - matches the format Keeley asked for ("First Name/Nombre").
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function makeTranslator(language) {
   return (key) => {
     const entry = STRINGS[key];
@@ -82,7 +90,9 @@ export default function PublicSignIn() {
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [jobTitle, setJobTitle] = useState('');
+  const [email, setEmail] = useState('');
   const [trainerName, setTrainerName] = useState('');
+  const [trainerEmail, setTrainerEmail] = useState('');
   const [pin, setPin] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -115,6 +125,7 @@ export default function PublicSignIn() {
     if (!lastName.trim()) return setFormError(t('err_last_name'));
     if (!phone.trim()) return setFormError(t('err_phone'));
     if (!jobTitle.trim()) return setFormError(t('err_job_title'));
+    if (!email.trim() || !EMAIL_PATTERN.test(email.trim())) return setFormError(t('err_email'));
     if (sigRef.current?.isEmpty()) return setFormError(t('err_signature'));
     setSubmitting(true);
     try {
@@ -122,6 +133,7 @@ export default function PublicSignIn() {
         trainee_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
         trainee_phone: phone.trim(),
         trainee_job_title: jobTitle.trim(),
+        trainee_email: email.trim(),
         signature: sigRef.current.toDataURL(),
       });
       setJustSigned(true);
@@ -129,6 +141,7 @@ export default function PublicSignIn() {
       setLastName('');
       setPhone('');
       setJobTitle('');
+      setEmail('');
       sigRef.current?.clear();
       load();
     } catch (err) {
@@ -142,12 +155,14 @@ export default function PublicSignIn() {
     e.preventDefault();
     setFormError('');
     if (!trainerName.trim()) return setFormError(t('err_trainer_name'));
+    if (!trainerEmail.trim() || !EMAIL_PATTERN.test(trainerEmail.trim())) return setFormError(t('err_trainer_email'));
     if (!pin.trim()) return setFormError(t('err_trainer_pin'));
     if (sigRef.current?.isEmpty()) return setFormError(t('err_trainer_signature'));
     setSubmitting(true);
     try {
       await api.publicCloseSession(token, {
         trainer_signed_name: trainerName.trim(),
+        trainer_email: trainerEmail.trim(),
         pin: pin.trim(),
         signature: sigRef.current.toDataURL(),
       });
@@ -271,6 +286,15 @@ export default function PublicSignIn() {
                   <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Electrician" />
                 </div>
                 <div className="field">
+                  <label>{t('email')}</label>
+                  <input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="jane@example.com"
+                    type="email"
+                  />
+                </div>
+                <div className="field">
                   <label>{t('signature')}</label>
                   <SignaturePad ref={sigRef} />
                 </div>
@@ -290,6 +314,15 @@ export default function PublicSignIn() {
                     value={trainerName}
                     onChange={(e) => setTrainerName(e.target.value)}
                     placeholder="Trainer name"
+                  />
+                </div>
+                <div className="field">
+                  <label>{t('email')}</label>
+                  <input
+                    value={trainerEmail}
+                    onChange={(e) => setTrainerEmail(e.target.value)}
+                    placeholder="trainer@example.com"
+                    type="email"
                   />
                 </div>
                 <div className="field">
