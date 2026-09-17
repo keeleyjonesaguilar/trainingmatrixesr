@@ -77,7 +77,20 @@ async function start() {
   // canonical URL still needs to work if DNS/the domain registrar ever sends a visitor there
   // before any www<->bare redirect happens) - a browser still attaches an Origin header on a
   // same-site request in some cases, and this middleware would otherwise reject it outright.
-  const allowedOrigins = [process.env.PUBLIC_APP_URL, 'http://localhost:4000', 'http://localhost:5173'].filter(Boolean);
+  // RENDER_EXTERNAL_URL is auto-populated by Render on every web service with the exact URL
+  // it's actually being served from - unlike PUBLIC_APP_URL (a manually-set env var elsewhere
+  // in this file, used for QR codes), it can't drift out of sync with reality. Included here as
+  // a guaranteed-correct fallback so a missing/mistyped PUBLIC_APP_URL can never lock out the
+  // app's own real origin (confirmed live, 2026-09-17: PUBLIC_APP_URL alone was rejecting the
+  // production site's own requests, breaking every POST - login, saves, uploads - in real
+  // browsers, since a browser attaches an Origin header those requests that curl/server-to-
+  // server calls don't, so this had gone unnoticed in every terminal-based check).
+  const allowedOrigins = [
+    process.env.PUBLIC_APP_URL,
+    process.env.RENDER_EXTERNAL_URL,
+    'http://localhost:4000',
+    'http://localhost:5173',
+  ].filter(Boolean);
   for (const origin of [...allowedOrigins]) {
     try {
       const url = new URL(origin);
