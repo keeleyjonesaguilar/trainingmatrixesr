@@ -17,8 +17,8 @@ async function issuePasswordLink({ user, req, mode }) {
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
 
   await dbRun(
-    'INSERT INTO password_reset_tokens (token_id, user_id, token_hash, expires_at, requested_ip) VALUES (?, ?, ?, ?, ?)',
-    [uuidv4(), user.user_id, tokenHash, expiresAt, req?.ip || null]
+    'INSERT INTO password_reset_tokens (token_id, user_id, token_hash, expires_at, requested_ip, purpose) VALUES (?, ?, ?, ?, ?, ?)',
+    [uuidv4(), user.user_id, tokenHash, expiresAt, req?.ip || null, mode === 'invite' ? 'invite' : 'reset']
   );
 
   const base = (process.env.PUBLIC_APP_URL || 'http://localhost:4000').replace(/\/$/, '');
@@ -29,8 +29,8 @@ async function issuePasswordLink({ user, req, mode }) {
     : 'Reset your Safety Training Matrix password';
   const html = mode === 'invite'
     ? `
-      <p>An account has been created for you on the Safety Training Matrix, username <strong>${user.username}</strong>.</p>
-      <p><a href="${resetUrl}">Click here to set your password</a> and finish setting up your account. This link expires in 7 days.</p>
+      <p>An account has been created for you on the Safety Training Matrix.</p>
+      <p><a href="${resetUrl}">Click here to choose your username and password</a> and finish setting up your account. This link expires in 7 days.</p>
       <p>If you weren't expecting this, you can ignore this email.</p>
     `
     : `

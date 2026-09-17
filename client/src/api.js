@@ -42,7 +42,9 @@ export const api = {
   getMyEmail: () => request('/auth/email'),
   updateMyEmail: (email) => request('/auth/email', { method: 'PUT', body: JSON.stringify({ email }) }),
   forgotPassword: (username) => request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ username }) }),
-  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
+  checkResetToken: (token) => request(`/auth/reset-password/check?token=${encodeURIComponent(token)}`),
+  resetPassword: (token, newPassword, username) =>
+    request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword, username }) }),
 
   // User management (Manage Users admin screen)
   listUsers: () => request('/users'),

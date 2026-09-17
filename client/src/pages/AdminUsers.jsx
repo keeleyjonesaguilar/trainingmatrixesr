@@ -4,12 +4,15 @@ import { useIsAdmin, useIsSuperAdmin } from '../authContext.jsx';
 
 const ROLE_LABELS = { user: 'User', admin: 'Admin', super_admin: 'Super Admin' };
 
+// A pending (not-yet-claimed) account's real "name" to a human is its email - the username is
+// just an unseen placeholder until the invite is claimed.
+const displayName = (u) => (u.pending ? u.email || 'this pending invite' : u.username);
+
 export default function AdminUsers({ currentUsername }) {
   const isAdmin = useIsAdmin();
   const isSuperAdmin = useIsSuperAdmin();
   const [users, setUsers] = useState([]);
   const [error, setError] = useState('');
-  const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('user');
   const [creating, setCreating] = useState(false);
@@ -29,14 +32,13 @@ export default function AdminUsers({ currentUsername }) {
     setNotice('');
     setCreating(true);
     try {
-      const created = await api.createUser({ username: newUsername.trim(), email: newEmail.trim(), role: newRole });
-      setNewUsername('');
+      const created = await api.createUser({ email: newEmail.trim(), role: newRole });
       setNewEmail('');
       setNewRole('user');
       setNotice(
         created.inviteSent
-          ? `Invite email sent to ${created.email}.`
-          : `User "${created.username}" was created, but the invite email failed to send (${created.inviteError || 'unknown error'}). Use "Resend Invite" once that's fixed, or set a password for them manually below.`
+          ? `Invite email sent to ${created.email} - they'll choose their own username and password when they click the link.`
+          : `An account for ${created.email} was created, but the invite email failed to send (${created.inviteError || 'unknown error'}). Use "Resend Invite" once that's fixed.`
       );
       await load();
     } catch (err) {
@@ -74,7 +76,7 @@ export default function AdminUsers({ currentUsername }) {
   };
 
   const removeUser = async (user) => {
-    if (!window.confirm(`Remove login access for "${user.username}"?`)) return;
+    if (!window.confirm(`Remove login access for "${displayName(user)}"?`)) return;
     setError('');
     try {
       await api.deleteUser(user.user_id);
@@ -95,7 +97,7 @@ export default function AdminUsers({ currentUsername }) {
   };
 
   const disableMfaFor = async (user) => {
-    if (!window.confirm(`Turn off Two-Factor Authentication for "${user.username}"? Use this only if they've lost access to their authenticator app and backup codes.`)) return;
+    if (!window.confirm(`Turn off Two-Factor Authentication for "${displayName(user)}"? Use this only if they've lost access to their authenticator app and backup codes.`)) return;
     setError('');
     try {
       await api.adminDisableMfa(user.user_id);
@@ -137,14 +139,13 @@ export default function AdminUsers({ currentUsername }) {
             They&apos;ll get an email with a link to set their own password - nothing to make up or share yourself.
           </p>
           <form onSubmit={addUser} className="toolbar">
-            <input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
             <input type="email" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               <option value="user">User (view only)</option>
               <option value="admin">Admin (full access)</option>
               {isSuperAdmin && <option value="super_admin">Super Admin (full access + Security)</option>}
             </select>
-            <button type="submit" disabled={creating || !newUsername || !newEmail}>{creating ? 'Adding...' : 'Add User & Send Invite'}</button>
+            <button type="submit" disabled={creating || !newEmail}>{creating ? 'Adding...' : 'Add User & Send Invite'}</button>
           </form>
         </div>
       )}
@@ -165,7 +166,10 @@ export default function AdminUsers({ currentUsername }) {
           <tbody>
             {users.map((u) => (
               <tr key={u.user_id}>
-                <td>{u.username}{u.username === currentUsername ? ' (you)' : ''}</td>
+                <td>
+                  {u.pending ? <span className="badge badge-notapplicable">Pending invite</span> : u.username}
+                  {u.username === currentUsername ? ' (you)' : ''}
+                </td>
                 <td>
                   {u.email || <span className="badge badge-notapplicable">None</span>}
                   {isAdmin && (u.role !== 'super_admin' || isSuperAdmin) && (
@@ -197,15 +201,19 @@ export default function AdminUsers({ currentUsername }) {
                 <td>{new Date(u.created_at).toLocaleDateString()}</td>
                 {isAdmin && (
                   <td>
-                    <button
-                      className="secondary"
-                      onClick={() => resendInvite(u)}
-                      disabled={!u.email || resendingId === u.user_id || (u.role === 'super_admin' && !isSuperAdmin)}
-                      title={u.email ? '' : 'Add an email for this user first'}
-                    >
-                      {resendingId === u.user_id ? 'Sending...' : 'Resend Invite'}
-                    </button>
-                    {' '}
+                    {u.pending && (
+                      <>
+                        <button
+                          className="secondary"
+                          onClick={() => resendInvite(u)}
+                          disabled={!u.email || resendingId === u.user_id || (u.role === 'super_admin' && !isSuperAdmin)}
+                          title={u.email ? '' : 'Add an email for this user first'}
+                        >
+                          {resendingId === u.user_id ? 'Sending...' : 'Resend Invite'}
+                        </button>
+                        {' '}
+                      </>
+                    )}
                     <button
                       className="secondary"
                       onClick={() => { setResetTarget(u); setResetPassword(''); }}
@@ -241,7 +249,7 @@ export default function AdminUsers({ currentUsername }) {
 
       {isAdmin && resetTarget && (
         <div className="card">
-          <h2>Reset password for {resetTarget.username}</h2>
+          <h2>Reset password for {displayName(resetTarget)}</h2>
           <form onSubmit={submitReset} className="toolbar">
             <input type="password" placeholder="New password (8+ characters)" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} />
             <button type="submit">Save New Password</button>
@@ -252,7 +260,7 @@ export default function AdminUsers({ currentUsername }) {
 
       {isAdmin && emailTarget && (
         <div className="card">
-          <h2>Email for {emailTarget.username}</h2>
+          <h2>Email for {displayName(emailTarget)}</h2>
           <form onSubmit={submitEmail} className="toolbar">
             <input type="email" placeholder="you@example.com" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} autoFocus />
             <button type="submit" disabled={!emailInput}>Save Email</button>

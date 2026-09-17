@@ -11,20 +11,30 @@ const { issuePasswordLink } = require('../lib/passwordReset');
 const VALID_ROLES = ['user', 'admin', 'super_admin'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// A brand-new invited account has no real username yet (the person picks their own when they
+// claim the invite link) - this placeholder just satisfies app_users.username's NOT NULL UNIQUE
+// constraint until then. Never shown to the invitee or usable to log in (password_hash is an
+// unguessable random value until claimed too).
+function makePendingUsername() {
+  return `pending-${crypto.randomBytes(8).toString('hex')}`;
+}
+function isPendingUsername(username) {
+  return /^pending-[0-9a-f]{16}$/.test(username || '');
+}
+
 // Mounted with requireAuth in server/index.js - every route below already requires a
 // logged-in session. Managing accounts/roles is admin-only; viewing the list is fine for
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
   const users = await dbAll('SELECT user_id, username, email, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
-  res.json(users);
+  res.json(users.map((u) => ({ ...u, pending: isPendingUsername(u.username) })));
 });
 
 router.post('/', requireAdmin, async (req, res) => {
-  const { username, role = 'user', email } = req.body || {};
-  const cleanUsername = (username || '').trim();
+  const { role = 'user', email } = req.body || {};
   const cleanEmail = (email || '').trim();
-  if (!cleanUsername || !cleanEmail) return res.status(400).json({ error: 'Username and email are required.' });
+  if (!cleanEmail) return res.status(400).json({ error: 'Email is required.' });
   if (!EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: "Role must be 'user', 'admin', or 'super_admin'." });
   // Granting super_admin is itself a super_admin-only action - a regular admin can create other
@@ -33,18 +43,16 @@ router.post('/', requireAdmin, async (req, res) => {
     return res.status(403).json({ error: 'Only a Super Admin can create another Super Admin account.' });
   }
 
-  const existing = await dbGet('SELECT 1 FROM app_users WHERE username = ?', [cleanUsername]);
-  if (existing) return res.status(409).json({ error: 'That username is already in use.' });
   const existingEmail = await dbGet('SELECT 1 FROM app_users WHERE email = ?', [cleanEmail]);
   if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
 
   const user = {
     user_id: uuidv4(),
-    username: cleanUsername,
+    // Both replaced the moment the invite link is claimed (server/routes/auth.js POST
+    // /reset-password with an 'invite'-purpose token) - nobody ever sees or types either value
+    // before then. This just satisfies username/password_hash's NOT NULL constraints at insert time.
+    username: makePendingUsername(),
     email: cleanEmail,
-    // Nobody ever sees or types this - the account is unusable until the invite email's link is
-    // used to set a real password (same /reset-password flow as "forgot password"). This just
-    // satisfies password_hash's NOT NULL constraint at insert time.
     password_hash: hashPassword(crypto.randomBytes(32).toString('hex')),
     role,
     created_at: new Date().toISOString(),
@@ -53,8 +61,8 @@ router.post('/', requireAdmin, async (req, res) => {
     [user.user_id, user.username, user.email, user.password_hash, user.role, user.created_at]);
 
   await logAdminAction({
-    actor: req.user, action: 'user_created', targetUserId: user.user_id, targetUsername: user.username,
-    details: `role=${user.role}`, req,
+    actor: req.user, action: 'user_created', targetUserId: user.user_id, targetUsername: user.email,
+    details: `role=${user.role}, pending invite claim`, req,
   });
 
   let inviteSent = true;
@@ -81,6 +89,9 @@ router.post('/:userId/resend-invite', requireAdmin, async (req, res) => {
   const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   if (!user.email) return res.status(400).json({ error: 'This account has no email on file yet - add one first.' });
+  if (!isPendingUsername(user.username)) {
+    return res.status(400).json({ error: 'This account has already been claimed - use "Reset Password" instead.' });
+  }
   if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
     return res.status(403).json({ error: "Only a Super Admin can resend a Super Admin account's invite." });
   }

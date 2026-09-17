@@ -231,8 +231,24 @@ router.post('/forgot-password', async (req, res) => {
   res.json(GENERIC_FORGOT_PASSWORD_RESPONSE);
 });
 
+// Looks up a token without consuming it, so the claim page knows whether to also ask for a
+// username (an 'invite' token - a brand-new account with no real username yet) or just a new
+// password (a plain 'reset' token) before the person fills anything in.
+router.get('/reset-password/check', async (req, res) => {
+  const token = req.query?.token;
+  if (!token) return res.json({ valid: false });
+
+  const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+  const row = await dbGet(
+    'SELECT purpose FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()',
+    [tokenHash]
+  );
+  if (!row) return res.json({ valid: false });
+  res.json({ valid: true, purpose: row.purpose });
+});
+
 router.post('/reset-password', async (req, res) => {
-  const { token, newPassword } = req.body || {};
+  const { token, newPassword, username } = req.body || {};
   if (!token || !newPassword) return res.status(400).json({ error: 'Missing reset token or new password.' });
   if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -244,15 +260,30 @@ router.post('/reset-password', async (req, res) => {
   if (!row) return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
 
   const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [row.user_id]);
-  await dbRun('UPDATE app_users SET password_hash = ? WHERE user_id = ?', [hashPassword(newPassword), row.user_id]);
+
+  // An 'invite' token's account was created with a placeholder username nobody was ever told -
+  // this is the one point where the person claiming it picks their real one. A plain 'reset'
+  // token never touches the username, only the password.
+  let finalUsername = user.username;
+  if (row.purpose === 'invite') {
+    const cleanUsername = (username || '').trim();
+    if (!cleanUsername) return res.status(400).json({ error: 'Choose a username.' });
+    const existingUsername = await dbGet('SELECT 1 FROM app_users WHERE username = ? AND user_id != ?', [cleanUsername, user.user_id]);
+    if (existingUsername) return res.status(409).json({ error: 'That username is already in use.' });
+    finalUsername = cleanUsername;
+  }
+
+  await dbRun('UPDATE app_users SET password_hash = ?, username = ? WHERE user_id = ?', [hashPassword(newPassword), finalUsername, row.user_id]);
   await dbRun('UPDATE password_reset_tokens SET used_at = now() WHERE token_id = ?', [row.token_id]);
   // No req.user here (this happens before any login) - the account itself is both actor and
   // target, which is exactly the useful signal: a password changed itself via an emailed link,
   // from this IP, at this time.
   await logAdminAction({
-    actor: user, action: 'password_reset_via_email_link', targetUserId: user.user_id, targetUsername: user.username, req,
+    actor: { ...user, username: finalUsername },
+    action: row.purpose === 'invite' ? 'account_claimed_via_invite' : 'password_reset_via_email_link',
+    targetUserId: user.user_id, targetUsername: finalUsername, req,
   });
-  res.json({ ok: true });
+  res.json({ ok: true, username: finalUsername });
 });
 
 module.exports = router;
