@@ -1,8 +1,11 @@
 // One-time data fixes - each runs exactly once (guarded by an app_settings flag), never on
 // every boot, so they can't silently undo later admin edits or wipe data a second time.
+const fs = require('fs');
+const path = require('path');
 const { dbAll, dbRun } = require('../db');
 const repo = require('./repo');
 const { getSetting, setSetting } = require('./settings');
+const { DATA_DIR } = require('./paths');
 
 async function runOnce(flagKey, description, fn) {
   if (await getSetting(flagKey)) return;
@@ -51,6 +54,18 @@ async function runOneTimeFixes() {
         ]);
       }
     }
+  });
+
+  // Removes the one leftover roster PDF + certificate folder from the 2026-09-17 stress test
+  // (75 sign-ins against a disposable client) - its database rows are already gone (the client
+  // delete that used to 500 on this exact scenario is what the stress test found and fixed),
+  // but the files themselves live on this server's own disk, which a local dev machine can't
+  // reach directly - this runs once, on this server, to actually remove them.
+  await runOnce('fix_cleanup_2026_09_17_stress_test_files_v1', 'removed orphaned stress-test roster/certificate files', async () => {
+    const rosterPath = path.join(DATA_DIR, 'rosters', 'de91f731-1ac7-444b-b850-52b65431feeb.pdf');
+    const certDir = path.join(DATA_DIR, 'certificates', 'sign-in-sessions', 'de91f731-1ac7-444b-b850-52b65431feeb');
+    if (fs.existsSync(rosterPath)) fs.unlinkSync(rosterPath);
+    if (fs.existsSync(certDir)) fs.rmSync(certDir, { recursive: true, force: true });
   });
 }
 
