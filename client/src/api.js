@@ -65,6 +65,11 @@ export const api = {
     return request(`/audit/account-changes${suffix}`);
   },
   getAccessRoster: () => request('/audit/access-roster'),
+  getActivityLog: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request(`/audit/activity-log${suffix}`);
+  },
 
   // Clients
   listClients: () => request('/clients'),
@@ -177,6 +182,7 @@ export const api = {
   createTrainingSession: (payload) => request('/training-sessions', { method: 'POST', body: JSON.stringify(payload) }),
   updateTrainingSession: (id, payload) => request(`/training-sessions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteTrainingSession: (id) => request(`/training-sessions/${id}`, { method: 'DELETE' }),
+  logSessionLinkCopied: (id, linkType) => request(`/training-sessions/${id}/log-link-copied`, { method: 'POST', body: JSON.stringify({ link_type: linkType }) }),
   updateSessionAttendee: (sessionId, attendeeId, payload) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteSessionAttendee: (sessionId, attendeeId) =>

@@ -7,8 +7,19 @@ const router = express.Router();
 const { dbAll, dbGet } = require('../db');
 const { MAX_FAILED_ATTEMPTS, LOCKOUT_WINDOW_MS } = require('../lib/loginSecurity');
 
+// Shared page size for every paginated table on the Security page (Keeley's request, 2026-09-17:
+// the page had grown into one long continuously-scrolling list) - Prev/Next over a fixed window
+// instead of an ever-growing LIMIT, plus a total count so the UI knows when it's on the last page.
+const PAGE_SIZE = 25;
+
+function pageParams(req) {
+  const limit = Math.min(Number(req.query.limit) || PAGE_SIZE, 100);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  return { limit, offset };
+}
+
 router.get('/login-attempts', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const { limit, offset } = pageParams(req);
   const clauses = [];
   const params = [];
 
@@ -22,9 +33,10 @@ router.get('/login-attempts', async (req, res) => {
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const attempts = await dbAll(
-    `SELECT * FROM login_attempts ${where} ORDER BY attempted_at DESC LIMIT ?`,
-    [...params, limit]
+    `SELECT * FROM login_attempts ${where} ORDER BY attempted_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
   );
+  const { n: total } = await dbGet(`SELECT COUNT(*) AS n FROM login_attempts ${where}`, params);
 
   // Usernames currently inside an active lockout window - same threshold/window
   // loginSecurity.checkLockout() itself uses, so this always matches what the login route
@@ -50,6 +62,7 @@ router.get('/login-attempts', async (req, res) => {
 
   res.json({
     attempts,
+    total,
     currently_locked: lockedRows.map((r) => r.username_attempted),
     summary,
   });
@@ -60,7 +73,7 @@ router.get('/login-attempts', async (req, res) => {
 // what happened to account access itself, as distinct from login-attempts above (which only
 // covers logging in).
 router.get('/account-changes', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const { limit, offset } = pageParams(req);
   const clauses = [];
   const params = [];
 
@@ -76,11 +89,47 @@ router.get('/account-changes', async (req, res) => {
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const changes = await dbAll(
-    `SELECT * FROM admin_actions ${where} ORDER BY created_at DESC LIMIT ?`,
-    [...params, limit]
+    `SELECT * FROM admin_actions ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
   );
+  const { n: total } = await dbGet(`SELECT COUNT(*) AS n FROM admin_actions ${where}`, params);
 
-  res.json({ changes });
+  res.json({ changes, total });
+});
+
+// General activity log (Keeley's request, 2026-09-17: "employee 1 created a training session,
+// downloaded QR code, copied link, downloaded certificates, exported roster" - not an account-
+// security event, just routine usage) - server/lib/activityLog.js writes these from wherever a
+// meaningful create/edit/delete/download happens across the app. Deliberately separate from
+// admin_actions above: that table is schema-locked to app_users targets (role changes, password
+// resets); this one describes arbitrary entities (sessions, clients, employees, certificates...)
+// via a generic entity_type/entity_id pair instead.
+router.get('/activity-log', async (req, res) => {
+  const { limit, offset } = pageParams(req);
+  const clauses = [];
+  const params = [];
+
+  if (req.query.username) {
+    clauses.push('actor_username = ?');
+    params.push(String(req.query.username).trim());
+  }
+  if (req.query.action) {
+    clauses.push('action = ?');
+    params.push(String(req.query.action));
+  }
+  if (req.query.entity_type) {
+    clauses.push('entity_type = ?');
+    params.push(String(req.query.entity_type));
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const activity = await dbAll(
+    `SELECT * FROM activity_log ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+  const { n: total } = await dbGet(`SELECT COUNT(*) AS n FROM activity_log ${where}`, params);
+
+  res.json({ activity, total });
 });
 
 // Snapshot of who currently holds privileged access and how well-protected those accounts are -

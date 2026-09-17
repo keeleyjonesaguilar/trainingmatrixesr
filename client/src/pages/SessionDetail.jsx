@@ -310,9 +310,23 @@ export default function SessionDetail() {
   const [editingSession, setEditingSession] = useState(false);
   const [clients, setClients] = useState([]);
   const [trainings, setTrainings] = useState([]);
+  const [copiedLink, setCopiedLink] = useState('');
 
   const load = () => {
     api.getTrainingSession(id).then(setSession).catch((err) => setError(err.message));
+  };
+
+  // Records "copied link" as an activity (Keeley's request, 2026-09-17) - previously this was
+  // just plain text for someone to manually select/copy, with no record it ever happened.
+  const copyLink = async (url, linkType) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLink(linkType);
+      setTimeout(() => setCopiedLink(''), 2000);
+      api.logSessionLinkCopied(id, linkType).catch(() => {});
+    } catch {
+      /* clipboard access denied/unavailable - the URL is still shown as text below to select manually */
+    }
   };
 
   useEffect(() => {
@@ -407,6 +421,14 @@ export default function SessionDetail() {
             <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10, wordBreak: 'break-all' }}>
               {session.public_url}
             </p>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: '100%', justifyContent: 'center' }}
+              onClick={() => copyLink(session.public_url, 'sign-in')}
+            >
+              {copiedLink === 'sign-in' ? 'Copied!' : 'Copy Link'}
+            </button>
 
             {session.status === 'closed' && (
               <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -455,6 +477,14 @@ export default function SessionDetail() {
             <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10, wordBreak: 'break-all' }}>
               {session.feedback_url}
             </p>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: '100%', justifyContent: 'center' }}
+              onClick={() => copyLink(session.feedback_url, 'feedback')}
+            >
+              {copiedLink === 'feedback' ? 'Copied!' : 'Copy Link'}
+            </button>
           </div>
         </div>
 

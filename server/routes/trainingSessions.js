@@ -11,6 +11,7 @@ const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } =
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
+const { logActivity } = require('../lib/activityLog');
 const fs = require('fs');
 
 const router = express.Router();
@@ -181,6 +182,10 @@ router.post('/', async (req, res) => {
     ]
   );
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
+  logActivity({
+    actor: req.user, action: 'session_created', entityType: 'training_session', entityId: session_id,
+    entityLabel: `${training_type_label} · ${client_name}`, req,
+  });
   res.status(201).json({ ...session, public_url: publicSignInUrl(qr_token), translation_warning: warning });
 });
 
@@ -255,6 +260,10 @@ router.put('/:id', requireAdmin, async (req, res) => {
     ]
   );
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  logActivity({
+    actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
+  });
   res.json({ ...session, translation_warning: warning });
 });
 
@@ -272,21 +281,47 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   }
 
   await dbRun('DELETE FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  logActivity({
+    actor: req.user, action: 'session_deleted', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: existing.training_type_label, req,
+  });
   res.status(204).end();
 });
 
+// Logs a "copied link" activity from the client's Copy button (SessionDetail.jsx) - the sign-in/
+// feedback URLs themselves are static and computable client-side, so this endpoint has no other
+// purpose than recording that someone did it (Keeley's request, 2026-09-17).
+router.post('/:id/log-link-copied', async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const linkType = req.body?.link_type === 'feedback' ? 'Feedback' : 'Sign-In';
+  logActivity({
+    actor: req.user, action: 'session_link_copied', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `${linkType} link`, req,
+  });
+  res.json({ ok: true });
+});
+
 router.get('/:id/qrcode.png', async (req, res) => {
-  const session = await dbGet('SELECT qr_token FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).end();
   const buf = await qrPngBuffer(session.qr_token);
+  logActivity({
+    actor: req.user, action: 'qr_code_downloaded', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Sign-In QR', req,
+  });
   res.set('Content-Type', 'image/png');
   res.send(buf);
 });
 
 router.get('/:id/feedback-qrcode.png', async (req, res) => {
-  const session = await dbGet('SELECT qr_token FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).end();
   const buf = await feedbackQrPngBuffer(session.qr_token);
+  logActivity({
+    actor: req.user, action: 'qr_code_downloaded', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Feedback QR', req,
+  });
   res.set('Content-Type', 'image/png');
   res.send(buf);
 });
@@ -296,6 +331,10 @@ router.get('/:id/roster.pdf', async (req, res) => {
   if (!session || !session.roster_pdf_path) {
     return res.status(404).json({ error: 'Roster PDF not available yet — close the session first' });
   }
+  logActivity({
+    actor: req.user, action: 'roster_downloaded', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'PDF', req,
+  });
   res.download(session.roster_pdf_path, buildRosterFilename(session, 'pdf'));
 });
 
@@ -307,6 +346,10 @@ router.get('/:sessionId/attendees/:attendeeId/certificate.pdf', async (req, res)
     req.params.sessionId,
   ]);
   if (!attendee || !attendee.certificate_path) return res.status(404).json({ error: 'Certificate not available yet' });
+  logActivity({
+    actor: req.user, action: 'certificate_downloaded', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: attendee.trainee_name, req,
+  });
   // Computed fresh rather than using the stored certificate_filename column (Keeley's request,
   // 2026-09-16: "Training Title_Client_Trainer_Date_Trainee Name") - this way every download,
   // including a certificate generated before that request, gets the current naming convention
@@ -327,6 +370,11 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
   if (attendees.length === 0) {
     return res.status(404).json({ error: 'No certificates available yet - close the session first.' });
   }
+
+  logActivity({
+    actor: req.user, action: 'certificates_zip_downloaded', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `${attendees.length} certificate(s)`, req,
+  });
 
   const zipName = ['certificates', stripTrainingIdPrefix(session.training_type_label), session.client_name, session.session_date]
     .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
@@ -422,6 +470,10 @@ router.get('/:id/roster.csv', async (req, res) => {
         .join(',')
     );
   }
+  logActivity({
+    actor: req.user, action: 'roster_downloaded', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'CSV', req,
+  });
   res.set('Content-Type', 'text/csv');
   res.set('Content-Disposition', `attachment; filename="${buildRosterFilename(session, 'csv')}"`);
   res.send(lines.join('\n'));

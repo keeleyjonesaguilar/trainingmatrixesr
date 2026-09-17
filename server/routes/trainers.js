@@ -7,6 +7,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -52,6 +53,7 @@ router.post('/', async (req, res) => {
      VALUES (?, ?, ?, ?, ?, 1, 'trainer')`,
     [employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, employee_number ? employee_number.trim() : null]
   );
+  logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: full_name.trim(), req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 

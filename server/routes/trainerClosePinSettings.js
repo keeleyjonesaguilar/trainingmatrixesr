@@ -6,6 +6,7 @@
 const express = require('express');
 const { dbGet, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.put('/', requireAdmin, async (req, res) => {
   const pin = String(req.body?.pin || '').trim();
   if (!pin) return res.status(400).json({ error: 'PIN cannot be blank' });
   await dbRun(`UPDATE trainer_close_pin_settings SET pin = ? WHERE id = 'default'`, [pin]);
+  logActivity({ actor: req.user, action: 'trainer_pin_updated', entityType: 'settings', entityId: 'trainer_close_pin', req });
   res.json(await dbGet('SELECT * FROM trainer_close_pin_settings WHERE id = ?', ['default']));
 });
 

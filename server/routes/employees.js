@@ -7,6 +7,7 @@ const { computeStatus } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -64,6 +65,10 @@ router.post('/merge', requireAdmin, async (req, res) => {
   if (!winner) return res.status(404).json({ error: 'Winner employee not found' });
 
   await repo.mergeEmployees(winner_id, loser_ids);
+  logActivity({
+    actor: req.user, action: 'employees_merged', entityType: 'employee', entityId: winner_id,
+    entityLabel: winner.full_name, details: `merged ${loser_ids.length} duplicate(s)`, req,
+  });
   res.json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [winner_id]));
 });
 
@@ -233,6 +238,7 @@ router.post('/', async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type]
   );
+  logActivity({ actor: req.user, action: 'employee_created', entityType: 'employee', entityId: employee_id, entityLabel: full_name.trim(), req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 
@@ -252,6 +258,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`,
     [formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes, req.params.id]
   );
+  logActivity({ actor: req.user, action: 'employee_updated', entityType: 'employee', entityId: req.params.id, entityLabel: merged.full_name, req });
   res.json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]));
 });
 
@@ -281,6 +288,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   );
   await dbRun('UPDATE session_attendees SET employee_id = NULL WHERE employee_id = ?', [req.params.id]);
   await dbRun('DELETE FROM employees WHERE employee_id = ?', [req.params.id]);
+  logActivity({ actor: req.user, action: 'employee_deleted', entityType: 'employee', entityId: req.params.id, entityLabel: existing.full_name, req });
   res.status(204).end();
 });
 

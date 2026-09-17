@@ -5,6 +5,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -43,6 +44,10 @@ router.post('/merge', requireAdmin, async (req, res) => {
   if (!winner) return res.status(404).json({ error: 'Winner client not found' });
 
   await repo.mergeClients(winner_id, loser_ids);
+  logActivity({
+    actor: req.user, action: 'clients_merged', entityType: 'client', entityId: winner_id,
+    entityLabel: winner.client_name, details: `merged ${loser_ids.length} duplicate(s)`, req,
+  });
   res.json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [winner_id]));
 });
 
@@ -78,6 +83,7 @@ router.post('/', async (req, res) => {
     active ? 1 : 0,
     notes,
   ]);
+  logActivity({ actor: req.user, action: 'client_created', entityType: 'client', entityId: client_id, entityLabel: client_name.trim(), req });
   res.status(201).json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id]));
 });
 
@@ -93,6 +99,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     notes,
     req.params.id,
   ]);
+  logActivity({ actor: req.user, action: 'client_updated', entityType: 'client', entityId: req.params.id, entityLabel: client_name, req });
   res.json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [req.params.id]));
 });
 
@@ -129,6 +136,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   }
 
   await dbRun('DELETE FROM clients WHERE client_id = ?', [req.params.id]);
+  logActivity({ actor: req.user, action: 'client_deleted', entityType: 'client', entityId: req.params.id, entityLabel: existing.client_name, req });
   res.status(204).end();
 });
 

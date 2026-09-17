@@ -6,6 +6,7 @@ const express = require('express');
 const { dbGet, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { translateToSpanish } = require('../lib/translate');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -70,6 +71,7 @@ router.put('/', requireAdmin, async (req, res) => {
     ]
   );
   const updated = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
+  logActivity({ actor: req.user, action: 'feedback_settings_updated', entityType: 'settings', entityId: 'feedback_form', req });
   res.json(warning ? { ...updated, warning } : updated);
 });
 

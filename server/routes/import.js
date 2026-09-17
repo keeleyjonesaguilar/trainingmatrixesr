@@ -20,6 +20,7 @@ const { parseSourceValue, tryParseDate } = require('../lib/statusEngine');
 const { requireAdmin } = require('../middleware/auth');
 const { formatPhoneNumber } = require('../lib/phone');
 const { maybeGenerateCertificate } = require('../lib/recordCertificates');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -554,6 +555,12 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
 
   const finalBatch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
 
+  logActivity({
+    actor: req.user, action: 'import_committed', entityType: 'import_batch', entityId: req.params.batchId,
+    entityLabel: batch.filename || req.params.batchId,
+    details: `${employeesCreated} employee(s), ${recordsCreated} record(s) created`, req,
+  });
+
   res.json({
     batch_id: req.params.batchId,
     status: finalBatch.status,
@@ -585,6 +592,10 @@ router.delete('/batches/:batchId', requireAdmin, async (req, res) => {
   const batch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
   await dbRun('UPDATE import_batches SET status = ? WHERE batch_id = ?', ['cancelled', req.params.batchId]);
+  logActivity({
+    actor: req.user, action: 'import_discarded', entityType: 'import_batch', entityId: req.params.batchId,
+    entityLabel: batch.filename || req.params.batchId, req,
+  });
   res.status(204).end();
 });
 

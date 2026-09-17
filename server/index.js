@@ -33,6 +33,10 @@ async function start() {
   // it's always-on regardless of any local PC's power state. See server/lib/backupScheduler.js.
   require('./lib/backupScheduler').start();
 
+  // Prunes the Security page's logs once they age past their retention window (Keeley's
+  // request, 2026-09-17) - see server/lib/logRetentionScheduler.js for the specific windows.
+  require('./lib/logRetentionScheduler').start();
+
   const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 
   const app = express();

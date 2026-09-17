@@ -3,6 +3,7 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const { EXPIRATION_UNITS } = require('../lib/statusEngine');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
@@ -71,6 +72,7 @@ router.post('/', requireAdmin, async (req, res) => {
     [training_id, training_name, category, training_type, default_expiration, active ? 1 : 0, display_order ?? maxOrder + 1]
   );
 
+  logActivity({ actor: req.user, action: 'training_type_created', entityType: 'master_training', entityId: training_id, entityLabel: training_name, req });
   res.status(201).json(await dbGet('SELECT * FROM master_trainings WHERE training_id = ?', [training_id]));
 });
 
@@ -96,6 +98,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
+  logActivity({ actor: req.user, action: 'training_type_updated', entityType: 'master_training', entityId: req.params.id, entityLabel: merged.training_name, req });
   res.json(await dbGet('SELECT * FROM master_trainings WHERE training_id = ?', [req.params.id]));
 });
 
@@ -171,6 +174,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   await dbRun('UPDATE training_sessions SET master_training_id = NULL WHERE master_training_id = ?', [req.params.id]);
   await dbRun('UPDATE import_column_map SET matched_training_id = NULL WHERE matched_training_id = ?', [req.params.id]);
   await dbRun('DELETE FROM master_trainings WHERE training_id = ?', [req.params.id]);
+  logActivity({ actor: req.user, action: 'training_type_deleted', entityType: 'master_training', entityId: req.params.id, entityLabel: existing.training_name, req });
   res.status(204).end();
 });
 
