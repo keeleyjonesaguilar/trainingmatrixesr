@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
 const QRCode = require('qrcode');
 const { dbGet, dbRun } = require('../db');
 const { verifyPassword, hashPassword, signToken, verifyToken } = require('../lib/auth');
@@ -9,16 +8,13 @@ const { generateSecret, verifyTotp, otpauthUri, generateBackupCode } = require('
 const { getOrCreateSessionSecret } = require('../lib/settings');
 const { COOKIE_NAME, SESSION_MS, requireAuth } = require('../middleware/auth');
 const { checkLockout, recordAttempt } = require('../lib/loginSecurity');
-const { sendEmail } = require('../lib/email');
+const { issuePasswordLink } = require('../lib/passwordReset');
 const { logAdminAction } = require('../lib/adminAudit');
 
 // How long a user has to enter their MFA code after a correct password, and to finish scanning
 // a QR code during setup, before that in-flight token expires and they have to start over.
 const MFA_LOGIN_TTL_MS = 5 * 60 * 1000;
 const MFA_SETUP_TTL_MS = 10 * 60 * 1000;
-
-// How long a password reset link stays valid after being requested.
-const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -225,31 +221,8 @@ router.post('/forgot-password', async (req, res) => {
     return res.json(GENERIC_FORGOT_PASSWORD_RESPONSE);
   }
 
-  // A random 256-bit token is itself the whole secret (unlike a password, nothing about it is
-  // guessable or reused), so it's hashed with a fast, unsalted SHA-256 rather than the slow,
-  // salted scrypt used for passwords - that also lets the lookup below match by hash directly
-  // instead of having to scan and compare every outstanding token.
-  const rawToken = crypto.randomBytes(32).toString('hex');
-  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS).toISOString();
-
-  await dbRun(
-    'INSERT INTO password_reset_tokens (token_id, user_id, token_hash, expires_at, requested_ip) VALUES (?, ?, ?, ?, ?)',
-    [uuidv4(), user.user_id, tokenHash, expiresAt, req.ip]
-  );
-
-  const base = (process.env.PUBLIC_APP_URL || 'http://localhost:4000').replace(/\/$/, '');
-  const resetUrl = `${base}/reset-password?token=${rawToken}`;
   try {
-    await sendEmail({
-      to: user.email,
-      subject: 'Reset your Safety Training Matrix password',
-      html: `
-        <p>Someone requested a password reset for the account <strong>${user.username}</strong>.</p>
-        <p><a href="${resetUrl}">Click here to choose a new password</a>. This link expires in 1 hour.</p>
-        <p>If you didn't request this, you can safely ignore this email - your password won't change.</p>
-      `,
-    });
+    await issuePasswordLink({ user, req, mode: 'reset' });
   } catch (err) {
     // Logged, not surfaced - the response is deliberately identical either way (see above).
     console.error(`Password reset email failed for "${user.username}":`, err.message);

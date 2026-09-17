@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { hashPassword } = require('../lib/auth');
 const { requireAdmin, isAdminRole } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/adminAudit');
+const { issuePasswordLink } = require('../lib/passwordReset');
 
 const VALID_ROLES = ['user', 'admin', 'super_admin'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,13 +21,12 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', requireAdmin, async (req, res) => {
-  const { username, password, role = 'user', email } = req.body || {};
+  const { username, role = 'user', email } = req.body || {};
   const cleanUsername = (username || '').trim();
   const cleanEmail = (email || '').trim();
-  if (!cleanUsername || !password) return res.status(400).json({ error: 'Username and password are required.' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (!cleanUsername || !cleanEmail) return res.status(400).json({ error: 'Username and email are required.' });
+  if (!EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: "Role must be 'user', 'admin', or 'super_admin'." });
-  if (cleanEmail && !EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
   // Granting super_admin is itself a super_admin-only action - a regular admin can create other
   // admins, but can never create (or promote anyone to) a Super Admin account.
   if (role === 'super_admin' && req.user.role !== 'super_admin') {
@@ -34,16 +35,17 @@ router.post('/', requireAdmin, async (req, res) => {
 
   const existing = await dbGet('SELECT 1 FROM app_users WHERE username = ?', [cleanUsername]);
   if (existing) return res.status(409).json({ error: 'That username is already in use.' });
-  if (cleanEmail) {
-    const existingEmail = await dbGet('SELECT 1 FROM app_users WHERE email = ?', [cleanEmail]);
-    if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
-  }
+  const existingEmail = await dbGet('SELECT 1 FROM app_users WHERE email = ?', [cleanEmail]);
+  if (existingEmail) return res.status(409).json({ error: 'That email address is already in use by another account.' });
 
   const user = {
     user_id: uuidv4(),
     username: cleanUsername,
-    email: cleanEmail || null,
-    password_hash: hashPassword(password),
+    email: cleanEmail,
+    // Nobody ever sees or types this - the account is unusable until the invite email's link is
+    // used to set a real password (same /reset-password flow as "forgot password"). This just
+    // satisfies password_hash's NOT NULL constraint at insert time.
+    password_hash: hashPassword(crypto.randomBytes(32).toString('hex')),
     role,
     created_at: new Date().toISOString(),
   };
@@ -55,7 +57,44 @@ router.post('/', requireAdmin, async (req, res) => {
     details: `role=${user.role}`, req,
   });
 
-  res.status(201).json({ user_id: user.user_id, username: user.username, email: user.email, role: user.role, created_at: user.created_at });
+  let inviteSent = true;
+  let inviteError = null;
+  try {
+    await issuePasswordLink({ user, req, mode: 'invite' });
+  } catch (err) {
+    // The account itself is created either way - surfaced here (unlike forgot-password) since
+    // there's no anti-enumeration reason to hide it from the admin who just created this account.
+    console.error(`Invite email failed for "${user.username}":`, err.message);
+    inviteSent = false;
+    inviteError = err.message;
+  }
+
+  res.status(201).json({
+    user_id: user.user_id, username: user.username, email: user.email, role: user.role, created_at: user.created_at,
+    inviteSent, inviteError,
+  });
+});
+
+// Re-sends the "set your password" invite link - for when the first one was lost, expired (7
+// days), or never arrived because email wasn't configured yet at creation time.
+router.post('/:userId/resend-invite', requireAdmin, async (req, res) => {
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (!user.email) return res.status(400).json({ error: 'This account has no email on file yet - add one first.' });
+  if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: "Only a Super Admin can resend a Super Admin account's invite." });
+  }
+
+  try {
+    await issuePasswordLink({ user, req, mode: 'invite' });
+  } catch (err) {
+    return res.status(502).json({ error: `Could not send the invite email: ${err.message}` });
+  }
+
+  await logAdminAction({
+    actor: req.user, action: 'invite_resent', targetUserId: user.user_id, targetUsername: user.username, req,
+  });
+  res.json({ ok: true });
 });
 
 // Lets an admin put an email on file for someone else's account (e.g. onboarding a user who

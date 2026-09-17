@@ -11,9 +11,10 @@ export default function AdminUsers({ currentUsername }) {
   const [error, setError] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('user');
   const [creating, setCreating] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [resendingId, setResendingId] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [emailTarget, setEmailTarget] = useState(null);
@@ -25,19 +26,37 @@ export default function AdminUsers({ currentUsername }) {
   const addUser = async (e) => {
     e.preventDefault();
     setError('');
-    if (newPassword.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    setNotice('');
     setCreating(true);
     try {
-      await api.createUser({ username: newUsername.trim(), email: newEmail.trim(), password: newPassword, role: newRole });
+      const created = await api.createUser({ username: newUsername.trim(), email: newEmail.trim(), role: newRole });
       setNewUsername('');
       setNewEmail('');
-      setNewPassword('');
       setNewRole('user');
+      setNotice(
+        created.inviteSent
+          ? `Invite email sent to ${created.email}.`
+          : `User "${created.username}" was created, but the invite email failed to send (${created.inviteError || 'unknown error'}). Use "Resend Invite" once that's fixed, or set a password for them manually below.`
+      );
       await load();
     } catch (err) {
       setError(err.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const resendInvite = async (user) => {
+    setError('');
+    setNotice('');
+    setResendingId(user.user_id);
+    try {
+      await api.resendInvite(user.user_id);
+      setNotice(`Invite email re-sent to ${user.email}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setResendingId(null);
     }
   };
 
@@ -109,20 +128,23 @@ export default function AdminUsers({ currentUsername }) {
         can grant or remove Super Admin itself.
       </p>
       {error && <div className="error-banner">{error}</div>}
+      {notice && <div className="success-banner">{notice}</div>}
 
       {isAdmin && (
         <div className="card">
           <h2>Add a user</h2>
+          <p className="page-subtitle" style={{ marginTop: 0 }}>
+            They&apos;ll get an email with a link to set their own password - nothing to make up or share yourself.
+          </p>
           <form onSubmit={addUser} className="toolbar">
             <input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
-            <input type="email" placeholder="Email (optional)" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
-            <input type="password" placeholder="Password (8+ characters)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+            <input type="email" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               <option value="user">User (view only)</option>
               <option value="admin">Admin (full access)</option>
               {isSuperAdmin && <option value="super_admin">Super Admin (full access + Security)</option>}
             </select>
-            <button type="submit" disabled={creating || !newUsername || !newPassword}>{creating ? 'Adding...' : 'Add User'}</button>
+            <button type="submit" disabled={creating || !newUsername || !newEmail}>{creating ? 'Adding...' : 'Add User & Send Invite'}</button>
           </form>
         </div>
       )}
@@ -175,6 +197,15 @@ export default function AdminUsers({ currentUsername }) {
                 <td>{new Date(u.created_at).toLocaleDateString()}</td>
                 {isAdmin && (
                   <td>
+                    <button
+                      className="secondary"
+                      onClick={() => resendInvite(u)}
+                      disabled={!u.email || resendingId === u.user_id || (u.role === 'super_admin' && !isSuperAdmin)}
+                      title={u.email ? '' : 'Add an email for this user first'}
+                    >
+                      {resendingId === u.user_id ? 'Sending...' : 'Resend Invite'}
+                    </button>
+                    {' '}
                     <button
                       className="secondary"
                       onClick={() => { setResetTarget(u); setResetPassword(''); }}
