@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useIsAdmin, useIsSuperAdmin } from '../authContext.jsx';
 import { formatEasternDate } from '../lib/dates';
+import LoadingState from '../components/LoadingState.jsx';
 
 const ROLE_LABELS = { user: 'User', admin: 'Admin', super_admin: 'Super Admin' };
 
@@ -14,6 +15,7 @@ export default function AdminUsers({ currentUsername }) {
   const isAdmin = useIsAdmin();
   const isSuperAdmin = useIsSuperAdmin();
   const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [newFullName, setNewFullName] = useState('');
   const [newEmail, setNewEmail] = useState('');
@@ -29,7 +31,9 @@ export default function AdminUsers({ currentUsername }) {
   const [fullNameInput, setFullNameInput] = useState('');
 
   const load = () => api.listUsers().then(setUsers).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, []);
+  // Loading only gates the very first fetch - a later refresh (after adding/removing someone)
+  // updates the table in place rather than hiding it again, since it's no longer really "loading."
+  useEffect(() => { load().finally(() => setLoading(false)); }, []);
 
   const addUser = async (e) => {
     e.preventDefault();
@@ -172,6 +176,7 @@ export default function AdminUsers({ currentUsername }) {
 
       <div className="card">
         <h2>Current users</h2>
+        {loading ? <LoadingState label="Loading users..." /> : (
         <table>
           <thead>
             <tr>
@@ -277,6 +282,7 @@ export default function AdminUsers({ currentUsername }) {
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       {isAdmin && resetTarget && (

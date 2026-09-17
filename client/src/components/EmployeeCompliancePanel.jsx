@@ -164,6 +164,7 @@ export default function EmployeeCompliancePanel({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [editingRecordId, setEditingRecordId] = useState('');
+  const [busyRecordId, setBusyRecordId] = useState('');
   const [addingRecord, setAddingRecord] = useState(false);
   const [selectedTrainingId, setSelectedTrainingId] = useState('');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
@@ -221,14 +222,24 @@ export default function EmployeeCompliancePanel({
 
   const deleteRecord = async (record) => {
     if (!window.confirm(`Permanently delete the ${record.training_name} record for ${employee.full_name}? This cannot be undone.`)) return;
-    await api.deleteTrainingRecord(record.record_id);
-    onReload();
+    setBusyRecordId(record.record_id);
+    try {
+      await api.deleteTrainingRecord(record.record_id);
+      onReload();
+    } finally {
+      setBusyRecordId('');
+    }
   };
 
   const inactivateRecord = async (record) => {
-    await api.setRecordInactive(record.record_id, true);
-    setInactiveRefreshKey((k) => k + 1);
-    onReload();
+    setBusyRecordId(record.record_id);
+    try {
+      await api.setRecordInactive(record.record_id, true);
+      setInactiveRefreshKey((k) => k + 1);
+      onReload();
+    } finally {
+      setBusyRecordId('');
+    }
   };
 
   return (
@@ -324,9 +335,13 @@ export default function EmployeeCompliancePanel({
                         </td>
                         {isAdmin && (
                           <td>
-                            <button type="button" className="secondary" onClick={() => setEditingRecordId(t.record_id)}>Edit</button>{' '}
-                            <button type="button" className="secondary" onClick={() => inactivateRecord(t)}>Inactivate</button>{' '}
-                            <button type="button" className="secondary" onClick={() => deleteRecord(t)}>Delete</button>
+                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => setEditingRecordId(t.record_id)}>Edit</button>{' '}
+                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => inactivateRecord(t)}>
+                              {busyRecordId === t.record_id ? 'Working...' : 'Inactivate'}
+                            </button>{' '}
+                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => deleteRecord(t)}>
+                              {busyRecordId === t.record_id ? 'Working...' : 'Delete'}
+                            </button>
                           </td>
                         )}
                       </tr>

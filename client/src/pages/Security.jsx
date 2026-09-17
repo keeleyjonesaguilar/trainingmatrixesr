@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { formatEasternDate, formatEasternDateTime } from '../lib/dates';
+import LoadingState from '../components/LoadingState.jsx';
 
 const PAGE_SIZE = 25;
 
@@ -216,6 +217,7 @@ export default function Security() {
       {tab === 'overview' && (
         <>
           {rosterError && <div className="error-banner">{rosterError}</div>}
+          {!roster && !rosterError && <LoadingState label="Loading privileged accounts..." />}
           {roster && (
             <div className="card">
               <h2>Privileged Accounts</h2>

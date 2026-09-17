@@ -3,6 +3,7 @@ import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
@@ -184,7 +185,7 @@ function EveryoneList({ rows }) {
   );
 }
 
-function SessionList({ title, sessions, showRosterLinks, emptyText }) {
+function SessionList({ title, sessions, showRosterLinks, emptyText, loading }) {
   const [page, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PER_PAGE));
   const pageRows = sessions.slice(page * SESSIONS_PER_PAGE, page * SESSIONS_PER_PAGE + SESSIONS_PER_PAGE);
@@ -192,7 +193,8 @@ function SessionList({ title, sessions, showRosterLinks, emptyText }) {
   return (
     <div className="card">
       <h3 style={{ marginTop: 0, fontSize: 14 }}>{title} ({sessions.length})</h3>
-      {pageRows.length === 0 && <div className="empty-state">{emptyText}</div>}
+      {loading && <LoadingState label="Loading sessions..." />}
+      {!loading && pageRows.length === 0 && <div className="empty-state">{emptyText}</div>}
       {pageRows.map((s) => (
         <div key={s.session_id} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--color-border)' }}>
           <Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link>
@@ -224,6 +226,7 @@ export default function TrainingTypeDetail() {
   const [clients, setClients] = useState([]);
   const [data, setData] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionClientFilter, setSessionClientFilter] = useState('');
   const [error, setError] = useState('');
   const clientId = searchParams.get('client_id') || '';
@@ -241,7 +244,8 @@ export default function TrainingTypeDetail() {
   }, [id, clientId]);
 
   useEffect(() => {
-    api.getSessionsByTraining(id, { client_name: sessionClientFilter }).then(setSessions).catch(() => {});
+    setSessionsLoading(true);
+    api.getSessionsByTraining(id, { client_name: sessionClientFilter }).then(setSessions).catch(() => {}).finally(() => setSessionsLoading(false));
   }, [id, sessionClientFilter]);
 
   if (error) return <div className="error-banner">{error}</div>;
@@ -292,8 +296,8 @@ export default function TrainingTypeDetail() {
               onChange={(e) => setSessionClientFilter(e.target.value)}
             />
           </div>
-          <SessionList title="Upcoming Sessions" sessions={upcoming} showRosterLinks={false} emptyText="No upcoming sessions scheduled." />
-          <SessionList title="Past Sessions" sessions={past} showRosterLinks emptyText="No completed sessions yet." />
+          <SessionList title="Upcoming Sessions" sessions={upcoming} showRosterLinks={false} emptyText="No upcoming sessions scheduled." loading={sessionsLoading} />
+          <SessionList title="Past Sessions" sessions={past} showRosterLinks emptyText="No completed sessions yet." loading={sessionsLoading} />
         </div>
       </div>
     </div>

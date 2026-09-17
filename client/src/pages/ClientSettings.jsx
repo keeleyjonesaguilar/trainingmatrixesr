@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateClientsPanel from '../components/DuplicateClientsPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 
@@ -92,6 +93,7 @@ export default function ClientSettings() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // Compliance/Action-Required per client (Keeley's request: the directory itself showed no
   // compliance info at all, only which clients are active/inactive as accounts) - one org-wide
@@ -109,7 +111,7 @@ export default function ClientSettings() {
   // the whole app (blank screen until a hard refresh) every time you navigate away from this
   // page. Wrapping it in a block body discards that return value so there's nothing for React
   // to mistake for a cleanup function.
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load().finally(() => setLoading(false)); }, []);
   useEffect(() => {
     api.getDashboard().then((d) => {
       setComplianceByClient(new Map(d.perClient.map((c) => [c.client_id, c])));
@@ -145,6 +147,7 @@ export default function ClientSettings() {
       {isAdmin && <DuplicateClientsPanel onMerged={load} />}
 
       <div className="card">
+        {loading ? <LoadingState label="Loading clients..." /> : (
         <div className="table-scroll">
           <table>
             <thead>
@@ -194,6 +197,7 @@ export default function ClientSettings() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {inactiveClients.length > 0 && (

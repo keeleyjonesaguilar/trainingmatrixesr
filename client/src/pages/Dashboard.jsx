@@ -312,8 +312,17 @@ export default function Dashboard() {
   // dashboard load and part of why it felt slow. Removed.
   useEffect(() => {
     setError('');
+    setData(null);
     api.getDashboard(clientId || undefined).then(setData).catch((e) => setError(e.message));
   }, [clientId]);
+
+  // Before this, the fallback below would briefly render the generic "Safety Training
+  // Dashboard" header (wrong title/buttons) while waiting for a client-scoped fetch to resolve,
+  // then flip to the real client view once it landed (Keeley's request, 2026-09-18: show a
+  // spinner instead of flashing the wrong page first).
+  if (!data && !error) {
+    return <LoadingState label="Loading dashboard..." />;
+  }
 
   if (clientId && data && data.scope === 'client') {
     return (

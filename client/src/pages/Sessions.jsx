@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
@@ -11,6 +12,7 @@ export default function Sessions() {
   const [searchParams] = useSearchParams();
   const clientIdFilter = searchParams.get('client_id') || '';
   const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [trainings, setTrainings] = useState([]);
   const [clients, setClients] = useState([]);
   const [trainers, setTrainers] = useState([]);
@@ -54,10 +56,12 @@ export default function Sessions() {
   const [creating, setCreating] = useState(false);
 
   const load = () => {
+    setSessionsLoading(true);
     api
       .listTrainingSessions({ ...filters, client_id: clientIdFilter })
       .then(setSessions)
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err.message))
+      .finally(() => setSessionsLoading(false));
   };
 
   useEffect(() => {
@@ -381,6 +385,7 @@ export default function Sessions() {
       </div>
 
       <div className="card">
+        {sessionsLoading ? <LoadingState label="Loading sessions..." /> : (
         <table>
           <thead>
             <tr>
@@ -414,6 +419,7 @@ export default function Sessions() {
             )}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

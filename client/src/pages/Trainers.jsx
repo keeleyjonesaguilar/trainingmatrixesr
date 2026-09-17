@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateTrainersPanel from '../components/DuplicateTrainersPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 function normalizeId(s) { return (s || '').trim().toLowerCase(); }
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
@@ -88,12 +89,13 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
 export default function Trainers() {
   const isAdmin = useIsAdmin();
   const [trainers, setTrainers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [addingOpen, setAddingOpen] = useState(false);
   const [showActive, setShowActive] = useState(true);
 
   const load = () => api.listTrainers().then(setTrainers).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load().finally(() => setLoading(false)); }, []);
 
   const activeTrainers = trainers.filter((t) => t.active);
   const inactiveTrainers = trainers.filter((t) => !t.active);
@@ -136,6 +138,7 @@ export default function Trainers() {
       {isAdmin && <DuplicateTrainersPanel onMerged={load} />}
 
       <div className="card">
+        {loading ? <LoadingState label="Loading trainers..." /> : (
         <div className="table-scroll">
           <table>
             <thead>
@@ -167,6 +170,7 @@ export default function Trainers() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   );

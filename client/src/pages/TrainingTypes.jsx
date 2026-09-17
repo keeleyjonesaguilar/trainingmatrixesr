@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
@@ -62,6 +63,7 @@ export default function TrainingTypes() {
   const navigate = useNavigate();
   const [trainings, setTrainings] = useState([]);
   const [custom, setCustom] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [addingOpen, setAddingOpen] = useState(false);
   const [error, setError] = useState('');
@@ -70,7 +72,7 @@ export default function TrainingTypes() {
     api.getTrainingSessionsSummaryByTraining().then((data) => {
       setTrainings(data.trainings);
       setCustom(data.custom);
-    }).catch((e) => setError(e.message));
+    }).catch((e) => setError(e.message)).finally(() => setLoading(false));
   };
   useEffect(load, []);
 
@@ -106,6 +108,7 @@ export default function TrainingTypes() {
       </div>
 
       <div className="card">
+        {loading ? <LoadingState label="Loading training types..." /> : (
         <div className="table-scroll">
           <table>
             <thead>
@@ -135,6 +138,7 @@ export default function TrainingTypes() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {custom.length > 0 && (

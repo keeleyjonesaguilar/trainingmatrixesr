@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
 // Keeley wants - Employee Phone Number is now how employees are tracked/identified.
@@ -114,15 +115,16 @@ function TrainerRatingSummary({ summary }) {
 // A trainer's own list of sessions they've taught, linking each to its SessionDetail page.
 function TrainingsTaughtSection({ employeeId }) {
   const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.listTrainingSessions({ trainer_employee_id: employeeId }).then(setSessions).catch(() => {});
+    api.listTrainingSessions({ trainer_employee_id: employeeId }).then(setSessions).catch(() => {}).finally(() => setLoading(false));
   }, [employeeId]);
 
   return (
     <div className="card">
       <h2>Trainings Taught ({sessions.length})</h2>
-      {sessions.length === 0 ? (
+      {loading ? <LoadingState label="Loading sessions..." /> : sessions.length === 0 ? (
         <div className="empty-state">No sessions taught yet.</div>
       ) : (
         <table>

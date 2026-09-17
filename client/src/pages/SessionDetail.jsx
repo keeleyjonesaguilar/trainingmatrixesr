@@ -307,6 +307,8 @@ export default function SessionDetail() {
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [retryingId, setRetryingId] = useState(null);
+  const [savingEditId, setSavingEditId] = useState(null);
+  const [removingId, setRemovingId] = useState(null);
   const [editingSession, setEditingSession] = useState(false);
   const [clients, setClients] = useState([]);
   const [trainings, setTrainings] = useState([]);
@@ -343,15 +345,25 @@ export default function SessionDetail() {
   }, [isAdmin]);
 
   const saveEdit = async (attendeeId) => {
-    await api.updateSessionAttendee(id, attendeeId, { trainee_name: editName, trainee_phone: editPhone, trainee_email: editEmail });
-    setEditingId(null);
-    load();
+    setSavingEditId(attendeeId);
+    try {
+      await api.updateSessionAttendee(id, attendeeId, { trainee_name: editName, trainee_phone: editPhone, trainee_email: editEmail });
+      setEditingId(null);
+      load();
+    } finally {
+      setSavingEditId(null);
+    }
   };
 
   const removeAttendee = async (attendeeId) => {
     if (!window.confirm('Remove this sign-in entry?')) return;
-    await api.deleteSessionAttendee(id, attendeeId);
-    load();
+    setRemovingId(attendeeId);
+    try {
+      await api.deleteSessionAttendee(id, attendeeId);
+      load();
+    } finally {
+      setRemovingId(null);
+    }
   };
 
   const retryProcessing = async (attendeeId) => {
@@ -540,8 +552,8 @@ export default function SessionDetail() {
                         <input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} type="email" />
                       </td>
                       <td colSpan={2}>
-                        <button className="btn btn-sm" onClick={() => saveEdit(a.attendee_id)}>
-                          Save
+                        <button className="btn btn-sm" disabled={savingEditId === a.attendee_id} onClick={() => saveEdit(a.attendee_id)}>
+                          {savingEditId === a.attendee_id ? 'Saving…' : 'Save'}
                         </button>{' '}
                         <button className="btn btn-secondary btn-sm" onClick={() => setEditingId(null)}>
                           Cancel
@@ -598,8 +610,8 @@ export default function SessionDetail() {
                           >
                             Edit
                           </button>{' '}
-                          <button className="btn btn-danger btn-sm" onClick={() => removeAttendee(a.attendee_id)}>
-                            Remove
+                          <button className="btn btn-danger btn-sm" disabled={removingId === a.attendee_id} onClick={() => removeAttendee(a.attendee_id)}>
+                            {removingId === a.attendee_id ? 'Removing…' : 'Remove'}
                           </button>
                         </td>
                       )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
+import LoadingState from '../components/LoadingState.jsx';
 
 const REQUIREMENT_OPTIONS = ['Required', 'Not Required', 'Optional', 'Not Applicable'];
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
@@ -19,7 +20,7 @@ function ClientSummaryStrip({ clientId }) {
   }, [clientId]);
 
   if (error) return <div className="error-banner" style={{ marginBottom: 16 }}>Couldn't load the summary: {error}</div>;
-  if (!summary) return null;
+  if (!summary) return <LoadingState label="Loading summary..." />;
 
   return (
     <div className="stat-grid" style={{ marginBottom: 16 }}>
