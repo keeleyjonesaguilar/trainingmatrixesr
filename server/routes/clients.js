@@ -135,6 +135,24 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     }
   }
 
+  // session_attendees.employee_id/training_record_id have no ON DELETE clause (restrict by
+  // default - same reason employees.js's own single-employee delete detaches these first), so
+  // cascading employees/training records out from under a deleted client hit that restriction
+  // and 500'd (Keeley's stress test, 2026-09-17: any client whose employees had ever signed into
+  // a session - i.e. any real client with real usage - could never actually be deleted). Detached
+  // here the same way, scoped to every employee/record under this client, right before the
+  // cascade below removes the client and everything under it.
+  await dbRun(
+    `UPDATE session_attendees SET employee_id = NULL
+     WHERE employee_id IN (SELECT employee_id FROM employees WHERE client_id = ?)`,
+    [req.params.id]
+  );
+  await dbRun(
+    `UPDATE session_attendees SET training_record_id = NULL
+     WHERE training_record_id IN (SELECT record_id FROM employee_training_records WHERE client_id = ?)`,
+    [req.params.id]
+  );
+
   await dbRun('DELETE FROM clients WHERE client_id = ?', [req.params.id]);
   logActivity({ actor: req.user, action: 'client_deleted', entityType: 'client', entityId: req.params.id, entityLabel: existing.client_name, req });
   res.status(204).end();
