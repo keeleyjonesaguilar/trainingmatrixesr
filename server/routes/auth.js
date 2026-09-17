@@ -49,7 +49,11 @@ router.post('/login', async (req, res) => {
     return res.status(429).json({ error: `Too many failed login attempts. Please wait 15 minutes and try again.` });
   }
 
-  const user = await dbGet('SELECT * FROM app_users WHERE username = ?', [username]);
+  // Case-insensitive (Keeley's request, 2026-09-17) - "JohnDoe" and "johndoe" sign into the
+  // same account. Enforced at the one place a new username is ever chosen (the invite-claim
+  // path in POST /reset-password below) so two accounts can never collide only by case, which
+  // would otherwise make this lookup ambiguous.
+  const user = await dbGet('SELECT * FROM app_users WHERE LOWER(username) = LOWER(?)', [username]);
   const valid = Boolean(user && verifyPassword(password, user.password_hash));
   await recordAttempt({ username, req, success: valid });
   if (!valid) {
@@ -216,7 +220,7 @@ router.post('/forgot-password', async (req, res) => {
   const { username } = req.body || {};
   if (!username) return res.status(400).json({ error: 'Username is required.' });
 
-  const user = await dbGet('SELECT * FROM app_users WHERE username = ?', [username]);
+  const user = await dbGet('SELECT * FROM app_users WHERE LOWER(username) = LOWER(?)', [username]);
   if (!user || !user.email) {
     return res.json(GENERIC_FORGOT_PASSWORD_RESPONSE);
   }
@@ -268,7 +272,10 @@ router.post('/reset-password', async (req, res) => {
   if (row.purpose === 'invite') {
     const cleanUsername = (username || '').trim();
     if (!cleanUsername) return res.status(400).json({ error: 'Choose a username.' });
-    const existingUsername = await dbGet('SELECT 1 FROM app_users WHERE username = ? AND user_id != ?', [cleanUsername, user.user_id]);
+    // Case-insensitive too - otherwise "JohnDoe" could be claimed right alongside an existing
+    // "johndoe", and login's own case-insensitive lookup above would then have two rows to
+    // choose between for the same typed username.
+    const existingUsername = await dbGet('SELECT 1 FROM app_users WHERE LOWER(username) = LOWER(?) AND user_id != ?', [cleanUsername, user.user_id]);
     if (existingUsername) return res.status(409).json({ error: 'That username is already in use.' });
     finalUsername = cleanUsername;
   }
