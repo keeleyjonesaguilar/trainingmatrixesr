@@ -104,7 +104,15 @@ export default function Reports() {
         </div>
         {sortedRows && sortedRows.length > 0 && (
           <div className="page-header-actions">
-            <button className="secondary" onClick={() => downloadCsv('completed-trainings.csv', sortedRows)}>Export CSV</button>
+            <button
+              className="secondary"
+              onClick={() => {
+                downloadCsv('completed-trainings.csv', sortedRows);
+                api.logReportDownload('Completed Trainings', `${sortedRows.length} row(s)`).catch(() => {});
+              }}
+            >
+              Export CSV
+            </button>
           </div>
         )}
       </div>

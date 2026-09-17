@@ -7,8 +7,22 @@
 // all - there's no "Missing" row to report on.
 const express = require('express');
 const { dbAll } = require('../db');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
+
+// Logs a CSV report download from the client (this page, the Employees Matrix, or a client's
+// Compliance Overview) - every one of those builds its CSV entirely client-side from data
+// already loaded, so this endpoint has no other purpose than recording that someone did it
+// (Keeley's request, 2026-09-18).
+router.post('/log-download', async (req, res) => {
+  const { report_name, details } = req.body || {};
+  if (!report_name) return res.status(400).json({ error: 'report_name is required' });
+  logActivity({
+    actor: req.user, action: 'report_downloaded', entityType: 'report', entityLabel: report_name, details, req,
+  });
+  res.json({ ok: true });
+});
 
 router.get('/completed-trainings', async (req, res) => {
   const { client_id, employee_id, training_id } = req.query;

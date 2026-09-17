@@ -173,6 +173,7 @@ export const api = {
     const qs = new URLSearchParams(filtered).toString();
     return request(`/reports/completed-trainings${qs ? `?${qs}` : ''}`);
   },
+  logReportDownload: (report_name, details) => request('/reports/log-download', { method: 'POST', body: JSON.stringify({ report_name, details }) }),
 
   // Training Sessions (merged in from the Training Sign-In app, 2026-08-19) - admin/staff side,
   // same login as everything else above.

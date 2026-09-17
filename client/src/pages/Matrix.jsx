@@ -172,10 +172,13 @@ export default function Matrix() {
             <button
               className="secondary"
               disabled={!data || data.employees.length === 0}
-              onClick={() => downloadCsv(
-                `training-matrix${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
-                buildComplianceReportRows(data.employees, data.masterTrainings, { status })
-              )}
+              onClick={() => {
+                downloadCsv(
+                  `training-matrix${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+                  buildComplianceReportRows(data.employees, data.masterTrainings, { status })
+                );
+                api.logReportDownload('Employee Training Matrix', status ? `Status: ${status}` : undefined).catch(() => {});
+              }}
             >
               Download Report
             </button>
@@ -251,7 +254,7 @@ export default function Matrix() {
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
-          Showing employees who currently hold <strong>all</strong> of:{' '}
+          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>all</strong> of:{' '}
           {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
         </p>
       )}

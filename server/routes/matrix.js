@@ -108,10 +108,17 @@ router.get('/', async (req, res) => {
 
   let filteredRows = status ? rows.filter((r) => Object.values(r.cells).some((c) => c.status === status)) : rows;
   if (trainingIdsFilter.length) {
+    // "Holds" a selected training correlates with the Status filter (Keeley's report, 2026-09-18:
+    // picking TRN-001 alone returned nobody, since every recorded completion of it happened to be
+    // Expired) - with no status chosen this still means "currently valid" (Current or No
+    // Expiration), the original job-placement-style meaning, but picking e.g. Status=Expired
+    // changes "has all of" to mean everyone whose selected training(s) are specifically Expired.
     filteredRows = filteredRows.filter((r) =>
       trainingIdsFilter.every((tid) => {
         const cell = r.cells[tid];
-        return cell && (cell.status === 'Current' || cell.status === 'No Expiration');
+        if (!cell) return false;
+        if (status) return cell.status === status;
+        return cell.status === 'Current' || cell.status === 'No Expiration';
       })
     );
   }

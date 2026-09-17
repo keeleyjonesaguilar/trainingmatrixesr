@@ -189,10 +189,13 @@ function ClientEmployeesSection({ clientId, clientName }) {
         <button
           className="secondary"
           disabled={data.employees.length === 0}
-          onClick={() => downloadCsv(
-            `${clientName}-training-report${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
-            buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })
-          )}
+          onClick={() => {
+            downloadCsv(
+              `${clientName}-training-report${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+              buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })
+            );
+            api.logReportDownload(`${clientName} Training Report`, status ? `Status: ${status}` : undefined).catch(() => {});
+          }}
         >
           Download Report
         </button>
@@ -244,7 +247,7 @@ function ClientEmployeesSection({ clientId, clientName }) {
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
-          Showing employees who currently hold <strong>all</strong> of:{' '}
+          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>all</strong> of:{' '}
           {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
         </p>
       )}

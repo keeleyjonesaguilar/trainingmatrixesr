@@ -45,6 +45,7 @@ const ACTIVITY_ACTION_LABELS = {
   import_discarded: 'Import discarded',
   feedback_settings_updated: 'Feedback questions updated',
   trainer_pin_updated: 'Trainer close PIN updated',
+  report_downloaded: 'Report downloaded',
 };
 
 // Prev/Next over a fixed page size, not an ever-growing LIMIT (Keeley's request, 2026-09-17: the
