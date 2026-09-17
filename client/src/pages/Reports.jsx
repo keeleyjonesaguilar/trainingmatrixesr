@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { downloadCsv } from '../lib/csv';
 
 // Sortable column headers (Keeley's request, 2026-08-18): click a header to sort by it,
 // click again to reverse. Kept as plain component state rather than URL search params, since
@@ -29,20 +30,6 @@ function statusBadgeClass(status) {
     case 'No Expiration': return 'badge-noexpiration';
     default: return 'badge-notapplicable';
   }
-}
-
-function downloadCsv(filename, rows) {
-  if (!rows.length) return;
-  const headers = Object.keys(rows[0]);
-  const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 export default function Reports() {

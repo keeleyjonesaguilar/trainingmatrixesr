@@ -6,7 +6,8 @@ import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
-import { formatCell } from '../lib/matrixCell.js';
+import { formatCell, STATUS_OPTIONS, buildComplianceReportRows } from '../lib/matrixCell.js';
+import { downloadCsv } from '../lib/csv.js';
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
@@ -123,6 +124,7 @@ export default function Matrix() {
   const search = searchParams.get('search') || '';
   const trainingIds = (searchParams.get('trainings') || '').split(',').filter(Boolean);
   const activeParam = searchParams.get('active') === '0' ? '0' : '1';
+  const status = searchParams.get('status') || '';
 
   useEffect(() => {
     api.listClients().then(setClients).catch((e) => setError(e.message));
@@ -136,10 +138,11 @@ export default function Matrix() {
     if (clientId) params.set('client_id', clientId);
     if (search) params.set('search', search);
     params.set('active', activeParam);
+    if (status) params.set('status', status);
     for (const tid of trainingIds) params.append('training_ids', tid);
     api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, search, trainingIds.join(','), activeParam, refreshKey]);
+  }, [clientId, search, trainingIds.join(','), activeParam, status, refreshKey]);
 
   // replace: true (Keeley's report, 2026-08-18: the browser back button "took her to Matrix,
   // not Dashboard") - without this, every filter tweak here pushed a brand-new history entry,
@@ -163,6 +166,19 @@ export default function Matrix() {
         </div>
         {!addingOpen && (
           <div className="page-header-actions">
+            {/* Exports the currently filtered/visible rows, not the whole catalog (Keeley's
+                request, 2026-09-18) - flattened one row per (employee, training) cell rather
+                than the wide on-screen grid, since that's what's actually useful outside the app. */}
+            <button
+              className="secondary"
+              disabled={!data || data.employees.length === 0}
+              onClick={() => downloadCsv(
+                `training-matrix${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+                buildComplianceReportRows(data.employees, data.masterTrainings, { status })
+              )}
+            >
+              Download Report
+            </button>
             <button onClick={() => setAddingOpen(true)}>+ Add Employee</button>
           </div>
         )}
@@ -218,8 +234,20 @@ export default function Matrix() {
           </select>
         </div>
         <TrainingFilterDropdown masterTrainings={allMasterTrainings} selected={trainingIds} onChange={setTrainingIds} />
+        <div className="field-row">
+          <label>Status</label>
+          <select value={status} onChange={(e) => updateParam('status', e.target.value)}>
+            <option value="">Any Status</option>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
         <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
       </div>
+      {status && (
+        <p className="page-subtitle" style={{ marginTop: -8 }}>
+          Showing employees with at least one training marked <strong>{status}</strong>.
+        </p>
+      )}
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>

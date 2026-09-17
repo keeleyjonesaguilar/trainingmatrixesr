@@ -44,3 +44,39 @@ export function formatCell(cell) {
       return { text: '-', plain: true };
   }
 }
+
+// Every distinct status a cell can have (server/lib/statusEngine.js + the "Ignored" override
+// applied at the repo layer) - used to populate the status filter dropdown on the Employees
+// Matrix and the per-client Compliance Overview (Keeley's request, 2026-09-17).
+export const STATUS_OPTIONS = ['Current', 'Expired', 'Missing', 'No Expiration', 'Pending Review', 'Not Applicable', 'Ignored'];
+
+// Flattens the employee x training grid into one row per (employee, training) cell, for the
+// "Download Report" button on those same two pages - a wide grid doesn't export usefully as a
+// CSV, but a flat list of exactly the cells that matter does. With no status filter, Missing/Not
+// Applicable/Ignored cells are left out (nothing was actually completed or requires action -
+// same "just a dash" philosophy formatCell() already applies to the on-screen grid); picking one
+// of those statuses explicitly still lists them.
+export function buildComplianceReportRows(employees, masterTrainings, { status, includeClient = true } = {}) {
+  const rows = [];
+  for (const emp of employees) {
+    for (const mt of masterTrainings) {
+      const cell = emp.cells[mt.training_id];
+      if (!cell) continue;
+      if (status) {
+        if (cell.status !== status) continue;
+      } else if (['Missing', 'Not Applicable', 'Ignored'].includes(cell.status)) {
+        continue;
+      }
+      rows.push({
+        Employee: emp.full_name,
+        ...(includeClient ? { Client: emp.client_name } : {}),
+        'Training ID': mt.training_id,
+        Training: mt.training_name,
+        Status: cell.status,
+        'Completion Date': cell.completion_date || '',
+        'Expiration Date': cell.expiration_date || '',
+      });
+    }
+  }
+  return rows;
+}

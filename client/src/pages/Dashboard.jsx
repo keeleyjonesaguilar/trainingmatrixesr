@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatCell } from '../lib/matrixCell.js';
+import { formatCell, STATUS_OPTIONS, buildComplianceReportRows } from '../lib/matrixCell.js';
+import { downloadCsv } from '../lib/csv.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 
@@ -152,7 +153,7 @@ function DuplicatesSummaryBox() {
 // page (Keeley's request, 2026-09-16) - this used to be just a bare name search, noticeably
 // weaker than what /matrix itself offers for the exact same data. No Client Account filter here
 // since this section is already scoped to one client.
-function ClientEmployeesSection({ clientId }) {
+function ClientEmployeesSection({ clientId, clientName }) {
   const [allMasterTrainings, setAllMasterTrainings] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -160,6 +161,7 @@ function ClientEmployeesSection({ clientId }) {
   const [search, setSearch] = useState('');
   const [trainingIds, setTrainingIds] = useState([]);
   const [activeParam, setActiveParam] = useState('1');
+  const [status, setStatus] = useState('');
 
   useEffect(() => {
     api.listMasterTrainings(true).then(setAllMasterTrainings).catch((e) => setError(e.message));
@@ -170,16 +172,31 @@ function ClientEmployeesSection({ clientId }) {
     setError('');
     const params = new URLSearchParams({ client_id: clientId, active: activeParam });
     if (search) params.set('search', search);
+    if (status) params.set('status', status);
     for (const tid of trainingIds) params.append('training_ids', tid);
     api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
-  }, [clientId, search, trainingIds.join(','), activeParam]);
+  }, [clientId, search, trainingIds.join(','), activeParam, status]);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (loading || !data) return <div className="card" style={{ marginTop: 16 }}><h2>Employees</h2><LoadingState label="Loading employees..." /></div>;
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <h2>Employees</h2>
+      <div className="toolbar" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Employees</h2>
+        {/* Exports the currently filtered/visible rows, flattened one row per (employee,
+            training) cell rather than the wide on-screen grid (Keeley's request, 2026-09-18). */}
+        <button
+          className="secondary"
+          disabled={data.employees.length === 0}
+          onClick={() => downloadCsv(
+            `${clientName}-training-report${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+            buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })
+          )}
+        >
+          Download Report
+        </button>
+      </div>
 
       <div className="stat-grid">
         <div className={`stat-tile clickable${activeParam === '1' ? ' selected' : ''}`} onClick={() => setActiveParam('1')}>
@@ -204,14 +221,26 @@ function ClientEmployeesSection({ clientId }) {
           />
         </div>
         <TrainingFilterDropdown masterTrainings={allMasterTrainings} selected={trainingIds} onChange={setTrainingIds} />
+        <div className="field-row">
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">Any Status</option>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
         <button
           type="button"
           className="secondary"
-          onClick={() => { setSearch(''); setTrainingIds([]); setActiveParam('1'); }}
+          onClick={() => { setSearch(''); setTrainingIds([]); setActiveParam('1'); setStatus(''); }}
         >
           Reset Filters
         </button>
       </div>
+      {status && (
+        <p className="page-subtitle" style={{ marginTop: -8 }}>
+          Showing employees with at least one training marked <strong>{status}</strong>.
+        </p>
+      )}
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
@@ -342,7 +371,7 @@ export default function Dashboard() {
           <PopularityList items={data.mostPopularTrainings} forClientId={clientId} />
         </div>
 
-        <ClientEmployeesSection clientId={clientId} />
+        <ClientEmployeesSection clientId={clientId} clientName={data.client.client_name} />
       </div>
     );
   }
