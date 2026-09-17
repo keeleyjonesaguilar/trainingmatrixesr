@@ -152,6 +152,8 @@ router.get('/:token/feedback', async (req, res) => {
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
+    training_type_label_es: session.training_type_label_es,
+    language: session.language,
     trainer_name: session.trainer_name,
     session_date: session.session_date,
     labels,

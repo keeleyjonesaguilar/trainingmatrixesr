@@ -5,8 +5,18 @@
 const express = require('express');
 const { dbGet, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { translateToSpanish } = require('../lib/translate');
 
 const router = express.Router();
+
+const FIELDS = [
+  'could_ask_questions_label',
+  'understood_material_label',
+  'needs_additional_training_label',
+  'effectiveness_label',
+  'trainer_rating_label',
+  'comment_label',
+];
 
 router.get('/', async (req, res) => {
   const row = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
@@ -16,23 +26,33 @@ router.get('/', async (req, res) => {
 router.put('/', requireAdmin, async (req, res) => {
   const existing = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
   const merged = { ...existing, ...req.body };
-  const fields = [
-    'could_ask_questions_label',
-    'understood_material_label',
-    'needs_additional_training_label',
-    'effectiveness_label',
-    'trainer_rating_label',
-    'comment_label',
-  ];
-  for (const f of fields) {
+  for (const f of FIELDS) {
     if (!merged[f] || !String(merged[f]).trim()) {
       return res.status(400).json({ error: `${f} cannot be blank` });
     }
   }
+
+  // Spanish text is auto-translated here, at save time, the same way a session's own training
+  // name/outline is (see trainingSessions.js's translateSessionFields) - so the public feedback
+  // page (any session marked spanish/both) never calls the translation API itself, and a session
+  // in Spanish always has something to show regardless of which session it is. Best-effort: a
+  // failed/unconfigured translation still saves the English text rather than blocking the save.
+  let warning = null;
+  const translated = {};
+  try {
+    const results = await Promise.all(FIELDS.map((f) => translateToSpanish(merged[f].trim())));
+    FIELDS.forEach((f, i) => { translated[f] = results[i] || existing[`${f}_es`] || null; });
+  } catch (err) {
+    warning = err.message;
+    FIELDS.forEach((f) => { translated[f] = existing[`${f}_es`] || null; });
+  }
+
   await dbRun(
     `UPDATE feedback_form_settings
      SET could_ask_questions_label=?, understood_material_label=?, needs_additional_training_label=?,
-         effectiveness_label=?, trainer_rating_label=?, comment_label=?
+         effectiveness_label=?, trainer_rating_label=?, comment_label=?,
+         could_ask_questions_label_es=?, understood_material_label_es=?, needs_additional_training_label_es=?,
+         effectiveness_label_es=?, trainer_rating_label_es=?, comment_label_es=?
      WHERE id = 'default'`,
     [
       merged.could_ask_questions_label.trim(),
@@ -41,9 +61,16 @@ router.put('/', requireAdmin, async (req, res) => {
       merged.effectiveness_label.trim(),
       merged.trainer_rating_label.trim(),
       merged.comment_label.trim(),
+      translated.could_ask_questions_label,
+      translated.understood_material_label,
+      translated.needs_additional_training_label,
+      translated.effectiveness_label,
+      translated.trainer_rating_label,
+      translated.comment_label,
     ]
   );
-  res.json(await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']));
+  const updated = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
+  res.json(warning ? { ...updated, warning } : updated);
 });
 
 module.exports = router;

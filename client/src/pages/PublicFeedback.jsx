@@ -11,6 +11,57 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// Fixed feedback-page text (Keeley's request, 2026-09-16 - the sign-in page already had this,
+// the feedback page from the second QR code didn't) - same "small, known set of phrases"
+// approach as PublicSignIn.jsx's STRINGS, driven by the session's own language setting. The
+// admin-editable questions themselves (info.labels) are real machine translations instead,
+// cached on feedback_form_settings at save time - see server/routes/feedbackSettings.js.
+const STRINGS = {
+  heading: { en: 'Training Feedback', es: 'Comentarios sobre la capacitación' },
+  trainer_label: { en: 'Trainer:', es: 'Instructor:' },
+  thank_you: {
+    en: 'Thank you — your feedback has been submitted.',
+    es: 'Gracias — sus comentarios han sido enviados.',
+  },
+  select_ellipsis: { en: 'Select…', es: 'Seleccionar…' },
+  yes: { en: 'Yes', es: 'Sí' },
+  no: { en: 'No', es: 'No' },
+  comment_placeholder: { en: "Anything you'd like to share...", es: 'Algo que le gustaría compartir...' },
+  submitting_ellipsis: { en: 'Submitting…', es: 'Enviando…' },
+  submit_button: { en: 'Submit Feedback', es: 'Enviar comentarios' },
+  err_effectiveness: {
+    en: 'Please rate how effective the training was.',
+    es: 'Por favor califique qué tan efectiva fue la capacitación.',
+  },
+  err_trainer_rating: {
+    en: "Please rate the trainer's performance.",
+    es: 'Por favor califique el desempeño del instructor.',
+  },
+};
+
+// Same shape as PublicSignIn.jsx's makeTranslator: English, Spanish, or "English/Spanish" for
+// "both".
+function makeTranslator(language) {
+  return (key) => {
+    const entry = STRINGS[key];
+    if (!entry) return key;
+    if (language === 'spanish') return entry.es;
+    if (language === 'both') return `${entry.en}/${entry.es}`;
+    return entry.en;
+  };
+}
+
+// Picks the right text for one of the admin-editable questions: English, its cached Spanish
+// translation (falling back to English if that field was never successfully translated), or
+// both stacked together.
+function labelText(labels, key, language) {
+  const en = labels[`${key}_label`];
+  const es = labels[`${key}_label_es`] || en;
+  if (language === 'spanish') return es;
+  if (language === 'both') return `${en}/${es}`;
+  return en;
+}
+
 // Anonymous post-training feedback form, reached only via a closed session's second QR code.
 // No login/name field (Keeley's design: anonymous, no attendee link) - same public-shell/
 // public-card layout as PublicSignIn.jsx for visual consistency.
@@ -32,11 +83,13 @@ export default function PublicFeedback() {
     api.publicFeedbackInfo(token).then(setInfo).catch((err) => setLoadError(err.message));
   }, [token]);
 
+  const t = makeTranslator(info?.language || 'english');
+
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
-    if (!effectiveness) return setFormError('Please rate how effective the training was.');
-    if (!trainerRating) return setFormError("Please rate the trainer's performance.");
+    if (!effectiveness) return setFormError(t('err_effectiveness'));
+    if (!trainerRating) return setFormError(t('err_trainer_rating'));
     setSubmitting(true);
     try {
       await api.publicSubmitFeedback(token, {
@@ -73,71 +126,79 @@ export default function PublicFeedback() {
     );
   }
 
+  const language = info.language || 'english';
+  const trainingLabel =
+    language === 'spanish'
+      ? info.training_type_label_es || info.training_type_label
+      : language === 'both'
+        ? `${info.training_type_label}/${info.training_type_label_es || info.training_type_label}`
+        : info.training_type_label;
+
   return (
     <div className="public-shell">
       <div className="public-card">
         <div className="public-header">
           <img src={esrMark} alt="ESR" style={{ height: 40, margin: '0 auto 10px', display: 'block' }} />
-          <h2 style={{ margin: '0 0 4px' }}>Training Feedback</h2>
+          <h2 style={{ margin: '0 0 4px' }}>{t('heading')}</h2>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
-            {info.training_type_label} · {info.client_name} · {formatDate(info.session_date)}
+            {trainingLabel} · {info.client_name} · {formatDate(info.session_date)}
           </div>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
-            Trainer: {info.trainer_name}
+            {t('trainer_label')} {info.trainer_name}
           </div>
         </div>
 
         {submitted ? (
           <div className="card">
-            <p className="success-banner" style={{ margin: 0 }}>Thank you — your feedback has been submitted.</p>
+            <p className="success-banner" style={{ margin: 0 }}>{t('thank_you')}</p>
           </div>
         ) : (
           <div className="card">
             {formError && <p className="error-banner">{formError}</p>}
             <form onSubmit={submit}>
               <div className="field">
-                <label>{info.labels.could_ask_questions_label}</label>
+                <label>{labelText(info.labels, 'could_ask_questions', language)}</label>
                 <select value={couldAskQuestions} onChange={(e) => setCouldAskQuestions(e.target.value)}>
-                  <option value="">Select…</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
+                  <option value="">{t('select_ellipsis')}</option>
+                  <option value="yes">{t('yes')}</option>
+                  <option value="no">{t('no')}</option>
                 </select>
               </div>
               <div className="field">
-                <label>{info.labels.understood_material_label}</label>
+                <label>{labelText(info.labels, 'understood_material', language)}</label>
                 <select value={understoodMaterial} onChange={(e) => setUnderstoodMaterial(e.target.value)}>
-                  <option value="">Select…</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
+                  <option value="">{t('select_ellipsis')}</option>
+                  <option value="yes">{t('yes')}</option>
+                  <option value="no">{t('no')}</option>
                 </select>
               </div>
               <div className="field">
-                <label>{info.labels.needs_additional_training_label}</label>
+                <label>{labelText(info.labels, 'needs_additional_training', language)}</label>
                 <select value={needsAdditionalTraining} onChange={(e) => setNeedsAdditionalTraining(e.target.value)}>
-                  <option value="">Select…</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
+                  <option value="">{t('select_ellipsis')}</option>
+                  <option value="yes">{t('yes')}</option>
+                  <option value="no">{t('no')}</option>
                 </select>
               </div>
               <div className="field">
-                <label>{info.labels.effectiveness_label}</label>
+                <label>{labelText(info.labels, 'effectiveness', language)}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
               </div>
               <div className="field">
-                <label>{info.labels.trainer_rating_label}</label>
+                <label>{labelText(info.labels, 'trainer_rating', language)}</label>
                 <StarRating value={trainerRating} onChange={setTrainerRating} />
               </div>
               <div className="field">
-                <label>{info.labels.comment_label}</label>
+                <label>{labelText(info.labels, 'comment', language)}</label>
                 <textarea
                   rows={3}
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
-                  placeholder="Anything you'd like to share..."
+                  placeholder={t('comment_placeholder')}
                 />
               </div>
               <button className="btn btn-accent" type="submit" disabled={submitting} style={{ width: '100%' }}>
-                {submitting ? 'Submitting…' : 'Submit Feedback'}
+                {submitting ? t('submitting_ellipsis') : t('submit_button')}
               </button>
             </form>
           </div>
