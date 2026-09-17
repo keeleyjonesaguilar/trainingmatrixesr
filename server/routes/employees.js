@@ -109,7 +109,6 @@ router.get('/:id/full-detail', async (req, res) => {
       training_id: mt.training_id,
       training_name: requirement?.client_training_name || mt.training_name,
       master_training_name: mt.training_name,
-      category: mt.category,
       training_type: mt.training_type,
       requirement_status: requirement ? requirement.requirement_status : 'Not Required',
       original_client_training_name: record ? record.original_client_training_name : null,

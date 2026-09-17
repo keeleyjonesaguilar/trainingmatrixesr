@@ -10,7 +10,7 @@ const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
 // session-count/roster lens over the same rows are now one page. Training ID is auto-generated
 // server-side (repo.generateNextTrainingId) - no more manual TRN-### typing.
 function AddTrainingForm({ onAdded, onCancel }) {
-  const [form, setForm] = useState({ training_name: '', category: '', training_type: 'Training', default_expiration: 'None' });
+  const [form, setForm] = useState({ training_name: '', training_type: 'Training', default_expiration: 'None' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,10 +39,6 @@ function AddTrainingForm({ onAdded, onCancel }) {
           <input type="text" value={form.training_name} onChange={(e) => setForm({ ...form, training_name: e.target.value })} required />
         </div>
         <div className="field-row">
-          <label>Category</label>
-          <input type="text" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} required />
-        </div>
-        <div className="field-row">
           <label>Training Type</label>
           <select value={form.training_type} onChange={(e) => setForm({ ...form, training_type: e.target.value })}>
             {TYPE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -66,14 +62,11 @@ export default function TrainingTypes() {
   const navigate = useNavigate();
   const [trainings, setTrainings] = useState([]);
   const [custom, setCustom] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [activeCategory, setActiveCategory] = useState('All');
   const [search, setSearch] = useState('');
   const [addingOpen, setAddingOpen] = useState(false);
   const [error, setError] = useState('');
 
   const load = () => {
-    api.getMasterTrainingsSummary().then(setSummary).catch((e) => setError(e.message));
     api.getTrainingSessionsSummaryByTraining().then((data) => {
       setTrainings(data.trainings);
       setCustom(data.custom);
@@ -81,9 +74,7 @@ export default function TrainingTypes() {
   };
   useEffect(load, []);
 
-  const categories = ['All', ...(summary ? summary.categories.map((c) => c.category) : [])];
-  const bySearchAndCategory = trainings.filter((t) => {
-    if (activeCategory !== 'All' && t.category !== activeCategory) return false;
+  const bySearch = trainings.filter((t) => {
     if (search && !`${t.training_id} ${t.training_name}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
@@ -114,12 +105,6 @@ export default function TrainingTypes() {
         <input placeholder="Search training types…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 320 }} />
       </div>
 
-      <div className="tab-row">
-        {categories.map((c) => (
-          <button key={c} type="button" className={activeCategory === c ? 'active' : ''} onClick={() => setActiveCategory(c)}>{c}</button>
-        ))}
-      </div>
-
       <div className="card">
         <div className="table-scroll">
           <table>
@@ -127,7 +112,6 @@ export default function TrainingTypes() {
               <tr>
                 <th>Training</th>
                 <th>ID</th>
-                <th>Category</th>
                 <th>Type</th>
                 <th>Default Expiration</th>
                 <th>Active</th>
@@ -135,19 +119,18 @@ export default function TrainingTypes() {
               </tr>
             </thead>
             <tbody>
-              {bySearchAndCategory.map((t) => (
+              {bySearch.map((t) => (
                 <tr key={t.training_id}>
                   <td><Link to={`/training-types/${t.training_id}`}>{t.training_name}</Link></td>
                   <td>{t.training_id}</td>
-                  <td>{t.category}</td>
                   <td>{t.training_type}</td>
                   <td>{t.default_expiration}</td>
                   <td><span className={`badge ${t.active ? 'badge-current' : 'badge-notapplicable'}`}>{t.active ? 'Active' : 'Inactive'}</span></td>
                   <td>{t.completed_session_count}</td>
                 </tr>
               ))}
-              {bySearchAndCategory.length === 0 && (
-                <tr><td colSpan={7} className="empty-state">No trainings in this category.</td></tr>
+              {bySearch.length === 0 && (
+                <tr><td colSpan={6} className="empty-state">No trainings match your search.</td></tr>
               )}
             </tbody>
           </table>

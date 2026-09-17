@@ -95,7 +95,6 @@ export default function Trainers() {
   const load = () => api.listTrainers().then(setTrainers).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
-  const needsInfo = trainers.filter((t) => !t.employee_number || !t.job_title);
   const activeTrainers = trainers.filter((t) => t.active);
   const inactiveTrainers = trainers.filter((t) => !t.active);
   const visibleTrainers = showActive ? activeTrainers : inactiveTrainers;
@@ -135,26 +134,6 @@ export default function Trainers() {
       )}
 
       {isAdmin && <DuplicateTrainersPanel onMerged={load} />}
-
-      {needsInfo.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h2>Trainers Needing Info ({needsInfo.length})</h2>
-          <p className="page-subtitle">Missing an Employee ID and/or job title/position - fill these in from the trainer's own profile.</p>
-          <table>
-            <thead><tr><th>Name</th><th>Missing</th></tr></thead>
-            <tbody>
-              {needsInfo.map((t) => (
-                <tr key={t.employee_id}>
-                  <td><Link to={`/employees/${t.employee_id}`}>{t.full_name}</Link></td>
-                  <td>
-                    {[!t.employee_number && 'Employee ID', !t.job_title && 'Job Title/Position'].filter(Boolean).join(', ')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       <div className="card">
         <div className="table-scroll">

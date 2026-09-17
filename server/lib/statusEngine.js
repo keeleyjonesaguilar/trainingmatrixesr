@@ -3,11 +3,15 @@
 // computeStatusForRecord() / recomputeAndPersist() so the matrix, dashboard, employee detail,
 // and training detail pages can never drift out of sync with each other.
 
-const EXPIRATION_UNITS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
+// '4 Years' added for the 2026-09-17 master catalog rebuild (Flagger's real-world renewal
+// cycle) - every validation/UI site that lists these options pulls from here or the two client
+// mirrors (ClientDetail.jsx, TrainingTypeDetail.jsx), so this is the only server-side place a
+// new unit needs to be added.
+const EXPIRATION_UNITS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 
 function addPeriod(isoDateStr, unit) {
   if (!isoDateStr) return null;
-  const years = { '1 Year': 1, '2 Years': 2, '3 Years': 3, '5 Years': 5 }[unit];
+  const years = { '1 Year': 1, '2 Years': 2, '3 Years': 3, '4 Years': 4, '5 Years': 5 }[unit];
   if (!years) return null; // 'None' or unknown
   const d = new Date(isoDateStr + 'T00:00:00Z');
   if (Number.isNaN(d.getTime())) return null;

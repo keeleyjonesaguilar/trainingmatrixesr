@@ -24,7 +24,9 @@ const NAV_ITEMS = [
   { to: '/security', label: 'Security', superAdminOnly: true },
 ];
 
-export default function Sidebar({ username, role, onLogout }) {
+// Username/role/log-out live in TopBar.jsx now (Keeley's request, 2026-09-17), alongside the
+// notification bell - the sidebar is nav-only.
+export default function Sidebar({ role }) {
   const isAdmin = role === 'admin' || role === 'super_admin';
   const visibleItems = NAV_ITEMS.filter((item) => (!item.adminOnly || isAdmin) && (!item.superAdminOnly || role === 'super_admin'));
   return (
@@ -38,15 +40,6 @@ export default function Sidebar({ username, role, onLogout }) {
           <NavLink key={item.to} to={item.to} end={item.end}>{item.label}</NavLink>
         ))}
       </nav>
-      <div className="sidebar-footer">
-        <div className="sidebar-user-avatar">{username ? username[0].toUpperCase() : '?'}</div>
-        <div className="sidebar-user-info">
-          <div className="sidebar-user-name" title={username}>
-            {username}{role ? ` (${role === 'super_admin' ? 'Super Admin' : role})` : ''}
-          </div>
-          <button type="button" className="link-button" onClick={onLogout}>Log Out</button>
-        </div>
-      </div>
     </aside>
   );
 }

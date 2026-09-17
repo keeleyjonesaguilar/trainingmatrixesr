@@ -43,4 +43,18 @@ function buildRosterFilename(session, ext) {
   return `${parts.join('_')}.${ext}`;
 }
 
-module.exports = { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix };
+// Same convention as the roster/certificates (Keeley's request, 2026-09-17: QR PNGs were all
+// named "qrcode.png"/"feedback-qrcode.png" regardless of session, so dragging several into a
+// PowerPoint left no way to tell which slide/session each belonged to).
+function buildQrFilename(session, kind) {
+  const parts = [
+    stripTrainingIdPrefix(session.training_type_label),
+    session.client_name,
+    session.trainer_signed_name || session.trainer_name,
+    session.session_date,
+    kind,
+  ].map(sanitizeFilenamePart);
+  return `${parts.join('_')}.png`;
+}
+
+module.exports = { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix };

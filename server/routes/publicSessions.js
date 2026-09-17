@@ -6,7 +6,12 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
-const { processAttendee } = require('../lib/sessionRecords');
+const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
+const { buildCertificateFilename } = require('../lib/certificateFilename');
+const { DATA_DIR } = require('../lib/paths');
+const path = require('path');
+const repo = require('../lib/repo');
+const { notifyAllUsers } = require('../lib/notifications');
 
 const router = express.Router();
 
@@ -31,11 +36,35 @@ router.get('/:token', async (req, res) => {
   const session = await getSessionByToken(req.params.token);
   if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
   const { n: attendeeCount } = await dbGet('SELECT COUNT(*) AS n FROM session_attendees WHERE session_id = ?', [session.session_id]);
+  // Lets the trainer close-out form pre-fill phone/email for a trainer already on file, instead
+  // of retyping it every session (Keeley's request, 2026-09-17) - trainer_employee_id is set at
+  // session creation time (repo.findOrCreateTrainerEmployee), so it's almost always available.
+  let trainerPhone = session.trainer_phone || '';
+  let trainerEmail = session.trainer_email || '';
+  if (session.trainer_employee_id) {
+    const trainerEmployee = await dbGet('SELECT employee_number, email FROM employees WHERE employee_id = ?', [session.trainer_employee_id]);
+    if (trainerEmployee) {
+      // employee_number is overloaded (a trainer added via the Trainers page stores their
+      // Employee ID there instead of a phone - see server/routes/trainers.js) - only prefill
+      // from it when it actually looks like a phone number, never a stray ID.
+      if (!trainerPhone && isValidPhoneNumber(trainerEmployee.employee_number)) {
+        trainerPhone = formatPhoneNumber(trainerEmployee.employee_number);
+      }
+      trainerEmail = trainerEmail || trainerEmployee.email || '';
+    }
+  }
+  const additionalTrainings = await dbAll(
+    'SELECT training_type_label FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
+    [session.session_id]
+  );
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
     training_type_label_es: session.training_type_label_es,
+    additional_training_labels: additionalTrainings.map((t) => t.training_type_label),
     trainer_name: session.trainer_name,
+    trainer_phone: trainerPhone,
+    trainer_email: trainerEmail,
     session_date: session.session_date,
     outline: session.outline,
     outline_es: session.outline_es,
@@ -100,7 +129,7 @@ router.post('/:token/close', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This session is already closed.' });
   }
-  const { trainer_signed_name, trainer_email, signature, pin } = req.body || {};
+  const { trainer_signed_name, trainer_email, trainer_phone, signature, pin } = req.body || {};
   if (!trainer_signed_name || !trainer_signed_name.trim()) {
     return res.status(400).json({ error: 'Trainer name is required to close the session.' });
   }
@@ -109,6 +138,12 @@ router.post('/:token/close', async (req, res) => {
   }
   if (!EMAIL_PATTERN.test(trainer_email.trim())) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+  if (!trainer_phone || !trainer_phone.trim()) {
+    return res.status(400).json({ error: 'Trainer phone number is required to close the session.' });
+  }
+  if (!isValidPhoneNumber(trainer_phone)) {
+    return res.status(400).json({ error: 'Please enter a standard 10-digit phone number.' });
   }
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A trainer signature is required to close the session.' });
@@ -122,22 +157,55 @@ router.post('/:token/close', async (req, res) => {
     return res.status(400).json({ error: 'Incorrect PIN.' });
   }
 
+  const formattedTrainerPhone = formatPhoneNumber(trainer_phone);
   await dbRun(
     `UPDATE training_sessions
-     SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_signature = ?,
+     SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_phone = ?, trainer_signature = ?,
          trainer_signed_at = now_utc_text(), closed_at = now_utc_text()
      WHERE session_id = ?`,
-    [trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), signature, session.session_id]
+    [trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature, session.session_id]
   );
+
+  // Keep the trainer's own profile current from what they just signed off with (Keeley's
+  // request, 2026-09-17) - eliminates the need to manually add it on the back end. The session
+  // is already linked to a trainer employee almost always (set at creation by
+  // repo.findOrCreateTrainerEmployee) - reuse that same link rather than re-resolving one here,
+  // since a name/phone typed slightly differently at close-out than at creation would otherwise
+  // resolve to a *different* profile than the one this session is actually attached to, leaving
+  // a stray duplicate instead of updating the real one. Only fall back to finding/creating a new
+  // link for the rare session that somehow has none yet.
+  let trainerEmployeeId = session.trainer_employee_id;
+  if (!trainerEmployeeId) {
+    trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_signed_name.trim(), formattedTrainerPhone);
+    if (trainerEmployeeId) {
+      await dbRun('UPDATE training_sessions SET trainer_employee_id = ? WHERE session_id = ?', [trainerEmployeeId, session.session_id]);
+    }
+  }
+  if (trainerEmployeeId) {
+    // employee_number only fills in when blank (never overwrites - it may already hold a real
+    // Employee ID entered by an admin via the Trainers page, a different thing entirely).
+    await dbRun(
+      'UPDATE employees SET employee_number = COALESCE(NULLIF(employee_number, \'\'), ?), email = ? WHERE employee_id = ?',
+      [formattedTrainerPhone, trainer_email.trim().toLowerCase(), trainerEmployeeId]
+    );
+  }
 
   const updatedSession = await dbGet(
     `SELECT ts.*, c.client_name FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id WHERE ts.session_id = ?`,
     [session.session_id]
   );
   const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+  // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql) -
+  // empty for the overwhelming majority of (single-training) sessions.
+  const additionalTrainings = await dbAll(
+    'SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
+    [session.session_id]
+  );
 
-  // Certificate per attendee, then link them into the Matrix (best-effort per attendee so one
-  // bad record can't block everyone else's certificate or employee record).
+  // Certificate per attendee for the primary training, then link them into the Matrix
+  // (best-effort per attendee so one bad record can't block everyone else's certificate or
+  // employee record) - then the same for each additional training, one certificate/record per
+  // (attendee, training) pair.
   for (const attendee of attendees) {
     let certPath = null;
     try {
@@ -149,16 +217,55 @@ router.post('/:token/close', async (req, res) => {
     }
     // eslint-disable-next-line no-await-in-loop
     await processAttendee(updatedSession, attendee, certPath);
+
+    for (const additionalTraining of additionalTrainings) {
+      // A shallow clone with the swapped label is all generateCertificate/buildCertificateFilename
+      // read differently per training - date/client/trainer stay the session's own.
+      const trainingSession = { ...updatedSession, training_type_label: additionalTraining.training_type_label };
+      const outputPath = path.join(
+        DATA_DIR, 'certificates', 'sign-in-sessions', session.session_id, `${attendee.attendee_id}-${additionalTraining.id}.pdf`
+      );
+      let additionalCertPath = null;
+      let additionalCertFilename = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        additionalCertPath = await generateCertificate(trainingSession, attendee, outputPath);
+        additionalCertFilename = buildCertificateFilename(trainingSession, attendee);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`Certificate generation failed for attendee ${attendee.attendee_id}, training ${additionalTraining.id}:`, err);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await processAttendeeAdditionalTraining(updatedSession, attendee, additionalTraining, additionalCertPath, additionalCertFilename);
+    }
   }
 
   const attendeesFinal = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
 
   try {
-    const rosterPath = await generateRosterPdf(updatedSession, attendeesFinal);
+    // Roster lists every training this one sign-in covers, not just the primary one.
+    const rosterSession = {
+      ...updatedSession,
+      training_type_label: [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', '),
+    };
+    const rosterPath = await generateRosterPdf(rosterSession, attendeesFinal);
     await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Roster PDF generation failed for session ${session.session_id}:`, err);
+  }
+
+  try {
+    const allLabels = [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', ');
+    await notifyAllUsers({
+      type: 'session_completed',
+      title: `${allLabels} training completed`,
+      body: `${updatedSession.client_name} · ${attendeesFinal.length} attendee(s) · ${updatedSession.session_date}`,
+      link_path: `/sessions/${updatedSession.session_id}`,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Notification failed for session ${session.session_id}:`, err);
   }
 
   res.json({ ok: true, attendee_count: attendees.length });

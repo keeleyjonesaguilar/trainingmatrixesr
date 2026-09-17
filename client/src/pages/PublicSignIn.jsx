@@ -30,6 +30,7 @@ const STRINGS = {
   person_signed_in_suffix: { en: 'person has signed in so far.', es: 'persona se ha registrado hasta ahora.' },
   people_signed_in_suffix: { en: 'people have signed in so far.', es: 'personas se han registrado hasta ahora.' },
   trainer_name: { en: 'Trainer name', es: 'Nombre del instructor' },
+  trainer_phone: { en: 'Trainer phone number', es: 'Número de teléfono del instructor' },
   trainer_pin: { en: 'Trainer PIN', es: 'PIN del instructor' },
   trainer_signature: { en: 'Trainer signature', es: 'Firma del instructor' },
   close_note: {
@@ -59,6 +60,10 @@ const STRINGS = {
   err_trainer_email: {
     en: "Please enter the trainer's email address.",
     es: 'Por favor ingrese el correo electrónico del instructor.',
+  },
+  err_trainer_phone: {
+    en: "Please enter the trainer's phone number.",
+    es: 'Por favor ingrese el número de teléfono del instructor.',
   },
   err_trainer_pin: { en: 'Please enter the trainer PIN.', es: 'Por favor ingrese el PIN del instructor.' },
   err_trainer_signature: {
@@ -93,6 +98,7 @@ export default function PublicSignIn() {
   const [email, setEmail] = useState('');
   const [trainerName, setTrainerName] = useState('');
   const [trainerEmail, setTrainerEmail] = useState('');
+  const [trainerPhone, setTrainerPhone] = useState('');
   const [pin, setPin] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -109,10 +115,14 @@ export default function PublicSignIn() {
 
   useEffect(load, [token]);
 
-  // Auto-load the trainer's name from the session record (Keeley's request) - only seeds it
-  // while still empty, so it never clobbers an in-progress manual correction on a later refresh.
+  // Auto-load the trainer's name/phone/email from the session record and, if they're already on
+  // file, their trainer profile (Keeley's request, 2026-09-17: eliminate retyping this every
+  // session) - only seeds each field while still empty, so it never clobbers an in-progress
+  // manual correction on a later refresh.
   useEffect(() => {
     if (info?.trainer_name && !trainerName) setTrainerName(info.trainer_name);
+    if (info?.trainer_phone && !trainerPhone) setTrainerPhone(info.trainer_phone);
+    if (info?.trainer_email && !trainerEmail) setTrainerEmail(info.trainer_email);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info]);
 
@@ -156,6 +166,7 @@ export default function PublicSignIn() {
     setFormError('');
     if (!trainerName.trim()) return setFormError(t('err_trainer_name'));
     if (!trainerEmail.trim() || !EMAIL_PATTERN.test(trainerEmail.trim())) return setFormError(t('err_trainer_email'));
+    if (!trainerPhone.trim()) return setFormError(t('err_trainer_phone'));
     if (!pin.trim()) return setFormError(t('err_trainer_pin'));
     if (sigRef.current?.isEmpty()) return setFormError(t('err_trainer_signature'));
     setSubmitting(true);
@@ -163,6 +174,7 @@ export default function PublicSignIn() {
       await api.publicCloseSession(token, {
         trainer_signed_name: trainerName.trim(),
         trainer_email: trainerEmail.trim(),
+        trainer_phone: trainerPhone.trim(),
         pin: pin.trim(),
         signature: sigRef.current.toDataURL(),
       });
@@ -205,6 +217,9 @@ export default function PublicSignIn() {
           <img src={esrMark} alt="ESR" style={{ height: 40, margin: '0 auto 10px', display: 'block' }} />
           <h2 style={{ margin: '0 0 4px' }}>
             {isSpanish ? trainingLabelEs : isBoth ? `${info.training_type_label}/${trainingLabelEs}` : info.training_type_label}
+            {info.additional_training_labels?.map((label) => (
+              <span key={label}> + {label}</span>
+            ))}
           </h2>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
             {info.client_name} · {formatDate(info.session_date)}
@@ -323,6 +338,14 @@ export default function PublicSignIn() {
                     onChange={(e) => setTrainerEmail(e.target.value)}
                     placeholder="trainer@example.com"
                     type="email"
+                  />
+                </div>
+                <div className="field">
+                  <label>{t('trainer_phone')}</label>
+                  <input
+                    value={trainerPhone}
+                    onChange={(e) => setTrainerPhone(e.target.value)}
+                    placeholder="(555) 123-4567"
                   />
                 </div>
                 <div className="field">

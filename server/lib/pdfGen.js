@@ -85,15 +85,30 @@ function b64ToBuffer(dataUrl) {
   }
 }
 
+// EASTERN_TZ (Keeley's request, 2026-09-17): the render container's own clock is UTC, not the
+// business's Eastern time, so any *timestamp* (has a real time-of-day, e.g. signed_at/closed_at)
+// needs an explicit timeZone or it prints hours off from when it actually happened. A plain
+// session_date ("YYYY-MM-DD" with no time) doesn't need this - it's anchored to UTC midnight
+// below specifically so formatting it can never roll it to the adjacent calendar day.
+const EASTERN_TZ = 'America/New_York';
+
 function formatDate(d) {
   if (!d) return '';
-  const dt = new Date(d + (d.length === 10 ? 'T00:00:00' : ''));
+  const dt = new Date(d.length === 10 ? `${d}T00:00:00Z` : d);
   if (Number.isNaN(dt.getTime())) return d;
   return dt.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+    timeZone: d.length === 10 ? 'UTC' : EASTERN_TZ,
   });
+}
+
+function formatDateTime(d) {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleString('en-US', { timeZone: EASTERN_TZ });
 }
 
 // One certificate of completion per attendee - the ESR letterhead template the president
@@ -200,7 +215,7 @@ function generateRosterPdf(session, attendees) {
     const rowLeft = doc.x;
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(`${i + 1}. ${a.trainee_name}`);
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
-    doc.text(`Phone: ${a.trainee_phone || '—'}    Email: ${a.trainee_email || '—'}    Signed: ${new Date(a.signed_at).toLocaleString()}`);
+    doc.text(`Phone: ${a.trainee_phone || '—'}    Email: ${a.trainee_email || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
     const imageTop = doc.y + 2;
     const sig = b64ToBuffer(a.signature);
     let bottom = imageTop;
@@ -227,7 +242,7 @@ function generateRosterPdf(session, attendees) {
   doc.font('Helvetica').fontSize(10).fillColor('#333333');
   doc.text(`Trainer: ${session.trainer_signed_name || session.trainer_name}`);
   doc.text(`Trainer Email: ${session.trainer_email || '—'}`);
-  doc.text(`Closed: ${session.closed_at ? new Date(session.closed_at).toLocaleString() : '—'}`);
+  doc.text(`Closed: ${formatDateTime(session.closed_at)}`);
   const trainerImageTop = doc.y + 2;
   const trainerSig = b64ToBuffer(session.trainer_signature);
   if (trainerSig) {

@@ -58,6 +58,10 @@ const LONG_FORMAT_PATTERNS = {
   expiration_date: [/^expiration(\s*date)?$/i, /^exp(iry)?(\s*date)?$/i, /^valid\s*(through|until)$/i],
   record_type: [/^record\s*type$/i],
   status: [/^status$/i],
+  // Optional (Keeley's request, 2026-09-17): when a row already names its exact master training
+  // ID, that's used directly instead of fuzzy-matching the Certification text - see
+  // classifyHeaders()'s isLongFormat check below, which deliberately does NOT require this one.
+  training_id: [/^training\s*id$/i, /^cert(ification)?\s*id$/i, /^trn\s*id$/i],
 };
 
 function normalize(text) {
@@ -110,7 +114,11 @@ function classifyHeaders(headers) {
     const field = classifyLongFormatColumn(h);
     if (field && !longHeaders[field]) longHeaders[field] = h;
   }
-  const isLongFormat = Boolean(longHeaders.training_name && longHeaders.completion_date && longHeaders.expiration_date);
+  // Expiration Date is NOT required to recognize a long sheet (Keeley's request, 2026-09-17:
+  // Employee/Client/Certification/Activation are the required shape, Expiration was never in
+  // that list) - a row with no explicit expiration just falls through to the catalog/client's
+  // own default duration, same as any other record with no source_expiration_date override.
+  const isLongFormat = Boolean(longHeaders.training_name && longHeaders.completion_date);
 
   if (isLongFormat) {
     const claimed = new Set(Object.values(longHeaders));
@@ -176,15 +184,14 @@ async function matchTrainingColumn(header) {
   return { training_id: null, confidence: 'unmatched' };
 }
 
-// Downloadable starting-point sheet (Keeley's request): Client / Employee First Name /
-// Employee Last Name / Trainer, then one column per active catalog training - using the
-// training's exact name as the header, since that's the one thing matchTrainingColumn() is
-// guaranteed to auto-match on a fresh import with no prior alias history. A cell under a
-// training's column just holds that training's completion date for that row.
+// Downloadable starting-point sheet (Keeley's request, 2026-09-17) - one row per training
+// completion (the long format): Employee / Client / Certification / Activation are required,
+// Training ID is optional (best-effort matched, never required - see matchTrainingColumn() and
+// the direct-Training-ID path in the commit route). Header-only, no example row, matching this
+// app's existing "blank starting point" convention for every other downloadable template.
 router.get('/template.csv', async (req, res) => {
-  const trainings = await repo.listMasterTrainings({ activeOnly: true });
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const header = ['Client', 'Employee First Name', 'Employee Last Name', 'Trainer', ...trainings.map((t) => t.training_name)];
+  const header = ['Employee', 'Client', 'Certification', 'Activation', 'Training ID'];
   res.set('Content-Type', 'text/csv');
   res.set('Content-Disposition', 'attachment; filename="training-import-template.csv"');
   res.send(header.map(esc).join(','));
@@ -206,9 +213,10 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
   const headers = Object.keys(records[0]);
   const { format, identityHeaders, longHeaders, trainingHeaders } = classifyHeaders(headers);
 
-  if (!identityHeaders.client) {
-    return res.status(400).json({ error: 'No "Client" column found - every row must specify which client it belongs to.' });
-  }
+  // Client is lenient, not hard-required (Keeley's request, 2026-09-17) - a file with no Client
+  // column at all just leaves every row's client unresolved, exactly like a row with a blank
+  // Client value already does (queued in clients_needing_review, never a reason to reject the
+  // whole file).
   if (!identityHeaders.first_name && !identityHeaders.full_name) {
     return res.status(400).json({ error: 'No name column found - include "Employee First Name"/"Employee Last Name" (or a single "Full Name"/"Employee Full Name" column).' });
   }
@@ -224,12 +232,32 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
     format === 'long' ? JSON.stringify(longHeaders) : null,
   ]);
 
+  // Direct Training ID override (Keeley's request, 2026-09-17): a row that already names an
+  // exact, valid master training ID skips fuzzy-matching the Certification text entirely - the
+  // commit route resolves these rows straight from training_id_raw instead of a column_map
+  // entry, so they're excluded from columnMapLabels below. An unrecognized or blank value here
+  // just falls back to matching by label, same as if the column weren't present at all.
+  const validTrainingIds = format === 'long' && longHeaders.training_id
+    ? new Set((await dbAll('SELECT training_id FROM master_trainings')).map((t) => t.training_id.toUpperCase()))
+    : null;
+  function resolveDirectTrainingId(row) {
+    if (!validTrainingIds) return null;
+    const raw = String(row[longHeaders.training_id] || '').trim().toUpperCase();
+    return raw && validTrainingIds.has(raw) ? raw : null;
+  }
+
   // Wide format: one column_map row per training COLUMN HEADER (a cell under it holds that
   // training's completion date). Long format: one column_map row per distinct raw TRAINING
-  // NAME VALUE found in the training-name column (every row under that value shares the
-  // match). Either way, matching/resolution works identically from here on.
+  // NAME VALUE found in the training-name column, excluding rows resolved directly above (every
+  // row under that value shares the match). Either way, matching/resolution works identically
+  // from here on.
   const columnMapLabels = format === 'long'
-    ? [...new Set(records.map((row) => (row[longHeaders.training_name] || '').trim()).filter(Boolean))]
+    ? [...new Set(
+        records
+          .filter((row) => !resolveDirectTrainingId(row))
+          .map((row) => (row[longHeaders.training_name] || '').trim())
+          .filter(Boolean)
+      )]
     : trainingHeaders;
 
   const columnMapPreview = [];
@@ -268,8 +296,8 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
         `INSERT INTO import_staged_rows
          (staged_row_id, batch_id, employee_number_raw, full_name_raw, job_title_raw, department_raw,
           client_name_raw, resolved_client_id, first_name_raw, last_name_raw, trainer_name_raw, raw_row_json,
-          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw, employee_status_raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw, employee_status_raw, training_id_raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           uuidv4(),
           batchId,
@@ -288,6 +316,7 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
           format === 'long' ? (row[longHeaders.expiration_date] || null) : null,
           format === 'long' && longHeaders.record_type ? (row[longHeaders.record_type] || null) : null,
           identityHeaders.employee_status ? row[identityHeaders.employee_status] : null,
+          format === 'long' && longHeaders.training_id ? (row[longHeaders.training_id] || null) : null,
         ]
       );
     }
@@ -415,7 +444,9 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       const fullName = (row.full_name_raw || '').trim();
       if (!fullName) continue; // can't create an employee with no identifying name - row preserved in raw_row_json regardless
       if (!row.resolved_client_id) { rowsSkippedNoClient += 1; continue; } // blank/unresolved Client - nothing to attach this row to yet
-      if (batch.format === 'long' && !(row.training_name_raw || '').trim()) {
+      // A row with its own valid Training ID (checked properly below) doesn't need a
+      // Certification/training-name value at all - only skip here when BOTH are blank.
+      if (batch.format === 'long' && !(row.training_name_raw || '').trim() && !(row.training_id_raw || '').trim()) {
         rowsSkippedNoTrainingName += 1; // nothing to attach this row to - preserved in raw_row_json regardless
         continue;
       }
@@ -452,19 +483,93 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       rowContextById.set(row.staged_row_id, { employee, clientId, trainerEmployeeId });
     }
 
-    // Long format only: group eligible rows by their raw training-name value so each mapping
-    // below can look up exactly the rows it applies to, the same way a wide-format mapping
-    // applies to a single column across every row.
+    const now = new Date().toISOString();
+
+    // Shared by both long-format paths below (a row resolved directly by its own Training ID,
+    // and a row resolved via a column_map label) - the actual record creation/dedup logic is
+    // identical either way, only how `trainingId`/`originalClientTrainingName` were determined differs.
+    async function commitLongFormatRecord(row, trainingId, masterTraining, originalClientTrainingName) {
+      const { employee, clientId, trainerEmployeeId } = rowContextById.get(row.staged_row_id);
+      // The source's own Expiration date (if any) is written to source_expiration_date, which
+      // statusEngine.resolveExpiration treats as the record's explicit override and always
+      // prefers over a computed catalog/client duration - so a migrated record shows exactly
+      // the status the source system did, not whatever the Master Catalog default would compute.
+      const parsed = parseSourceValue(row.completion_date_raw);
+      const explicitExpiration = tryParseDate((row.expiration_date_raw || '').trim());
+      const notes = row.record_type_raw ? `Record type: ${row.record_type_raw}` : null;
+
+      // A prior partial commit on this batch may have already created exactly this (employee,
+      // training, source label, completion date) record - e.g. this mapping was resolved and
+      // committed already, and we're re-running after resolving something else (a different
+      // mapping, or a client) that had blocked other rows. Skip it rather than creating a
+      // duplicate; null-safe on completion_date since a blank/unparsed source value still stages
+      // a record (flagged "Pending Review") that a re-commit shouldn't double up.
+      const alreadyCommitted = await dbGet(
+        `SELECT 1 FROM employee_training_records
+         WHERE import_batch_id = ? AND employee_id = ? AND training_id = ? AND original_client_training_name = ?
+           AND (completion_date = ? OR (completion_date IS NULL AND ?::text IS NULL))`,
+        [req.params.batchId, employee.employee_id, trainingId, originalClientTrainingName, parsed.completion_date, parsed.completion_date]
+      );
+      if (alreadyCommitted) return;
+
+      const recordId = uuidv4();
+      await dbRun(
+        `INSERT INTO employee_training_records
+         (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
+          completion_date, source_expiration_date, expiration_date, status, raw_source_value, source, notes,
+          trainer_employee_id, import_batch_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'Pending Review', ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          recordId,
+          clientId,
+          employee.employee_id,
+          trainingId,
+          masterTraining.training_name,
+          originalClientTrainingName,
+          parsed.completion_date,
+          explicitExpiration,
+          parsed.raw_source_value,
+          `Import: ${batch.filename}`,
+          notes,
+          trainerEmployeeId,
+          req.params.batchId,
+          now,
+          now,
+        ]
+      );
+      const persisted = await repo.recomputeAndPersistRecord(recordId);
+      if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
+      recordsCreated += 1;
+      createdRecordIds.push(recordId);
+    }
+
+    // Long format only: rows whose own Training ID column already names an exact, valid master
+    // training (Keeley's request, 2026-09-17) skip column-map resolution entirely - that always
+    // wins over fuzzy-matching the Certification text. The rest get grouped by their raw
+    // training-name value so each column_map mapping below can look up exactly the rows it
+    // applies to, the same way a wide-format mapping applies to a single column across every row.
     const rowsByTrainingName = new Map();
     if (batch.format === 'long') {
+      const validTrainingIds = new Set((await dbAll('SELECT training_id FROM master_trainings')).map((t) => t.training_id.toUpperCase()));
       for (const row of eligibleRows) {
-        const key = row.training_name_raw.trim();
+        const directId = String(row.training_id_raw || '').trim().toUpperCase();
+        if (directId && validTrainingIds.has(directId)) {
+          const masterTraining = await repo.getMasterTraining(directId);
+          const label = (row.training_name_raw || '').trim() || row.training_id_raw.trim();
+          // eslint-disable-next-line no-await-in-loop
+          await commitLongFormatRecord(row, directId, masterTraining, label);
+          continue;
+        }
+        // An invalid/unrecognized Training ID plus a blank Certification value (the only way
+        // to reach here with nothing usable - the earlier skip check only requires ONE of the
+        // two) has nothing left to match against.
+        const key = (row.training_name_raw || '').trim();
+        if (!key) { rowsSkippedNoTrainingName += 1; continue; }
         if (!rowsByTrainingName.has(key)) rowsByTrainingName.set(key, []);
         rowsByTrainingName.get(key).push(row);
       }
     }
 
-    const now = new Date().toISOString();
     for (const col of columnMap) {
       if (col.resolution_status === 'ignored' || col.resolution_status === 'needs_review') continue;
       if (!col.matched_training_id) continue;
@@ -473,36 +578,19 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       const rowsForThisMapping = batch.format === 'long' ? (rowsByTrainingName.get(col.source_column_header) || []) : eligibleRows;
 
       for (const row of rowsForThisMapping) {
-        const { employee, clientId, trainerEmployeeId } = rowContextById.get(row.staged_row_id);
-
-        let parsed;
-        let explicitExpiration = null;
-        let originalClientTrainingName;
-        let notes = null;
         if (batch.format === 'long') {
-          // The source's own Expiration date (if any) is written to source_expiration_date,
-          // which statusEngine.resolveExpiration treats as the record's explicit override and
-          // always prefers over a computed catalog/client duration - so a migrated record shows
-          // exactly the status the source system did, not whatever the (still largely
-          // unconfigured) Master Catalog default would compute.
-          parsed = parseSourceValue(row.completion_date_raw);
-          explicitExpiration = tryParseDate((row.expiration_date_raw || '').trim());
-          originalClientTrainingName = row.training_name_raw.trim();
-          notes = row.record_type_raw ? `Record type: ${row.record_type_raw}` : null;
-        } else {
-          const rawRow = JSON.parse(row.raw_row_json);
-          const cellValue = rawRow[col.source_column_header];
-          if (cellValue === undefined || cellValue === null || String(cellValue).trim() === '') continue; // spec 13: blank isn't proof of anything - skip, don't create a false "Missing" record
-          parsed = parseSourceValue(cellValue);
-          originalClientTrainingName = col.source_column_header;
+          // eslint-disable-next-line no-await-in-loop
+          await commitLongFormatRecord(row, col.matched_training_id, masterTraining, row.training_name_raw.trim());
+          continue;
         }
 
-        // A prior partial commit on this batch may have already created exactly this
-        // (employee, training, source label, completion date) record - e.g. this mapping was
-        // resolved and committed already, and we're re-running after resolving something else
-        // (a different mapping, or a client) that had blocked other rows. Skip it rather than
-        // creating a duplicate; null-safe on completion_date since a blank/unparsed source value
-        // still stages a record (flagged "Pending Review") that a re-commit shouldn't double up.
+        const { employee, clientId, trainerEmployeeId } = rowContextById.get(row.staged_row_id);
+        const rawRow = JSON.parse(row.raw_row_json);
+        const cellValue = rawRow[col.source_column_header];
+        if (cellValue === undefined || cellValue === null || String(cellValue).trim() === '') continue; // spec 13: blank isn't proof of anything - skip, don't create a false "Missing" record
+        const parsed = parseSourceValue(cellValue);
+        const originalClientTrainingName = col.source_column_header;
+
         const alreadyCommitted = await dbGet(
           `SELECT 1 FROM employee_training_records
            WHERE import_batch_id = ? AND employee_id = ? AND training_id = ? AND original_client_training_name = ?
@@ -526,10 +614,10 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
             masterTraining.training_name,
             originalClientTrainingName,
             parsed.completion_date,
-            explicitExpiration,
+            null,
             parsed.raw_source_value,
             `Import: ${batch.filename}`,
-            notes,
+            null,
             trainerEmployeeId,
             req.params.batchId,
             now,

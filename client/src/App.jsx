@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar.jsx';
+import TopBar from './components/TopBar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import ActionRequired from './pages/ActionRequired.jsx';
 import Matrix from './pages/Matrix.jsx';
@@ -37,12 +38,13 @@ export default function App() {
 
   const [status, setStatus] = useState('loading'); // loading | signed-out | signed-in
   const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('user');
 
   useEffect(() => {
     if (isPublicSignIn) return;
     api.me()
-      .then((res) => { setUsername(res.username); setRole(res.role || 'user'); setStatus('signed-in'); })
+      .then((res) => { setUsername(res.username); setFullName(res.full_name || ''); setRole(res.role || 'user'); setStatus('signed-in'); })
       .catch(() => setStatus('signed-out'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPublicSignIn]);
@@ -60,21 +62,32 @@ export default function App() {
   if (status === 'loading') return null;
 
   if (status === 'signed-out') {
-    return <Login onLogin={(name, userRole) => { setUsername(name); setRole(userRole || 'user'); setStatus('signed-in'); }} />;
+    return (
+      <Login
+        onLogin={(name, userRole, userFullName) => {
+          setUsername(name);
+          setRole(userRole || 'user');
+          setFullName(userFullName || '');
+          setStatus('signed-in');
+        }}
+      />
+    );
   }
 
   const logout = async () => {
     try { await api.logout(); } catch { /* clear client state regardless */ }
     setStatus('signed-out');
     setUsername('');
+    setFullName('');
     setRole('user');
   };
 
   return (
-    <AuthContext.Provider value={{ username, role }}>
+    <AuthContext.Provider value={{ username, fullName, role }}>
       <div className="shell">
-        <Sidebar username={username} role={role} onLogout={logout} />
+        <Sidebar role={role} />
         <div className="main-content">
+          <TopBar username={username} fullName={fullName} role={role} onLogout={logout} />
           <main className="app-body">
             <Routes>
               <Route path="/" element={<Dashboard />} />

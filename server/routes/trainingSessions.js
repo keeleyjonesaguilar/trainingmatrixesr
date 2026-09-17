@@ -10,7 +10,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
-const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
+const { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
 const { logActivity } = require('../lib/activityLog');
 const fs = require('fs');
 
@@ -40,19 +40,6 @@ async function translateSessionFields(trainingTypeLabel, outline, language) {
   }
 }
 
-// Whether a session's trainer still needs a human to double-check them (Keeley's report,
-// 2026-09-17: a session she'd already fixed - the trainer had a real Employee ID on file, just
-// resolved by name rather than typed into this session's own form - was still stuck flagged).
-// An Employee ID typed into THIS save always clears it. Otherwise, it only clears if
-// findOrCreateTrainerEmployee resolved to an EXISTING employee that already has an Employee ID
-// on file - i.e. a genuinely known, previously-verified trainer - not just any name match,
-// since two people can share a name and a same-named stub with no ID is still unverified.
-async function resolveTrainerNeedsReview(trainerPhone, trainerEmployeeId) {
-  if (trainerPhone) return false;
-  if (!trainerEmployeeId) return true;
-  const employee = await dbGet('SELECT employee_number FROM employees WHERE employee_id = ?', [trainerEmployeeId]);
-  return !employee?.employee_number;
-}
 
 async function attendeeCount(sessionId) {
   const { n } = await dbGet('SELECT COUNT(*) AS n FROM session_attendees WHERE session_id = ?', [sessionId]);
@@ -106,8 +93,11 @@ router.get('/summary-by-training', async (req, res) => {
 // status - roster PDF/CSV only make sense once a session is closed.
 router.get('/by-training/:trainingId', async (req, res) => {
   const { client_id } = req.query;
-  const clauses = ['ts.master_training_id = ?'];
-  const params = [req.params.trainingId];
+  // Matches on the primary training OR one of a multi-training session's additional trainings
+  // (server/migrations/045_multi_training_sessions.sql) - otherwise a session where this
+  // training was taught, just not as the first one picked, would silently never show up here.
+  const clauses = ['(ts.master_training_id = ? OR EXISTS (SELECT 1 FROM session_additional_trainings sat WHERE sat.session_id = ts.session_id AND sat.master_training_id = ?))'];
+  const params = [req.params.trainingId, req.params.trainingId];
   if (client_id) { clauses.push('ts.client_id = ?'); params.push(client_id); }
   const rows = await dbAll(`${SESSION_WITH_CLIENT_SQL} WHERE ${clauses.join(' AND ')} ORDER BY ts.session_date DESC`, params);
   res.json(await Promise.all(rows.map(async (r) => ({ ...r, attendee_count: await attendeeCount(r.session_id) }))));
@@ -118,26 +108,50 @@ router.get('/:id', async (req, res) => {
   if (!session) return res.status(404).json({ error: 'Session not found' });
   const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
   const feedback = await dbAll('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at', [session.session_id]);
-  res.json({ ...session, public_url: publicSignInUrl(session.qr_token), feedback_url: publicFeedbackUrl(session.qr_token), attendees, feedback });
+  // Extra trainings beyond the primary (server/migrations/045_multi_training_sessions.sql) -
+  // each attendee's certificate/status for those lives in attendee_certificates since there can
+  // be several, unlike the primary training's single certificate_path/processing_status columns.
+  const additionalTrainings = await dbAll(
+    'SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
+    [session.session_id]
+  );
+  const additionalCerts = attendees.length
+    ? await dbAll('SELECT * FROM attendee_certificates WHERE attendee_id = ANY(?)', [attendees.map((a) => a.attendee_id)])
+    : [];
+  const attendeesWithCerts = attendees.map((a) => ({
+    ...a,
+    additional_certificates: additionalCerts.filter((c) => c.attendee_id === a.attendee_id),
+  }));
+  res.json({
+    ...session,
+    public_url: publicSignInUrl(session.qr_token),
+    feedback_url: publicFeedbackUrl(session.qr_token),
+    attendees: attendeesWithCerts,
+    feedback,
+    additional_trainings: additionalTrainings,
+  });
 });
 
 // Every field is required to create a session (Keeley's call) - client, training type,
 // trainer name, date, location, duration, and outline all need to be on file up front.
-// Trainer Employee ID is the one exception: it's required when picking an existing trainer
-// (auto-filled, read-only on the client) but skipped entirely for a brand-new trainer typed
-// in on the spot - trainer_needs_review flags that session instead of blocking creation on it.
+// Trainer Employee ID is the one exception: it's always optional, and a missing one is no
+// longer flagged for review (Keeley's request, 2026-09-17) - it can still be added to the
+// trainer's own profile later if it becomes available.
 //
 // Open to the plain 'user' role too (Keeley's request, 2026-09-16) - see the matching note on
 // server/routes/clients.js's POST /.
 router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
-    session_date, outline, location, duration, language = 'english',
+    session_date, outline, location, duration, language = 'english', additional_trainings = [],
   } = req.body || {};
   if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
       error: 'client_name, training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
+  }
+  if (!Array.isArray(additional_trainings) || additional_trainings.some((t) => !t?.training_type_label)) {
+    return res.status(400).json({ error: 'additional_trainings must be a list of {master_training_id, training_type_label}' });
   }
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
@@ -153,14 +167,13 @@ router.post('/', async (req, res) => {
   // trainer_phone are kept as-typed on the session too, a frozen display fallback (matches
   // how client_name works above).
   const trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_name, trainer_phone);
-  const trainerNeedsReview = await resolveTrainerNeedsReview(trainer_phone, trainerEmployeeId);
   const { training_type_label_es, outline_es, warning } = await translateSessionFields(training_type_label, outline, language);
   const session_id = uuidv4();
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, trainer_needs_review)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
@@ -178,13 +191,27 @@ router.post('/', async (req, res) => {
       language,
       training_type_label_es,
       outline_es,
-      trainerNeedsReview ? 1 : 0,
     ]
   );
+  // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
+  // - each just needs its own row; no translation/outline of its own since they all share the
+  // one session-level outline typed above.
+  for (let i = 0; i < additional_trainings.length; i += 1) {
+    const t = additional_trainings[i];
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      `INSERT INTO session_additional_trainings (id, session_id, master_training_id, training_type_label, display_order)
+       VALUES (?, ?, ?, ?, ?)`,
+      [uuidv4(), session_id, t.master_training_id || null, t.training_type_label, i]
+    );
+  }
+
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
   logActivity({
     actor: req.user, action: 'session_created', entityType: 'training_session', entityId: session_id,
-    entityLabel: `${training_type_label} · ${client_name}`, req,
+    entityLabel: `${training_type_label} · ${client_name}`,
+    details: additional_trainings.length ? `+${additional_trainings.length} additional training(s)` : undefined,
+    req,
   });
   res.status(201).json({ ...session, public_url: publicSignInUrl(qr_token), translation_warning: warning });
 });
@@ -222,10 +249,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (req.body.trainer_name || req.body.trainer_phone) {
     trainerEmployeeId = await repo.findOrCreateTrainerEmployee(merged.trainer_name, merged.trainer_phone);
   }
-  // Same derived-not-trusted logic as creation: this self-clears the moment the trainer is
-  // properly on file, whether that's an Employee ID typed into this save or an existing,
-  // already-identified trainer profile resolved by name.
-  const trainerNeedsReview = await resolveTrainerNeedsReview(merged.trainer_phone, trainerEmployeeId);
 
   // Re-translates whenever Spanish/Both is in effect, since the name/outline/language could
   // each have just changed and there's no cheap way to tell from here - this only runs when an
@@ -239,7 +262,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, trainer_needs_review=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?
      WHERE session_id=?`,
     [
       clientId,
@@ -255,7 +278,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
       merged.language,
       training_type_label_es,
       outline_es,
-      trainerNeedsReview ? 1 : 0,
       req.params.id,
     ]
   );
@@ -311,6 +333,9 @@ router.get('/:id/qrcode.png', async (req, res) => {
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Sign-In QR', req,
   });
   res.set('Content-Type', 'image/png');
+  // 'inline' (not 'attachment') so the <img> preview on SessionDetail.jsx still renders normally -
+  // only the filename suggestion changes, which is all the <a download> link there needs.
+  res.set('Content-Disposition', `inline; filename="${buildQrFilename(session, 'Sign-In QR')}"`);
   res.send(buf);
 });
 
@@ -323,6 +348,7 @@ router.get('/:id/feedback-qrcode.png', async (req, res) => {
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Feedback QR', req,
   });
   res.set('Content-Type', 'image/png');
+  res.set('Content-Disposition', `inline; filename="${buildQrFilename(session, 'Feedback QR')}"`);
   res.send(buf);
 });
 
@@ -357,26 +383,79 @@ router.get('/:sessionId/attendees/:attendeeId/certificate.pdf', async (req, res)
   res.download(attendee.certificate_path, buildCertificateFilename(session, attendee));
 });
 
-// Every attendee's certificate in one ZIP, named the same way as the individual download
-// (Keeley's request, 2026-09-16) - so a whole session's certificates can be handed out without
-// downloading and renaming each one separately. Only ever includes attendees who actually have
-// a certificate on file (skips anyone whose generation failed, rather than erroring the whole
-// download over one bad row).
+// Same as the primary certificate download above, for one *additional* training on a
+// multi-training session (server/migrations/045_multi_training_sessions.sql).
+router.get('/:sessionId/attendees/:attendeeId/additional-certificates/:certId.pdf', async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const cert = await dbGet(
+    `SELECT ac.*, sa.trainee_name, sat.training_type_label
+     FROM attendee_certificates ac
+     JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id
+     JOIN session_additional_trainings sat ON sat.id = ac.session_additional_training_id
+     WHERE ac.id = ? AND ac.attendee_id = ? AND sa.session_id = ?`,
+    [req.params.certId, req.params.attendeeId, req.params.sessionId]
+  );
+  if (!cert || !cert.certificate_path) return res.status(404).json({ error: 'Certificate not available yet' });
+  logActivity({
+    actor: req.user, action: 'certificate_downloaded', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${cert.training_type_label} · ${session.client_name}`, details: cert.trainee_name, req,
+  });
+  const trainingSession = { ...session, training_type_label: cert.training_type_label };
+  res.download(cert.certificate_path, buildCertificateFilename(trainingSession, cert));
+});
+
+// One ZIP per training (Keeley's request, 2026-09-17: a session covering 2+ trainings hands out
+// a separate batch per training rather than one zip mixing certificate types) - `?training=`
+// selects which: 'primary' for the session's own training, or a session_additional_trainings id
+// for one of the extras. A plain single-training session (no additional trainings) can omit the
+// query param entirely and gets the one training it has, same as the old single-zip behavior.
+// Only ever includes attendees who actually have a certificate on file (skips anyone whose
+// generation failed, rather than erroring the whole download over one bad row).
 router.get('/:sessionId/certificates.zip', async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  const attendees = (await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]))
-    .filter((a) => a.certificate_path && fs.existsSync(a.certificate_path));
-  if (attendees.length === 0) {
+
+  const additionalTrainings = await dbAll(
+    'SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
+    [session.session_id]
+  );
+  const trainingKey = req.query.training || (additionalTrainings.length === 0 ? 'primary' : null);
+  if (!trainingKey) {
+    return res.status(400).json({ error: 'This session covers multiple trainings - choose which one to download.' });
+  }
+
+  let trainingLabel;
+  let files;
+  if (trainingKey === 'primary') {
+    trainingLabel = session.training_type_label;
+    const attendees = (await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]))
+      .filter((a) => a.certificate_path && fs.existsSync(a.certificate_path));
+    files = attendees.map((a) => ({ path: a.certificate_path, name: buildCertificateFilename(session, a) }));
+  } else {
+    const training = additionalTrainings.find((t) => t.id === trainingKey);
+    if (!training) return res.status(404).json({ error: 'Training not found on this session.' });
+    trainingLabel = training.training_type_label;
+    const trainingSession = { ...session, training_type_label: training.training_type_label };
+    const rows = (await dbAll(
+      `SELECT ac.*, sa.trainee_name FROM attendee_certificates ac
+       JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id
+       WHERE ac.session_additional_training_id = ? ORDER BY sa.signed_at`,
+      [training.id]
+    )).filter((r) => r.certificate_path && fs.existsSync(r.certificate_path));
+    files = rows.map((r) => ({ path: r.certificate_path, name: buildCertificateFilename(trainingSession, r) }));
+  }
+
+  if (files.length === 0) {
     return res.status(404).json({ error: 'No certificates available yet - close the session first.' });
   }
 
   logActivity({
     actor: req.user, action: 'certificates_zip_downloaded', entityType: 'training_session', entityId: session.session_id,
-    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `${attendees.length} certificate(s)`, req,
+    entityLabel: `${trainingLabel} · ${session.client_name}`, details: `${files.length} certificate(s)`, req,
   });
 
-  const zipName = ['certificates', stripTrainingIdPrefix(session.training_type_label), session.client_name, session.session_date]
+  const zipName = ['certificates', stripTrainingIdPrefix(trainingLabel), session.client_name, session.session_date]
     .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
     .join('_');
   res.setHeader('Content-Type', 'application/zip');
@@ -390,8 +469,8 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     res.end();
   });
   archive.pipe(res);
-  for (const attendee of attendees) {
-    archive.file(attendee.certificate_path, { name: buildCertificateFilename(session, attendee) });
+  for (const f of files) {
+    archive.file(f.path, { name: f.name });
   }
   await archive.finalize();
 });

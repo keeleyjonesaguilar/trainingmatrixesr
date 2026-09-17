@@ -4,7 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 
 const REQUIREMENT_OPTIONS = ['Required', 'Not Required', 'Optional', 'Not Applicable'];
-const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
+const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 
 // At-a-glance summary (Keeley's request) - links out to the existing Dashboard drilldown/Action
 // Required page rather than re-rendering their numbers here, so this stays the one place those

@@ -145,12 +145,16 @@ export default function Import() {
         resolve manually before anything is saved. Nothing is ever guessed silently.
       </p>
       <p className="page-subtitle">
-        Two shapes are supported, auto-detected from the header row: one row per <strong>employee</strong> (a
-        "Client"/"Employee Name" set of columns, then one column per training holding that training's completion
-        date), or one row per <strong>training completion</strong> ("Client", "Employee Full Name", "Name" for the
-        training, "Activation"/"Expiration" dates) - the shape a certification tracker or another system's export
-        typically comes out in. A long-format row's own Expiration date is kept exactly as given, not recomputed
-        from the Master Catalog.
+        Two shapes are supported, auto-detected from the header row. The usual one is one row per{' '}
+        <strong>training completion</strong>: <strong>Employee</strong>, <strong>Certification</strong>, and{' '}
+        <strong>Activation</strong> (the completion date) are required. <strong>Client</strong> and{' '}
+        <strong>Training ID</strong> are best-effort - matched automatically when present, but a missing or
+        unrecognized value never blocks the import. A Training ID that names an exact catalog entry always wins
+        over matching the Certification text, so it's the most reliable way to guarantee the right training when
+        one's available. An optional Expiration column is kept exactly as given, not recomputed from the Master
+        Catalog. The other shape is one row per <strong>employee</strong> (a "Client"/"Employee Name" set of
+        columns, then one column per training holding that training's completion date) - less common, but still
+        supported for a sheet already built that way.
       </p>
       {error && <div className="error-banner">{error}</div>}
 
@@ -174,7 +178,7 @@ export default function Import() {
           </div>
           <p className="page-subtitle">
             One row per employee (see below) or one row per training completion - the format is auto-detected. {' '}
-            <a href={api.importTemplateUrl}>Download a blank one-row-per-employee template</a> to start from.
+            <a href={api.importTemplateUrl}>Download a blank template</a> (Employee / Client / Certification / Activation / Training ID) to start from.
           </p>
         </div>
       )}

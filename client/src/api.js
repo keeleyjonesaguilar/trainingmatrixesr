@@ -55,6 +55,7 @@ export const api = {
   deleteUser: (userId) => request(`/users/${userId}`, { method: 'DELETE' }),
   adminDisableMfa: (userId) => request(`/users/${userId}/mfa`, { method: 'DELETE' }),
   adminUpdateUserEmail: (userId, email) => request(`/users/${userId}/email`, { method: 'PUT', body: JSON.stringify({ email }) }),
+  adminUpdateUserFullName: (userId, full_name) => request(`/users/${userId}/full-name`, { method: 'PUT', body: JSON.stringify({ full_name }) }),
 
   // Security / login audit (Super Admin only screen)
   getLoginAttempts: (params = {}) => {
@@ -92,7 +93,6 @@ export const api = {
 
   // Master Trainings
   listMasterTrainings: (activeOnly = false) => request(`/master-trainings${activeOnly ? '?activeOnly=true' : ''}`),
-  getMasterTrainingsSummary: () => request('/master-trainings/summary'),
   getTrainingDetail: (id, clientId) => request(`/master-trainings/${id}/detail${clientId ? `?client_id=${clientId}` : ''}`),
   createMasterTraining: (data) => request('/master-trainings', { method: 'POST', body: JSON.stringify(data) }),
   updateMasterTraining: (id, data) => request(`/master-trainings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -214,4 +214,9 @@ export const api = {
   updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
   getTrainerClosePinSettings: () => request('/trainer-close-pin-settings'),
   updateTrainerClosePinSettings: (data) => request('/trainer-close-pin-settings', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Notification bell (top bar) - broadcast to every account, e.g. when a training session closes.
+  listNotifications: () => request('/notifications'),
+  markNotificationRead: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
+  markAllNotificationsRead: () => request('/notifications/mark-all-read', { method: 'POST' }),
 };

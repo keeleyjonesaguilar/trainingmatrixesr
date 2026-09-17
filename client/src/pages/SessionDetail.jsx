@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
+import { formatEasternDateTime } from '../lib/dates';
+import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
@@ -225,21 +227,18 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         </div>
         <div className="field">
           <label>Training Type</label>
-          <select
+          <TrainingSearchSelect
+            trainings={trainings}
             value={form.master_training_id}
-            onChange={(e) => {
-              const t = trainings.find((x) => x.training_id === e.target.value);
+            onChange={(trainingId) => {
+              const t = trainings.find((x) => x.training_id === trainingId);
               setForm({
                 ...form,
-                master_training_id: e.target.value,
+                master_training_id: trainingId,
                 training_type_label: t ? `${t.training_id} - ${t.training_name}` : form.training_type_label,
               });
             }}
-            required
-          >
-            <option value="">Select a training…</option>
-            {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
-          </select>
+          />
         </div>
         <div className="field">
           <label>Trainer First Name</label>
@@ -377,6 +376,9 @@ export default function SessionDetail() {
       </Link>
       <h1 className="page-title" style={{ marginTop: 8 }}>
         {session.training_type_label}
+        {session.additional_trainings?.map((t) => (
+          <span key={t.id}> + {t.training_type_label}</span>
+        ))}
       </h1>
       <p className="page-subtitle">
         {session.client_name} · {session.session_date} · Trainer: {session.trainer_signed_name || session.trainer_name}
@@ -444,16 +446,28 @@ export default function SessionDetail() {
                 >
                   Export Roster (CSV)
                 </a>
-                {/* One ZIP, every attendee's certificate already named "Training Title_Client_
-                    Trainer_Date_Trainee Name.pdf" (Keeley's request, 2026-09-16) - nothing to
-                    separate or rename by hand before handing them out. */}
+                {/* One ZIP per training (Keeley's request, 2026-09-17) - a session covering just
+                    one training (the normal case) gets a single button; 2+ trainings taught
+                    together get one button each, since certificates are never mixed types in
+                    the same ZIP. Every certificate inside is already named "Training Title_
+                    Client_Trainer_Date_Trainee Name.pdf" - nothing to rename by hand. */}
                 <a
-                  href={`/api/training-sessions/${id}/certificates.zip`}
+                  href={`/api/training-sessions/${id}/certificates.zip?training=primary`}
                   className="btn btn-secondary btn-sm"
                   style={{ justifyContent: 'center' }}
                 >
-                  Download All Certificates (ZIP)
+                  Download {session.additional_trainings?.length ? `"${session.training_type_label}"` : 'All'} Certificates (ZIP)
                 </a>
+                {session.additional_trainings?.map((t) => (
+                  <a
+                    key={t.id}
+                    href={`/api/training-sessions/${id}/certificates.zip?training=${t.id}`}
+                    className="btn btn-secondary btn-sm"
+                    style={{ justifyContent: 'center' }}
+                  >
+                    Download &quot;{t.training_type_label}&quot; Certificates (ZIP)
+                  </a>
+                ))}
               </div>
             )}
           </div>
@@ -539,14 +553,31 @@ export default function SessionDetail() {
                       <td>{a.employee_id ? <Link to={`/employees/${a.employee_id}`}>{a.trainee_name}</Link> : a.trainee_name}</td>
                       <td>{a.trainee_phone || '—'}</td>
                       <td>{a.trainee_email || '—'}</td>
-                      <td>{new Date(a.signed_at).toLocaleString()}</td>
+                      <td>{formatEasternDateTime(a.signed_at)}</td>
                       {session.status === 'closed' && (
                         <td>
-                          {a.certificate_path ? (
-                            <a href={`/api/training-sessions/${id}/attendees/${a.attendee_id}/certificate.pdf`}>Download</a>
-                          ) : (
-                            '—'
-                          )}
+                          {/* One link per training when the session covers more than one
+                              (Keeley's request, 2026-09-17) - each attendee gets a separate
+                              certificate per training even though they only signed in once. */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {a.certificate_path && (
+                              <a href={`/api/training-sessions/${id}/attendees/${a.attendee_id}/certificate.pdf`}>
+                                {session.additional_trainings?.length ? session.training_type_label : 'Download'}
+                              </a>
+                            )}
+                            {a.additional_certificates?.map((c) => {
+                              const training = session.additional_trainings?.find((t) => t.id === c.session_additional_training_id);
+                              return c.certificate_path ? (
+                                <a
+                                  key={c.id}
+                                  href={`/api/training-sessions/${id}/attendees/${a.attendee_id}/additional-certificates/${c.id}.pdf`}
+                                >
+                                  {training?.training_type_label || 'Download'}
+                                </a>
+                              ) : null;
+                            })}
+                            {!a.certificate_path && !a.additional_certificates?.some((c) => c.certificate_path) && '—'}
+                          </div>
                         </td>
                       )}
                       {session.status === 'closed' && (
@@ -635,7 +666,7 @@ export default function SessionDetail() {
               <div key={f.feedback_id} className="card" style={{ background: 'var(--color-bg, #f7f7f7)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
                   <span>Response {i + 1}</span>
-                  <span>{new Date(f.submitted_at).toLocaleString()}</span>
+                  <span>{formatEasternDateTime(f.submitted_at)}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, fontSize: 13 }}>
                   <div><strong>Training Effectiveness:</strong> {'★'.repeat(f.effectiveness_rating)}{'☆'.repeat(5 - f.effectiveness_rating)}</div>

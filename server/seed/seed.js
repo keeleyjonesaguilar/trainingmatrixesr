@@ -11,16 +11,15 @@ async function runSeed() {
   await withTransaction(async () => {
     for (const t of MASTER_TRAININGS) {
       await dbRun(
-        `INSERT INTO master_trainings (training_id, training_name, category, training_type, default_expiration, active, display_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO master_trainings (training_id, training_name, training_type, default_expiration, active, display_order)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(training_id) DO UPDATE SET
            training_name=excluded.training_name,
-           category=excluded.category,
            training_type=excluded.training_type,
            default_expiration=excluded.default_expiration,
            active=excluded.active,
            display_order=excluded.display_order`,
-        [t.training_id, t.training_name, t.category, t.training_type, t.default_expiration, t.active, t.display_order]
+        [t.training_id, t.training_name, t.training_type, t.default_expiration, t.active, t.display_order]
       );
     }
     for (const [aliasText, trainingId] of TRAINING_ALIASES) {

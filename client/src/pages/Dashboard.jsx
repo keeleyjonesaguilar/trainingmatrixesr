@@ -114,37 +114,27 @@ function UpcomingTrainingsBox({ clientId }) {
 function DuplicatesSummaryBox() {
   const [employeeCount, setEmployeeCount] = useState(0);
   const [clientCount, setClientCount] = useState(0);
-  const [trainerInfoCount, setTrainerInfoCount] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
     api.getPossibleDuplicateEmployees().then((clusters) => setEmployeeCount(clusters.length)).catch(() => {});
     api.getPossibleDuplicateClients().then((clusters) => setClientCount(clusters.length)).catch(() => {});
-    api.listTrainers().then((rows) => {
-      setTrainerInfoCount(rows.filter((t) => !t.employee_number || !t.job_title).length);
-    }).catch(() => {});
   }, []);
 
-  if (employeeCount === 0 && clientCount === 0 && trainerInfoCount === 0) return null;
+  if (employeeCount === 0 && clientCount === 0) return null;
 
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       {employeeCount > 0 && (
-        <div style={{ cursor: 'pointer', marginBottom: 10 }} onClick={() => navigate('/matrix')}>
+        <div style={{ cursor: 'pointer', marginBottom: clientCount > 0 ? 10 : 0 }} onClick={() => navigate('/matrix')}>
           <strong>{employeeCount} possible duplicate employee{employeeCount === 1 ? '' : 's'} found</strong>
           <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and merge them on the Employees page.</p>
         </div>
       )}
       {clientCount > 0 && (
-        <div style={{ cursor: 'pointer', marginBottom: trainerInfoCount > 0 ? 10 : 0 }} onClick={() => navigate('/clients')}>
+        <div style={{ cursor: 'pointer' }} onClick={() => navigate('/clients')}>
           <strong>{clientCount} possible duplicate client{clientCount === 1 ? '' : 's'} found</strong>
           <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and merge them on the Clients page.</p>
-        </div>
-      )}
-      {trainerInfoCount > 0 && (
-        <div style={{ cursor: 'pointer' }} onClick={() => navigate('/trainers')}>
-          <strong>{trainerInfoCount} trainer{trainerInfoCount === 1 ? '' : 's'} missing phone/job info</strong>
-          <p className="page-subtitle" style={{ margin: '2px 0 0' }}>Review and fill them in on the Trainers page.</p>
         </div>
       )}
     </div>

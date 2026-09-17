@@ -33,7 +33,7 @@ function issueSessionCookie(req, res, user, rememberMe = true) {
     };
     if (rememberMe) cookieOptions.maxAge = SESSION_MS;
     res.cookie(COOKIE_NAME, token, cookieOptions);
-    res.json({ ok: true, username: user.username, role: user.role });
+    res.json({ ok: true, username: user.username, role: user.role, full_name: user.full_name });
   });
 }
 
@@ -120,7 +120,7 @@ router.post('/logout', async (req, res) => {
 
 router.get('/me', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not logged in.' });
-  res.json({ username: req.user.username, role: req.user.role });
+  res.json({ username: req.user.username, role: req.user.role, full_name: req.user.full_name });
 });
 
 // --- Self-service MFA enrollment (any logged-in user, for their own account only) ---

@@ -21,7 +21,6 @@ router.get('/client/:clientId', async (req, res) => {
     return {
       training_id: mt.training_id,
       master_training_name: mt.training_name,
-      category: mt.category,
       master_default_expiration: mt.default_expiration,
       // No override row yet -> Not Required by default (Keeley's call, 2026-08-18): a client
       // starts with nothing required until an admin explicitly flips a training to Required.

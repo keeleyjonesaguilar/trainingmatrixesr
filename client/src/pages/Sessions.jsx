@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
@@ -32,6 +33,12 @@ export default function Sessions() {
   const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
   const [error, setError] = useState('');
   const navigate = useNavigate();
+
+  // Extra trainings taught in the same session (Keeley's request, 2026-09-17: e.g. Fall
+  // Protection + CPR done together) - one sign-in code, one roster, but a separate certificate
+  // per attendee per training. Kept out of `form` since it's a list of ids, not a form field the
+  // submit-validation loop needs to touch.
+  const [additionalTrainingIds, setAdditionalTrainingIds] = useState([]);
 
   const [form, setForm] = useState({
     client_name: '',
@@ -78,12 +85,17 @@ export default function Sessions() {
     }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
     const training_type_label = `${training.training_id} - ${training.training_name}`;
+    const additional_trainings = additionalTrainingIds.map((tid) => {
+      const t = trainings.find((x) => x.training_id === tid);
+      return { master_training_id: tid, training_type_label: `${t.training_id} - ${t.training_name}` };
+    });
     setCreating(true);
     try {
       const session = await api.createTrainingSession({
         client_name: form.client_name,
         master_training_id: form.master_training_id,
         training_type_label,
+        additional_trainings,
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -165,18 +177,23 @@ export default function Sessions() {
                 </div>
                 <div className="field">
                   <label>Training Type</label>
-                  <select
+                  <TrainingSearchSelect
+                    trainings={trainings}
                     value={form.master_training_id}
-                    onChange={(e) => {
-                      const t = trainings.find((x) => x.training_id === e.target.value);
+                    onChange={(trainingId) => {
+                      const t = trainings.find((x) => x.training_id === trainingId);
                       // Duration always resets to the newly picked type's own default (Keeley's
                       // call) - unlike outline, it does NOT carry a previous type's override
                       // forward, so switching types re-collapses the field back to plain text
                       // and requires clicking "Override default duration" again on purpose.
                       setDurationOverride(false);
+                      // Guards against the newly picked primary training staying stuck in the
+                      // "Additional Trainings" list too (it's filtered out of that picker's
+                      // options, but a stale already-selected value wouldn't otherwise clear).
+                      setAdditionalTrainingIds((ids) => ids.filter((id) => id !== trainingId));
                       setForm((f) => ({
                         ...f,
-                        master_training_id: e.target.value,
+                        master_training_id: trainingId,
                         // Seeds the outline from the catalog's current wording (Keeley's
                         // request) - only while the admin hasn't typed their own yet, so
                         // switching training types before touching that field keeps it in
@@ -188,15 +205,19 @@ export default function Sessions() {
                         duration: t?.default_duration || '',
                       }));
                     }}
-                    required
-                  >
-                    <option value="">Select a training…</option>
-                    {trainings.map((t) => (
-                      <option key={t.training_id} value={t.training_id}>
-                        {t.training_id} - {t.training_name}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                </div>
+                <div className="field">
+                  <label>Additional Trainings (optional)</label>
+                  <TrainingMultiSearchSelect
+                    trainings={trainings}
+                    value={additionalTrainingIds}
+                    onChange={setAdditionalTrainingIds}
+                    excludeIds={form.master_training_id ? [form.master_training_id] : []}
+                  />
+                  <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                    Everyone signs in once, but gets a separate certificate for each training selected here plus the one above.
+                  </p>
                 </div>
                 <div className="field">
                   <label>Trainer</label>
@@ -369,7 +390,6 @@ export default function Sessions() {
               <th>Trainer</th>
               <th>Attendees</th>
               <th>Status</th>
-              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -382,11 +402,6 @@ export default function Sessions() {
                 <td>{s.attendee_count}</td>
                 <td>
                   <StatusBadge status={s.status} />
-                </td>
-                <td>
-                  {!!s.trainer_needs_review && (
-                    <span className="badge badge-pendingreview" title="Trainer has no Employee ID on file">Needs Review</span>
-                  )}
                 </td>
               </tr>
             ))}

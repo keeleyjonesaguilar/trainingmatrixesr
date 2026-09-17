@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useIsAdmin, useIsSuperAdmin } from '../authContext.jsx';
+import { formatEasternDate } from '../lib/dates';
 
 const ROLE_LABELS = { user: 'User', admin: 'Admin', super_admin: 'Super Admin' };
 
-// A pending (not-yet-claimed) account's real "name" to a human is its email - the username is
-// just an unseen placeholder until the invite is claimed.
-const displayName = (u) => (u.pending ? u.email || 'this pending invite' : u.username);
+// A username is a login handle, not a name - full_name is the real human identifier once it's
+// on file. A pending (not-yet-claimed) account without one yet falls back to its email; only a
+// legacy account with neither falls all the way back to its username.
+const displayName = (u) => u.full_name || (u.pending ? u.email : u.username) || 'this account';
 
 export default function AdminUsers({ currentUsername }) {
   const isAdmin = useIsAdmin();
   const isSuperAdmin = useIsSuperAdmin();
   const [users, setUsers] = useState([]);
   const [error, setError] = useState('');
+  const [newFullName, setNewFullName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('user');
   const [creating, setCreating] = useState(false);
@@ -22,6 +25,8 @@ export default function AdminUsers({ currentUsername }) {
   const [resetPassword, setResetPassword] = useState('');
   const [emailTarget, setEmailTarget] = useState(null);
   const [emailInput, setEmailInput] = useState('');
+  const [fullNameTarget, setFullNameTarget] = useState(null);
+  const [fullNameInput, setFullNameInput] = useState('');
 
   const load = () => api.listUsers().then(setUsers).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -32,7 +37,8 @@ export default function AdminUsers({ currentUsername }) {
     setNotice('');
     setCreating(true);
     try {
-      const created = await api.createUser({ email: newEmail.trim(), role: newRole });
+      const created = await api.createUser({ full_name: newFullName.trim(), email: newEmail.trim(), role: newRole });
+      setNewFullName('');
       setNewEmail('');
       setNewRole('user');
       setNotice(
@@ -69,6 +75,19 @@ export default function AdminUsers({ currentUsername }) {
       await api.adminUpdateUserEmail(emailTarget.user_id, emailInput.trim());
       setEmailTarget(null);
       setEmailInput('');
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const submitFullName = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await api.adminUpdateUserFullName(fullNameTarget.user_id, fullNameInput.trim());
+      setFullNameTarget(null);
+      setFullNameInput('');
       await load();
     } catch (err) {
       setError(err.message);
@@ -139,13 +158,14 @@ export default function AdminUsers({ currentUsername }) {
             They&apos;ll get an email with a link to set their own password - nothing to make up or share yourself.
           </p>
           <form onSubmit={addUser} className="toolbar">
+            <input type="text" placeholder="Full Name" value={newFullName} onChange={(e) => setNewFullName(e.target.value)} />
             <input type="email" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value)}>
               <option value="user">User (view only)</option>
               <option value="admin">Admin (full access)</option>
               {isSuperAdmin && <option value="super_admin">Super Admin (full access + Security)</option>}
             </select>
-            <button type="submit" disabled={creating || !newEmail}>{creating ? 'Adding...' : 'Add User & Send Invite'}</button>
+            <button type="submit" disabled={creating || !newFullName || !newEmail}>{creating ? 'Adding...' : 'Add User & Send Invite'}</button>
           </form>
         </div>
       )}
@@ -155,6 +175,7 @@ export default function AdminUsers({ currentUsername }) {
         <table>
           <thead>
             <tr>
+              <th>Full Name</th>
               <th>Username</th>
               <th>Email</th>
               <th>Role</th>
@@ -166,6 +187,17 @@ export default function AdminUsers({ currentUsername }) {
           <tbody>
             {users.map((u) => (
               <tr key={u.user_id}>
+                <td>
+                  {u.full_name || <span className="badge badge-notapplicable">None</span>}
+                  {isAdmin && (u.role !== 'super_admin' || isSuperAdmin) && (
+                    <>
+                      {' '}
+                      <button className="link-button" onClick={() => { setFullNameTarget(u); setFullNameInput(u.full_name || ''); }}>
+                        {u.full_name ? 'Change' : 'Add'}
+                      </button>
+                    </>
+                  )}
+                </td>
                 <td>
                   {u.pending ? <span className="badge badge-notapplicable">Pending invite</span> : u.username}
                   {u.username === currentUsername ? ' (you)' : ''}
@@ -198,7 +230,7 @@ export default function AdminUsers({ currentUsername }) {
                 <td>
                   <span className={`badge ${u.mfa_enabled ? 'badge-current' : 'badge-notapplicable'}`}>{u.mfa_enabled ? 'On' : 'Off'}</span>
                 </td>
-                <td>{new Date(u.created_at).toLocaleDateString()}</td>
+                <td>{formatEasternDate(u.created_at)}</td>
                 {isAdmin && (
                   <td>
                     {u.pending && (
@@ -265,6 +297,17 @@ export default function AdminUsers({ currentUsername }) {
             <input type="email" placeholder="you@example.com" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} autoFocus />
             <button type="submit" disabled={!emailInput}>Save Email</button>
             <button type="button" className="secondary" onClick={() => { setEmailTarget(null); setEmailInput(''); }}>Cancel</button>
+          </form>
+        </div>
+      )}
+
+      {isAdmin && fullNameTarget && (
+        <div className="card">
+          <h2>Full Name for {displayName(fullNameTarget)}</h2>
+          <form onSubmit={submitFullName} className="toolbar">
+            <input type="text" placeholder="Jane Smith" value={fullNameInput} onChange={(e) => setFullNameInput(e.target.value)} autoFocus />
+            <button type="submit" disabled={!fullNameInput}>Save Full Name</button>
+            <button type="button" className="secondary" onClick={() => { setFullNameTarget(null); setFullNameInput(''); }}>Cancel</button>
           </form>
         </div>
       )}

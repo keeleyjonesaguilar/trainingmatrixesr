@@ -11,11 +11,14 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// Pinned to Eastern (Keeley's request, 2026-09-17) rather than the viewer's own machine
+// timezone, so everyone sees the same business-standard time regardless of where they're
+// logging in from - matches the same fix in server/lib/pdfGen.js for certificates/rosters.
 function formatDateTime(d) {
   if (!d) return '';
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return d;
-  return dt.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return dt.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 }
 
 // Plain-English "what actually needs to happen" per status - this page exists specifically to

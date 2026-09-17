@@ -142,6 +142,7 @@ async function start() {
   app.use('/api/feedback-settings', requireAuth, require('./routes/feedbackSettings'));
   app.use('/api/trainer-close-pin-settings', requireAuth, require('./routes/trainerClosePinSettings'));
   app.use('/api/audit', requireAuth, requireSuperAdmin, require('./routes/audit'));
+  app.use('/api/notifications', requireAuth, require('./routes/notifications'));
 
   // Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
   // login as everything else above. /api/public is the trainee-facing side and is deliberately

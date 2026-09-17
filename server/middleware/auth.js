@@ -31,7 +31,7 @@ async function attachUser(req, res, next) {
     const secret = await getOrCreateSessionSecret();
     const payload = verifyToken(token, secret);
     if (payload && payload.sub) {
-      const user = await dbGet('SELECT user_id, username, role FROM app_users WHERE user_id = ?', [payload.sub]);
+      const user = await dbGet('SELECT user_id, username, role, full_name FROM app_users WHERE user_id = ?', [payload.sub]);
       if (user) req.user = user;
     }
   }

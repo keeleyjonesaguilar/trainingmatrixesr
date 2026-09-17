@@ -112,4 +112,63 @@ async function processAttendee(session, attendee, certificatePath) {
   }
 }
 
-module.exports = { findOrCreateEmployee, processAttendee };
+// Same linkage as processAttendee above, for one *additional* training on a multi-training
+// session (server/migrations/045_multi_training_sessions.sql) - writes to attendee_certificates
+// instead of session_attendees since an attendee can have several of these, one per extra
+// training, alongside their one primary-training record.
+async function processAttendeeAdditionalTraining(session, attendee, additionalTraining, certificatePath, certificateFilename) {
+  const id = uuidv4();
+  await dbRun(
+    `INSERT INTO attendee_certificates (id, attendee_id, session_additional_training_id, certificate_path, certificate_filename)
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, attendee.attendee_id, additionalTraining.id, certificatePath || null, certificateFilename || null]
+  );
+
+  try {
+    const employeeId = await findOrCreateEmployee(session.client_id, attendee);
+
+    if (!additionalTraining.master_training_id) {
+      await dbRun(
+        `UPDATE attendee_certificates
+         SET employee_id = ?, processing_status = 'no_catalog_match', processing_error = ?
+         WHERE id = ?`,
+        [
+          employeeId,
+          'This training used a custom label with no matching Master Training - no training record was created, but the employee is on file.',
+          id,
+        ]
+      );
+      return;
+    }
+
+    const record = await repo.saveTrainingRecord({
+      client_id: session.client_id,
+      employee_id: employeeId,
+      training_id: additionalTraining.master_training_id,
+      completion_date: session.session_date,
+      source: 'Training Sign-In',
+      notes: `Trainer: ${session.trainer_signed_name || session.trainer_name}. Session ID: ${session.session_id}.`,
+    });
+
+    if (certificatePath) {
+      await repo.attachCertificateFile(record.record_id, {
+        filename: certificateFilename,
+        filePath: certificatePath,
+      });
+    }
+
+    await dbRun(
+      `UPDATE attendee_certificates
+       SET employee_id = ?, training_record_id = ?, processing_status = 'linked', processing_error = NULL
+       WHERE id = ?`,
+      [employeeId, record.record_id, id]
+    );
+  } catch (err) {
+    await dbRun(
+      `UPDATE attendee_certificates SET processing_status = 'failed', processing_error = ? WHERE id = ?`,
+      [String(err.message || err).slice(0, 500), id]
+    );
+  }
+}
+
+module.exports = { findOrCreateEmployee, processAttendee, processAttendeeAdditionalTraining };

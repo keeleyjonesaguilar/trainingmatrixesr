@@ -4,12 +4,12 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 
-const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '5 Years'];
+const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
 const SESSIONS_PER_PAGE = 5;
 
 // Settings panel (moved from the old Master Trainings page's inline row-editor): the same
-// Name/Category/Type/Default Expiration/Active fields, just living on the training's own page.
+// Name/Type/Default Expiration/Active fields, just living on the training's own page.
 function SettingsPanel({ training, isAdmin, onSaved, onDeleted }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(training);
@@ -53,7 +53,7 @@ function SettingsPanel({ training, isAdmin, onSaved, onDeleted }) {
         <h2>Settings</h2>
         {deleteError && <div className="error-banner">{deleteError}</div>}
         <p className="page-subtitle" style={{ margin: 0 }}>
-          {training.category} · {training.training_type} · Default Expiration: {training.default_expiration}
+          {training.training_type} · Default Expiration: {training.default_expiration}
           {training.default_duration ? ` · Default Duration: ${training.default_duration}` : ''} · {training.active ? 'Active' : 'Inactive'}
         </p>
         {isAdmin && <button type="button" className="link-button" onClick={() => setEditing(true)}>Edit Settings</button>}
@@ -77,10 +77,6 @@ function SettingsPanel({ training, isAdmin, onSaved, onDeleted }) {
         <div className="field-row">
           <label>Training Name</label>
           <input type="text" value={form.training_name} onChange={(e) => setForm({ ...form, training_name: e.target.value })} />
-        </div>
-        <div className="field-row">
-          <label>Category</label>
-          <input type="text" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
         </div>
         <div className="field-row">
           <label>Training Type</label>

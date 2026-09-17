@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { formatEasternDate, formatEasternDateTime } from '../lib/dates';
 
 const PAGE_SIZE = 25;
 
@@ -247,7 +248,7 @@ export default function Security() {
                       <td><span className="badge badge-current">{u.role === 'super_admin' ? 'Super Admin' : 'Admin'}</span></td>
                       <td>{u.email || <span className="badge badge-notapplicable">None</span>}</td>
                       <td><span className={`badge ${u.mfa_enabled ? 'badge-current' : 'badge-expiringsoon'}`}>{u.mfa_enabled ? 'On' : 'Off'}</span></td>
-                      <td>{new Date(u.created_at).toLocaleDateString()}</td>
+                      <td>{formatEasternDate(u.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -316,7 +317,7 @@ export default function Security() {
             <tbody>
               {data?.attempts.map((row) => (
                 <tr key={row.attempt_id}>
-                  <td>{new Date(row.attempted_at).toLocaleString()}</td>
+                  <td>{formatEasternDateTime(row.attempted_at)}</td>
                   <td>{row.username_attempted}</td>
                   <td><span className={`badge ${outcomeBadgeClass(row)}`}>{outcomeLabel(row)}</span></td>
                   <td>{row.ip_address || '—'}</td>
@@ -367,7 +368,7 @@ export default function Security() {
             <tbody>
               {changes?.changes.map((row) => (
                 <tr key={row.action_id}>
-                  <td>{new Date(row.created_at).toLocaleString()}</td>
+                  <td>{formatEasternDateTime(row.created_at)}</td>
                   <td><span className="badge badge-current">{ACCOUNT_ACTION_LABELS[row.action] || row.action}</span></td>
                   <td>{row.actor_username}</td>
                   <td>{row.target_username || '—'}</td>
@@ -417,7 +418,7 @@ export default function Security() {
             <tbody>
               {activity?.activity.map((row) => (
                 <tr key={row.activity_id}>
-                  <td>{new Date(row.created_at).toLocaleString()}</td>
+                  <td>{formatEasternDateTime(row.created_at)}</td>
                   <td><span className="badge badge-current">{ACTIVITY_ACTION_LABELS[row.action] || row.action}</span></td>
                   <td>{row.actor_username}</td>
                   <td>{row.entity_label || '—'}</td>

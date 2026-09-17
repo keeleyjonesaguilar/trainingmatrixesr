@@ -27,14 +27,15 @@ function isPendingUsername(username) {
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
-  const users = await dbAll('SELECT user_id, username, email, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
+  const users = await dbAll('SELECT user_id, username, full_name, email, role, created_at, mfa_enabled FROM app_users ORDER BY created_at ASC', []);
   res.json(users.map((u) => ({ ...u, pending: isPendingUsername(u.username) })));
 });
 
 router.post('/', requireAdmin, async (req, res) => {
-  const { role = 'user', email } = req.body || {};
+  const { role = 'user', email, full_name } = req.body || {};
   const cleanEmail = (email || '').trim();
-  if (!cleanEmail) return res.status(400).json({ error: 'Email is required.' });
+  const cleanFullName = (full_name || '').trim();
+  if (!cleanEmail || !cleanFullName) return res.status(400).json({ error: 'Full name and email are required.' });
   if (!EMAIL_PATTERN.test(cleanEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: "Role must be 'user', 'admin', or 'super_admin'." });
   // Granting super_admin is itself a super_admin-only action - a regular admin can create other
@@ -52,17 +53,18 @@ router.post('/', requireAdmin, async (req, res) => {
     // /reset-password with an 'invite'-purpose token) - nobody ever sees or types either value
     // before then. This just satisfies username/password_hash's NOT NULL constraints at insert time.
     username: makePendingUsername(),
+    full_name: cleanFullName,
     email: cleanEmail,
     password_hash: hashPassword(crypto.randomBytes(32).toString('hex')),
     role,
     created_at: new Date().toISOString(),
   };
-  await dbRun('INSERT INTO app_users (user_id, username, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [user.user_id, user.username, user.email, user.password_hash, user.role, user.created_at]);
+  await dbRun('INSERT INTO app_users (user_id, username, full_name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [user.user_id, user.username, user.full_name, user.email, user.password_hash, user.role, user.created_at]);
 
   await logAdminAction({
     actor: req.user, action: 'user_created', targetUserId: user.user_id, targetUsername: user.email,
-    details: `role=${user.role}, pending invite claim`, req,
+    details: `full_name=${user.full_name}, role=${user.role}, pending invite claim`, req,
   });
 
   let inviteSent = true;
@@ -78,7 +80,7 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 
   res.status(201).json({
-    user_id: user.user_id, username: user.username, email: user.email, role: user.role, created_at: user.created_at,
+    user_id: user.user_id, username: user.username, full_name: user.full_name, email: user.email, role: user.role, created_at: user.created_at,
     inviteSent, inviteError,
   });
 });
@@ -130,6 +132,28 @@ router.put('/:userId/email', requireAdmin, async (req, res) => {
     details: `new email=${cleanEmail}`, req,
   });
   res.json({ ok: true, email: cleanEmail });
+});
+
+// Lets an admin set/correct someone else's display name (Keeley's request, 2026-09-17) - shown
+// in the top bar once they're logged in, and in their invite email so they can confirm it was
+// sent to the right person.
+router.put('/:userId/full-name', requireAdmin, async (req, res) => {
+  const { full_name } = req.body || {};
+  const cleanFullName = (full_name || '').trim();
+  if (!cleanFullName) return res.status(400).json({ error: 'Full name is required.' });
+
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (user.role === 'super_admin' && req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: "Only a Super Admin can change a Super Admin account's name." });
+  }
+
+  await dbRun('UPDATE app_users SET full_name = ? WHERE user_id = ?', [cleanFullName, user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'full_name_changed_by_admin', targetUserId: user.user_id, targetUsername: user.username,
+    details: `new full_name=${cleanFullName}`, req,
+  });
+  res.json({ ok: true, full_name: cleanFullName });
 });
 
 router.put('/:userId/password', requireAdmin, async (req, res) => {
