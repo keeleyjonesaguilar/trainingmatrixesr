@@ -17,9 +17,23 @@ if (!connectionString) {
 // Render's internal connection string doesn't need TLS; anything else (external URL, other
 // hosts) does, and Render's certs aren't in Node's default trust store, so we don't verify them.
 const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+// Tuned after a stress test (Keeley's request, 2026-09-17: ~100 concurrent sign-ins alongside
+// someone actively on the Employees/Matrix page) showed real slowdown - Matrix page loads went
+// from a ~220ms baseline to ~1.8s average under that load, with everything still succeeding.
+// That's connection-pool queuing, not a code bug: `pg`'s default pool max is only 10, so 120
+// concurrent DB-touching requests were mostly waiting for one of 10 connections to free up
+// rather than actually running slow queries. Render's Postgres here allows up to 103 concurrent
+// connections with only ~12 in use day-to-day, so raising this to 30 leaves a comfortable
+// margin (room for this same app to scale further, plus any admin/inspection tooling) while
+// cutting most of that queuing. connectionTimeoutMillis caps how long a request waits for a
+// pooled connection before failing fast with a clear error, instead of hanging indefinitely if
+// the pool is ever fully saturated.
 const pool = new Pool({
   connectionString,
   ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 30,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Lets db.transaction() call sites (and everything they call transitively - repo.js functions
