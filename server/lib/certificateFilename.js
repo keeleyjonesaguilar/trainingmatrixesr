@@ -8,9 +8,18 @@ function sanitizeFilenamePart(s) {
   return String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim();
 }
 
+// A training's label is sometimes typed/imported as "TRN-007 - Ladder Safety" rather than just
+// "Ladder Safety" - fine for display, but stacked with client/trainer/date/name across every
+// entry in a bulk ZIP it was pushing real file paths past Windows' ~260-char limit ("path name
+// too long", Keeley's report, 2026-09-16). The catalog ID adds nothing the filename needs, so
+// it's stripped here, filename-only - the master training catalog and every other field keep it.
+function stripTrainingIdPrefix(label) {
+  return String(label || '').replace(/^TRN-\d+\s*[-–—:]\s*/i, '');
+}
+
 function buildCertificateFilename(session, attendee) {
   const parts = [
-    session.training_type_label,
+    stripTrainingIdPrefix(session.training_type_label),
     session.client_name,
     session.trainer_signed_name || session.trainer_name,
     session.session_date,
@@ -19,4 +28,4 @@ function buildCertificateFilename(session, attendee) {
   return `${parts.join('_')}.pdf`;
 }
 
-module.exports = { buildCertificateFilename };
+module.exports = { buildCertificateFilename, stripTrainingIdPrefix };

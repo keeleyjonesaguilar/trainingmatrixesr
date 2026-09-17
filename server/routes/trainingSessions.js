@@ -10,7 +10,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
-const { buildCertificateFilename } = require('../lib/certificateFilename');
+const { buildCertificateFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
 const fs = require('fs');
 
 const router = express.Router();
@@ -316,7 +316,7 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     return res.status(404).json({ error: 'No certificates available yet - close the session first.' });
   }
 
-  const zipName = ['certificates', session.training_type_label, session.client_name, session.session_date]
+  const zipName = ['certificates', stripTrainingIdPrefix(session.training_type_label), session.client_name, session.session_date]
     .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
     .join('_');
   res.setHeader('Content-Type', 'application/zip');
