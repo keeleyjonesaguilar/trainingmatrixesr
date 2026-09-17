@@ -67,6 +67,43 @@ async function runOneTimeFixes() {
     if (fs.existsSync(rosterPath)) fs.unlinkSync(rosterPath);
     if (fs.existsSync(certDir)) fs.rmSync(certDir, { recursive: true, force: true });
   });
+
+  // Fresh slate for building an SOP (Keeley's request, 2026-09-17) - every client/employee/
+  // training-record/session/import, every generated certificate/roster file on disk, and the
+  // Security page's three logs (Activity Log, Login Attempts, Account Changes). A manual backup
+  // was cut immediately before this shipped (training-matrix-backup-pre-wipe-2026-09-17.json),
+  // separate from the daily rotation, specifically so this is fully recoverable if needed.
+  // Explicitly NOT touched: the Master Training Catalog, training aliases, feedback/PIN
+  // settings, and every app_users login/account - only that internal-trainers CLIENT ROW
+  // itself survives (protected the same way the Clients page's own delete route protects it -
+  // it's infrastructure other code assumes exists, not something to recreate by hand), not the
+  // trainer employee profiles under it, which are cleared like everything else.
+  await runOnce('fix_fresh_slate_for_sop_v1', 'wiped all clients/employees/training data, certificates/rosters on disk, and the activity/security logs', async () => {
+    const certPaths = [
+      ...(await dbAll(`SELECT certificate_path FROM employee_training_records WHERE certificate_path IS NOT NULL`)).map((r) => r.certificate_path),
+      ...(await dbAll(`SELECT certificate_path FROM session_attendees WHERE certificate_path IS NOT NULL`)).map((r) => r.certificate_path),
+    ];
+    const rosterPaths = (await dbAll(`SELECT roster_pdf_path FROM training_sessions WHERE roster_pdf_path IS NOT NULL`)).map((r) => r.roster_pdf_path);
+    for (const p of [...certPaths, ...rosterPaths]) {
+      if (p && fs.existsSync(p)) fs.unlinkSync(p);
+    }
+
+    await dbRun('DELETE FROM session_feedback');
+    await dbRun('DELETE FROM session_attendees');
+    await dbRun('DELETE FROM employee_training_records');
+    await dbRun('DELETE FROM training_sessions');
+    await dbRun('DELETE FROM import_staged_rows');
+    await dbRun('DELETE FROM import_column_map');
+    await dbRun('DELETE FROM import_batches');
+    await dbRun('DELETE FROM client_training_requirements');
+    await dbRun('DELETE FROM ignored_compliance_gaps');
+    await dbRun('DELETE FROM employees');
+    await dbRun('DELETE FROM clients WHERE is_internal = 0');
+
+    await dbRun('DELETE FROM activity_log');
+    await dbRun('DELETE FROM login_attempts');
+    await dbRun('DELETE FROM admin_actions');
+  });
 }
 
 module.exports = { runOneTimeFixes };
