@@ -412,11 +412,14 @@ router.put('/batches/:batchId/resolve-client', requireAdmin, async (req, res) =>
 // training mapping that's already resolved gets committed right away - rows using a mapping
 // still stuck in needs_review are simply left for the next commit, once someone resolves it via
 // the column-map endpoint above. The same applies to a row whose Client couldn't be resolved:
-// it's skipped this round (counted below) and picked up once resolved. Every record created
-// remembers its import_batch_id, so a later commit call can tell exactly which (employee,
-// training, completion date) combinations this batch already created and skip only those -
-// nothing is recreated, and nothing is permanently locked out just because it wasn't eligible
-// yet on an earlier call.
+// it's skipped this round (counted below) and picked up once resolved. Nothing is recreated, and
+// nothing is permanently locked out just because it wasn't eligible yet on an earlier call.
+//
+// The (employee, training, completion date) duplicate check below is global - not scoped to this
+// batch - so re-importing a spreadsheet that overlaps with an earlier import (this batch's own
+// prior partial commit, a completely different batch from days ago, or a manually-entered record)
+// silently skips exactly the rows that already exist instead of creating a second copy (Keeley's
+// request, 2026-09-21).
 router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
   const batch = await dbGet('SELECT * FROM import_batches WHERE batch_id = ?', [req.params.batchId]);
   if (!batch) return res.status(404).json({ error: 'Batch not found' });
@@ -498,19 +501,24 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       const explicitExpiration = tryParseDate((row.expiration_date_raw || '').trim());
       const notes = row.record_type_raw ? `Record type: ${row.record_type_raw}` : null;
 
-      // A prior partial commit on this batch may have already created exactly this (employee,
-      // training, source label, completion date) record - e.g. this mapping was resolved and
-      // committed already, and we're re-running after resolving something else (a different
-      // mapping, or a client) that had blocked other rows. Skip it rather than creating a
-      // duplicate; null-safe on completion_date since a blank/unparsed source value still stages
-      // a record (flagged "Pending Review") that a re-commit shouldn't double up.
-      const alreadyCommitted = await dbGet(
+      // This employee may already have exactly this (training, completion date) on file -
+      // either from a prior partial commit on this same batch (the original reason this check
+      // existed - see migrations/031_import_commit_dedup_fix.sql), or from a completely separate
+      // import run at another time (Keeley's report, 2026-09-21: a new spreadsheet overlapping
+      // with one imported days earlier created duplicate records, since this check only ever
+      // looked within the current batch). Deliberately global now - no import_batch_id filter -
+      // and keyed on employee+training+date only, not the source label text: two imports
+      // describing the same real completion with slightly different wording (e.g. "Fire Watch"
+      // vs "Fire Watch Training") are still the same event, and matching on the label would miss
+      // that. Null-safe on completion_date since a blank/unparsed source value still stages a
+      // record (flagged "Pending Review") that shouldn't be duplicated either.
+      const alreadyExists = await dbGet(
         `SELECT 1 FROM employee_training_records
-         WHERE import_batch_id = ? AND employee_id = ? AND training_id = ? AND original_client_training_name = ?
+         WHERE employee_id = ? AND training_id = ?
            AND (completion_date = ? OR (completion_date IS NULL AND ?::text IS NULL))`,
-        [req.params.batchId, employee.employee_id, trainingId, originalClientTrainingName, parsed.completion_date, parsed.completion_date]
+        [employee.employee_id, trainingId, parsed.completion_date, parsed.completion_date]
       );
-      if (alreadyCommitted) return;
+      if (alreadyExists) return;
 
       const recordId = uuidv4();
       await dbRun(
@@ -591,11 +599,13 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
         const parsed = parseSourceValue(cellValue);
         const originalClientTrainingName = col.source_column_header;
 
+        // Global, label-independent duplicate check - see the matching comment in
+        // commitLongFormatRecord above for why (Keeley's request, 2026-09-21).
         const alreadyCommitted = await dbGet(
           `SELECT 1 FROM employee_training_records
-           WHERE import_batch_id = ? AND employee_id = ? AND training_id = ? AND original_client_training_name = ?
+           WHERE employee_id = ? AND training_id = ?
              AND (completion_date = ? OR (completion_date IS NULL AND ?::text IS NULL))`,
-          [req.params.batchId, employee.employee_id, col.matched_training_id, originalClientTrainingName, parsed.completion_date, parsed.completion_date]
+          [employee.employee_id, col.matched_training_id, parsed.completion_date, parsed.completion_date]
         );
         if (alreadyCommitted) continue;
 
