@@ -168,6 +168,8 @@ export const api = {
     request(`/import/batches/${batchId}/column-map/${mapId}`, { method: 'PUT', body: JSON.stringify(data) }),
   resolveImportClient: (batchId, data) =>
     request(`/import/batches/${batchId}/resolve-client`, { method: 'PUT', body: JSON.stringify(data) }),
+  resolveImportEmployeeMatch: (batchId, matchId, decision) =>
+    request(`/import/batches/${batchId}/employee-matches/${matchId}`, { method: 'PUT', body: JSON.stringify({ decision }) }),
   commitImport: (batchId) => request(`/import/batches/${batchId}/commit`, { method: 'POST' }),
   cancelImport: (batchId) => request(`/import/batches/${batchId}`, { method: 'DELETE' }),
 

@@ -53,6 +53,42 @@ function ClientResolveRow({ entry, clients, onResolved }) {
   );
 }
 
+// A raw "Employee" name from the sheet that doesn't exactly match anyone at the resolved client,
+// but shares the exact same words (just reordered/punctuated differently) with someone who's
+// already on file - e.g. "Cesar Flores Rojas" in the sheet vs. "Rojas, Cesar Flores" already an
+// employee. Confirming "Same Person" attaches every row using this raw name to that existing
+// profile instead of creating a duplicate; "Different Person" proceeds as a normal new employee.
+function EmployeeMatchRow({ match, batchId, onResolved }) {
+  const [resolving, setResolving] = useState(false);
+  const [error, setError] = useState('');
+
+  const resolve = async (decision) => {
+    setResolving(true);
+    setError('');
+    try {
+      await api.resolveImportEmployeeMatch(batchId, match.id, decision);
+      onResolved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  return (
+    <tr>
+      <td>"{match.full_name_raw}"</td>
+      <td>{match.row_count}</td>
+      <td>{match.candidate_full_name} ({match.client_name}){match.candidate_job_title ? ` · ${match.candidate_job_title}` : ''}</td>
+      <td>
+        <button className="secondary" disabled={resolving} onClick={() => resolve('same_person')}>Same Person</button>{' '}
+        <button className="secondary" disabled={resolving} onClick={() => resolve('different_person')}>Different Person</button>
+        {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
+      </td>
+    </tr>
+  );
+}
+
 export default function Import() {
   const isAdmin = useIsAdmin();
   const [clients, setClients] = useState([]);
@@ -90,6 +126,7 @@ export default function Import() {
       column_map: b.column_map,
       needs_review_count: b.column_map.filter((c) => c.resolution_status === 'needs_review').length,
       clients_needing_review: b.clients_needing_review,
+      employee_matches_needing_review: b.employee_matches_needing_review,
     });
     // A client just got resolved - refresh the client list too so it shows up as a pick option
     // for any other still-unresolved raw name, and in the "+ Create new" case going forward.
@@ -130,11 +167,12 @@ export default function Import() {
   };
 
   const clientsNeedingReview = preview?.clients_needing_review || [];
+  const employeeMatchesNeedingReview = preview?.employee_matches_needing_review || [];
   // Committing no longer requires every training/client to be resolved first - whatever's
   // resolved goes in now, and rows using anything still unresolved are skipped and picked up
   // by a later commit once resolved (see the server's partial-commit comment for why).
   const canCommit = Boolean(preview) && !busy;
-  const fullyResolved = preview && preview.needs_review_count === 0 && clientsNeedingReview.length === 0;
+  const fullyResolved = preview && preview.needs_review_count === 0 && clientsNeedingReview.length === 0 && employeeMatchesNeedingReview.length === 0;
 
   return (
     <div>
@@ -190,12 +228,13 @@ export default function Import() {
             Created {result.employees_created} new employee(s) and {result.records_created} training record(s) this round.
             {result.rows_skipped_no_client > 0 && ` ${result.rows_skipped_no_client} row(s) skipped for having no client resolved yet.`}
             {result.rows_skipped_no_training_name > 0 && ` ${result.rows_skipped_no_training_name} row(s) skipped for having no training name.`}
+            {result.rows_skipped_needs_employee_review > 0 && ` ${result.rows_skipped_needs_employee_review} row(s) skipped pending a possible-existing-employee decision.`}
           </p>
           {result.status !== 'committed' && (
             <p className="page-subtitle" style={{ margin: 0 }}>
-              {result.still_needs_review_count} training name(s) still need review below. Resolve them (and any
-              clients still needing review) and click Commit Import again to bring in the rest - nothing already
-              imported will be duplicated.
+              {result.still_needs_review_count} training name(s) and {result.employee_matches_needing_review_count} possible
+              employee match(es) still need review below. Resolve them (and any clients still needing review) and click
+              Commit Import again to bring in the rest - nothing already imported will be duplicated.
             </p>
           )}
         </div>
@@ -222,6 +261,23 @@ export default function Import() {
                       clients={clients}
                       onResolved={refreshBatch}
                     />
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {employeeMatchesNeedingReview.length > 0 && (
+            <>
+              <h3 style={{ fontSize: 14 }}>Possible Existing Employees ({employeeMatchesNeedingReview.length})</h3>
+              <p className="page-subtitle" style={{ marginTop: -8 }}>
+                These names don't exactly match anyone at that client, but share the same words as someone already on file - likely the same person, just written differently.
+              </p>
+              <table>
+                <thead><tr><th>Name (as typed in the sheet)</th><th>Rows</th><th>Possible Match On File</th><th>Is this the same person?</th></tr></thead>
+                <tbody>
+                  {employeeMatchesNeedingReview.map((match) => (
+                    <EmployeeMatchRow key={match.id} match={match} batchId={preview.batch_id} onResolved={refreshBatch} />
                   ))}
                 </tbody>
               </table>
@@ -291,6 +347,7 @@ export default function Import() {
               <p className="page-subtitle" style={{ marginTop: 8 }}>
                 {preview.needs_review_count > 0 && `${preview.needs_review_count} training name(s) still need review. `}
                 {clientsNeedingReview.length > 0 && `${clientsNeedingReview.length} client name(s) still need review. `}
+                {employeeMatchesNeedingReview.length > 0 && `${employeeMatchesNeedingReview.length} possible existing employee(s) still need review. `}
                 Rows using them will be skipped for now and can be brought in with another commit once resolved.
               </p>
             )}

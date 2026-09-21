@@ -21,6 +21,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { formatPhoneNumber } = require('../lib/phone');
 const { maybeGenerateCertificate } = require('../lib/recordCertificates');
 const { logActivity } = require('../lib/activityLog');
+const { normalizeNameForMatching } = require('../lib/nameMatch');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -184,6 +185,56 @@ async function matchTrainingColumn(header) {
   return { training_id: null, confidence: 'unmatched' };
 }
 
+// Flags a likely-but-not-exact employee name match for a human to confirm, rather than letting
+// commit silently create a second profile for someone already on file (Keeley's request,
+// 2026-09-21) - e.g. the sheet says "Cesar Flores Rojas" and this client already has "Rojas,
+// Cesar Flores" on file, same person, same words, just reordered. Only ever queues a candidate
+// when there's no EXACT match already (that case needs no review - commit already handles it),
+// and only compares the exact-same word set (see nameMatch.js) - never a looser fuzzy match, so
+// two different people who happen to share a first name are never suggested as the same person.
+// Safe to call more than once for the same batch (e.g. again after a client gets resolved) -
+// the table's UNIQUE constraint no-ops a repeat.
+async function detectEmployeeMatches(batchId) {
+  const pairs = await dbAll(
+    `SELECT DISTINCT resolved_client_id AS client_id, full_name_raw
+     FROM import_staged_rows
+     WHERE batch_id = ? AND resolved_client_id IS NOT NULL AND full_name_raw IS NOT NULL AND full_name_raw != ''`,
+    [batchId]
+  );
+  for (const { client_id: clientId, full_name_raw: fullNameRaw } of pairs) {
+    // eslint-disable-next-line no-await-in-loop
+    const exact = await dbGet('SELECT 1 FROM employees WHERE client_id = ? AND LOWER(full_name) = ?', [clientId, fullNameRaw.trim().toLowerCase()]);
+    if (exact) continue; // commit's own exact-match lookup already handles this row correctly
+
+    // eslint-disable-next-line no-await-in-loop
+    const candidates = await dbAll('SELECT employee_id, full_name FROM employees WHERE client_id = ?', [clientId]);
+    const targetKey = normalizeNameForMatching(fullNameRaw);
+    const candidate = candidates.find((c) => normalizeNameForMatching(c.full_name) === targetKey);
+    if (!candidate) continue;
+
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      `INSERT INTO import_employee_matches (id, batch_id, client_id, full_name_raw, candidate_employee_id, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'needs_review', ?)
+       ON CONFLICT (batch_id, client_id, full_name_raw) DO NOTHING`,
+      [uuidv4(), batchId, clientId, fullNameRaw, candidate.employee_id, new Date().toISOString()]
+    );
+  }
+}
+
+async function getEmployeeMatchesNeedingReview(batchId) {
+  return dbAll(
+    `SELECT m.id, m.full_name_raw, m.candidate_employee_id, e.full_name AS candidate_full_name,
+            e.job_title AS candidate_job_title, c.client_name,
+            (SELECT COUNT(*) FROM import_staged_rows sr WHERE sr.batch_id = m.batch_id AND sr.full_name_raw = m.full_name_raw) AS row_count
+     FROM import_employee_matches m
+     JOIN employees e ON e.employee_id = m.candidate_employee_id
+     JOIN clients c ON c.client_id = m.client_id
+     WHERE m.batch_id = ? AND m.status = 'needs_review'`,
+    [batchId]
+  );
+}
+
 // Downloadable starting-point sheet (Keeley's request, 2026-09-17) - one row per training
 // completion (the long format): Employee / Client / Certification / Activation are required,
 // Training ID is optional (best-effort matched, never required - see matchTrainingColumn() and
@@ -322,6 +373,8 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
     }
   });
 
+  await detectEmployeeMatches(batchId);
+
   const clientsNeedingReview = await dbAll(
     `SELECT client_name_raw, COUNT(*) AS row_count FROM import_staged_rows
      WHERE batch_id = ? AND resolved_client_id IS NULL AND client_name_raw != ''
@@ -337,6 +390,7 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
     column_map: columnMapPreview,
     needs_review_count: columnMapPreview.filter((c) => c.resolution_status === 'needs_review').length,
     clients_needing_review: clientsNeedingReview,
+    employee_matches_needing_review: await getEmployeeMatchesNeedingReview(batchId),
   });
 });
 
@@ -351,7 +405,10 @@ router.get('/batches/:batchId', async (req, res) => {
      GROUP BY client_name_raw`,
     [req.params.batchId]
   );
-  res.json({ batch, column_map: columnMap, row_count: rowCount, clients_needing_review: clientsNeedingReview });
+  res.json({
+    batch, column_map: columnMap, row_count: rowCount, clients_needing_review: clientsNeedingReview,
+    employee_matches_needing_review: await getEmployeeMatchesNeedingReview(req.params.batchId),
+  });
 });
 
 // Step 2a: manually resolve an ambiguous/unmatched column. Remembers the choice as a new alias
@@ -405,7 +462,28 @@ router.put('/batches/:batchId/resolve-client', requireAdmin, async (req, res) =>
     req.params.batchId,
     client_name_raw,
   ]);
+  // Rows using this raw client name just became eligible for employee-match detection for the
+  // first time (it needs a resolved client to check against) - same call /preview already makes.
+  await detectEmployeeMatches(req.params.batchId);
   res.json({ client_name_raw, resolved_client_id: resolvedId, client });
+});
+
+// Step 2c: manually resolve a flagged employee-name match - either confirm it's the same person
+// (every row using this exact raw name attaches to the existing employee at commit) or confirm
+// it's a different person (commit falls back to its normal exact-match-or-create behavior, which
+// won't find one and creates a new employee, exactly as if this had never been flagged).
+router.put('/batches/:batchId/employee-matches/:matchId', requireAdmin, async (req, res) => {
+  const match = await dbGet('SELECT * FROM import_employee_matches WHERE id = ? AND batch_id = ?', [req.params.matchId, req.params.batchId]);
+  if (!match) return res.status(404).json({ error: 'Employee match not found' });
+  const { decision } = req.body || {};
+  if (!['same_person', 'different_person'].includes(decision)) {
+    return res.status(400).json({ error: 'decision must be "same_person" or "different_person"' });
+  }
+  await dbRun('UPDATE import_employee_matches SET status = ? WHERE id = ?', [
+    decision === 'same_person' ? 'confirmed_existing' : 'confirmed_new',
+    req.params.matchId,
+  ]);
+  res.json(await dbGet('SELECT * FROM import_employee_matches WHERE id = ?', [req.params.matchId]));
 });
 
 // Step 3: commit. Can be called more than once per batch (Keeley's request, 2026-09-01): every
@@ -435,6 +513,8 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
   let recordsNeedingReview = 0;
   let rowsSkippedNoClient = 0;
   let rowsSkippedNoTrainingName = 0;
+  let rowsSkippedNeedsEmployeeReview = 0;
+  let pendingEmployeeMatchCount = 0;
   const createdRecordIds = [];
 
   await withTransaction(async () => {
@@ -455,12 +535,27 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       }
 
       const clientId = row.resolved_client_id;
-      let employee = await dbGet(
-        // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
-        // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
-        'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
-        [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
+
+      // A flagged possible match (see detectEmployeeMatches above) takes priority over the plain
+      // exact-name lookup below - it only ever exists when that lookup would otherwise have
+      // found nothing and been about to create a second profile for someone already on file.
+      const employeeMatch = await dbGet(
+        'SELECT * FROM import_employee_matches WHERE batch_id = ? AND client_id = ? AND full_name_raw = ?',
+        [req.params.batchId, clientId, row.full_name_raw]
       );
+      if (employeeMatch && employeeMatch.status === 'needs_review') {
+        rowsSkippedNeedsEmployeeReview += 1; // still waiting on a decision - picked up by a later commit
+        continue;
+      }
+
+      let employee = employeeMatch && employeeMatch.status === 'confirmed_existing'
+        ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeMatch.candidate_employee_id])
+        : await dbGet(
+            // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
+            // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
+            'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
+            [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
+          );
       if (!employee) {
         const employeeId = uuidv4();
         await dbRun(
@@ -641,7 +736,8 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       }
     }
 
-    const stillNeedsReview = columnMap.some((c) => c.resolution_status === 'needs_review');
+    pendingEmployeeMatchCount = (await getEmployeeMatchesNeedingReview(req.params.batchId)).length;
+    const stillNeedsReview = columnMap.some((c) => c.resolution_status === 'needs_review') || pendingEmployeeMatchCount > 0;
     const newStatus = stillNeedsReview ? 'partially_committed' : 'committed';
     await dbRun(
       `UPDATE import_batches
@@ -667,7 +763,9 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
     records_needing_review: recordsNeedingReview,
     rows_skipped_no_client: rowsSkippedNoClient,
     rows_skipped_no_training_name: rowsSkippedNoTrainingName,
+    rows_skipped_needs_employee_review: rowsSkippedNeedsEmployeeReview,
     still_needs_review_count: columnMap.filter((c) => c.resolution_status === 'needs_review').length,
+    employee_matches_needing_review_count: pendingEmployeeMatchCount,
   });
 
   // Certificates are generated after responding, one at a time in the background (Keeley's
