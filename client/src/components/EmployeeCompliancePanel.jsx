@@ -96,10 +96,13 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
   );
 }
 
-// Inline edit for an already-logged training record (Keeley's request: fix a wrong date, or a
+// Edit popup for an already-logged training record (Keeley's request: fix a wrong date, or a
 // wrongly-matched training type from an import, after the fact) - reuses api.saveTrainingRecord
 // with record_id, which the backend supports as an update-in-place, training type included.
-function RecordEditRow({ record, employee, client, trainers, trainingOptions, onSaved, onCancel }) {
+// A Modal rather than an inline expanding row (Keeley's request, 2026-09-21: the old inline <tr>
+// version forced the whole table wider to fit its dropdowns/buttons) - mirrors the field-row
+// layout already used by the "Record Training Completion" add-new form below.
+function RecordEditModal({ record, employee, client, trainers, trainingOptions, onSaved, onCancel }) {
   const [trainingId, setTrainingId] = useState(record.training_id);
   const [completionDate, setCompletionDate] = useState(record.completion_date || '');
   const [expirationDate, setExpirationDate] = useState(record.expiration_date || '');
@@ -107,7 +110,8 @@ function RecordEditRow({ record, employee, client, trainers, trainingOptions, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const save = async () => {
+  const save = async (e) => {
+    e.preventDefault();
     setSaving(true);
     setError('');
     try {
@@ -121,34 +125,51 @@ function RecordEditRow({ record, employee, client, trainers, trainingOptions, on
         trainer_employee_id: trainerId || null,
       });
       onSaved();
-    } catch (e) {
-      setError(e.message);
+    } catch (e2) {
+      setError(e2.message);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <tr>
-      <td colSpan={2}>
-        <select value={trainingId} onChange={(e) => setTrainingId(e.target.value)}>
-          {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
-        </select>
-      </td>
-      <td>{client?.client_name || '—'}</td>
-      <td><StatusBadge status={record.status} /></td>
-      <td><input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} /></td>
-      <td><input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} /></td>
-      <td colSpan={3}>
-        <select value={trainerId} onChange={(e) => setTrainerId(e.target.value)} style={{ marginRight: 8 }}>
-          <option value="">No trainer on file</option>
-          {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
-        </select>
-        <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+    <Modal onClose={onCancel}>
+      <h2 style={{ marginTop: 0 }}>Edit Training Record</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <form onSubmit={save}>
+        <div className="field-row">
+          <label>Training Course</label>
+          <select value={trainingId} onChange={(e) => setTrainingId(e.target.value)}>
+            {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label>Client</label>
+          <div>{client?.client_name || '—'}</div>
+        </div>
+        <div className="field-row">
+          <label>Status</label>
+          <div><StatusBadge status={record.status} /></div>
+        </div>
+        <div className="field-row">
+          <label>Completion Date</label>
+          <input type="date" value={completionDate} onChange={(e) => setCompletionDate(e.target.value)} />
+        </div>
+        <div className="field-row">
+          <label>Expiration Date</label>
+          <input type="date" value={expirationDate} onChange={(e) => setExpirationDate(e.target.value)} />
+        </div>
+        <div className="field-row">
+          <label>Trainer</label>
+          <select value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
+            <option value="">No trainer on file</option>
+            {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+          </select>
+        </div>
+        <button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>{' '}
         <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
-        {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
-      </td>
-    </tr>
+      </form>
+    </Modal>
   );
 }
 
@@ -308,44 +329,31 @@ export default function EmployeeCompliancePanel({
                 </thead>
                 <tbody>
                   {completedRecords.map((t) => (
-                    editingRecordId === t.record_id ? (
-                      <RecordEditRow
-                        key={t.record_id}
-                        record={t}
-                        employee={employee}
-                        client={client}
-                        trainers={localTrainers}
-                        trainingOptions={trainingOptions}
-                        onSaved={() => { setEditingRecordId(''); onReload(); }}
-                        onCancel={() => setEditingRecordId('')}
-                      />
-                    ) : (
-                      <tr key={t.record_id}>
-                        <td>{t.training_id}</td>
-                        <td>{t.training_name}</td>
-                        <td>{client?.client_name || '—'}</td>
-                        <td><StatusBadge status={t.status} /></td>
-                        <td>{t.completion_date || '—'}</td>
-                        <td>{t.expiration_date || '—'}</td>
-                        <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={onReload} /></td>
+                    <tr key={t.record_id}>
+                      <td>{t.training_id}</td>
+                      <td>{t.training_name}</td>
+                      <td>{client?.client_name || '—'}</td>
+                      <td><StatusBadge status={t.status} /></td>
+                      <td>{t.completion_date || '—'}</td>
+                      <td>{t.expiration_date || '—'}</td>
+                      <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={onReload} /></td>
+                      <td>
+                        {t.signature ? (
+                          <img src={t.signature} alt="Employee signature" style={{ height: 28, maxWidth: 90 }} />
+                        ) : '—'}
+                      </td>
+                      {isAdmin && (
                         <td>
-                          {t.signature ? (
-                            <img src={t.signature} alt="Employee signature" style={{ height: 28, maxWidth: 90 }} />
-                          ) : '—'}
+                          <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => setEditingRecordId(t.record_id)}>Edit</button>{' '}
+                          <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => inactivateRecord(t)}>
+                            {busyRecordId === t.record_id ? 'Working...' : 'Inactivate'}
+                          </button>{' '}
+                          <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => deleteRecord(t)}>
+                            {busyRecordId === t.record_id ? 'Working...' : 'Delete'}
+                          </button>
                         </td>
-                        {isAdmin && (
-                          <td>
-                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => setEditingRecordId(t.record_id)}>Edit</button>{' '}
-                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => inactivateRecord(t)}>
-                              {busyRecordId === t.record_id ? 'Working...' : 'Inactivate'}
-                            </button>{' '}
-                            <button type="button" className="secondary" disabled={busyRecordId === t.record_id} onClick={() => deleteRecord(t)}>
-                              {busyRecordId === t.record_id ? 'Working...' : 'Delete'}
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    )
+                      )}
+                    </tr>
                   ))}
                   {completedRecords.length === 0 && (
                     <tr><td colSpan={isAdmin ? 9 : 8} className="empty-state">No trainings completed yet.</td></tr>
@@ -354,6 +362,18 @@ export default function EmployeeCompliancePanel({
               </table>
             </div>
           </div>
+
+          {isAdmin && editingRecordId && (
+            <RecordEditModal
+              record={completedRecords.find((t) => t.record_id === editingRecordId)}
+              employee={employee}
+              client={client}
+              trainers={localTrainers}
+              trainingOptions={trainingOptions}
+              onSaved={() => { setEditingRecordId(''); onReload(); }}
+              onCancel={() => setEditingRecordId('')}
+            />
+          )}
 
           {isAdmin && addingRecord && (
             <Modal onClose={() => setAddingRecord(false)}>
