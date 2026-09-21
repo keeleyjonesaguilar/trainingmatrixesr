@@ -25,7 +25,7 @@ router.post('/log-download', async (req, res) => {
 });
 
 router.get('/completed-trainings', async (req, res) => {
-  const { client_id, employee_id, training_id } = req.query;
+  const { client_id, employee_id, training_id, status } = req.query;
 
   // is_active_record = 1 excludes only a record superseded by an old merge from before Keeley
   // asked to stop treating repeat completions as duplicates - every completion made since then
@@ -38,6 +38,10 @@ router.get('/completed-trainings', async (req, res) => {
   if (client_id) { clauses.push('r.client_id = ?'); params.push(client_id); }
   if (employee_id) { clauses.push('r.employee_id = ?'); params.push(employee_id); }
   if (training_id) { clauses.push('r.training_id = ?'); params.push(training_id); }
+  // Status filter (Keeley's request, 2026-09-21) - e.g. isolate just Expired trainings for a
+  // report. Every completed row already has a status, so this is a plain equality match, same
+  // as the Employees/Client Compliance pages' own status filter.
+  if (status) { clauses.push('r.status = ?'); params.push(status); }
 
   const rows = await dbAll(
     `SELECT r.record_id, r.employee_id, e.full_name, r.client_id, c.client_name,

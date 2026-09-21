@@ -3,6 +3,11 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { downloadCsv } from '../lib/csv';
 
+// A narrower list than matrixCell.js's full STATUS_OPTIONS - this report only ever shows rows
+// that have an actual completion on file (see the page subtitle), so "Missing" and "Not
+// Applicable" describe the *absence* of a record and could never match anything here.
+const REPORT_STATUS_OPTIONS = ['Current', 'Expired', 'No Expiration', 'Pending Review', 'Ignored'];
+
 // Sortable column headers (Keeley's request, 2026-08-18): click a header to sort by it,
 // click again to reverse. Kept as plain component state rather than URL search params, since
 // there's no need for sort order to be bookmarkable/back-button-able the way filters are.
@@ -43,6 +48,7 @@ export default function Reports() {
 
   const clientId = searchParams.get('client_id') || '';
   const trainingId = searchParams.get('training_id') || '';
+  const status = searchParams.get('status') || '';
   // Employee search (Keeley's request, 2026-08-19): a free-text box instead of a dropdown -
   // easier to use once there are more than a handful of employees. Matches against the
   // employee name already present on each completed-training row, client-side, so there's
@@ -55,10 +61,10 @@ export default function Reports() {
   }, []);
 
   useEffect(() => {
-    api.getCompletedTrainingsReport({ client_id: clientId, training_id: trainingId })
+    api.getCompletedTrainingsReport({ client_id: clientId, training_id: trainingId, status })
       .then((data) => setRows(data.rows))
       .catch((e) => setError(e.message));
-  }, [clientId, trainingId]);
+  }, [clientId, trainingId, status]);
 
   // replace: true - filter changes shouldn't pile up separate browser-back-button stops,
   // same fix applied to Matrix.jsx after Keeley reported the back button misbehaving there.
@@ -107,8 +113,11 @@ export default function Reports() {
             <button
               className="secondary"
               onClick={() => {
-                downloadCsv('completed-trainings.csv', sortedRows);
-                api.logReportDownload('Completed Trainings', `${sortedRows.length} row(s)`).catch(() => {});
+                downloadCsv(
+                  `completed-trainings${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+                  sortedRows
+                );
+                api.logReportDownload('Completed Trainings', `${sortedRows.length} row(s)${status ? ` · Status: ${status}` : ''}`).catch(() => {});
               }}
             >
               Export CSV
@@ -141,6 +150,13 @@ export default function Reports() {
           <select value={trainingId} onChange={(e) => updateParam('training_id', e.target.value)}>
             <option value="">All Trainings</option>
             {masterTrainings.map((mt) => <option key={mt.training_id} value={mt.training_id}>{mt.training_id} - {mt.training_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label>Status</label>
+          <select value={status} onChange={(e) => updateParam('status', e.target.value)}>
+            <option value="">Any Status</option>
+            {REPORT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
