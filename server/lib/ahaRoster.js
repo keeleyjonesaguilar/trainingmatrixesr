@@ -39,6 +39,28 @@ const ROW_POSITIONS = [
 // the Course Participants page - same header the real page 2 shows via its own shared fields.
 const HEADER_POSITIONS = { date: { x: 58, y: 511 }, course: { x: 216, y: 511 }, instructor: { x: 424, y: 511 }, instructorId: { x: 674, y: 511 } };
 
+// The "Signature of Lead Instructor" line's own rectangle on page 1 (read directly off the
+// template's "Lead Instructor Signature" field) - the trainer's actual captured signature image
+// is drawn here instead of setting the field's text (Keeley's call, 2026-09-21: this should be
+// the real signature captured at close-out, not their typed name standing in for it).
+const SIGNATURE_RECT = { x: 43.2, y: 65.34, width: 319.68, height: 13.5 };
+
+function isPngDataUrl(value) {
+  return typeof value === 'string' && value.startsWith('data:image/png;base64,');
+}
+
+async function drawSignatureImage(doc, page, rect, signatureDataUrl) {
+  if (!isPngDataUrl(signatureDataUrl)) return;
+  const pngBytes = Buffer.from(signatureDataUrl.split(',')[1], 'base64');
+  const pngImage = await doc.embedPng(pngBytes);
+  // Fit within the line's box without distorting the signature's own aspect ratio, then sit it
+  // just above the line rather than filling the box edge-to-edge.
+  const scale = Math.min(rect.width / pngImage.width, rect.height / pngImage.height);
+  const width = pngImage.width * scale;
+  const height = pngImage.height * scale;
+  page.drawImage(pngImage, { x: rect.x, y: rect.y + (rect.height - height) / 2, width, height });
+}
+
 function setTextSafely(form, fieldName, value) {
   if (!value) return;
   try {
@@ -46,6 +68,23 @@ function setTextSafely(form, fieldName, value) {
   } catch {
     // Field genuinely missing from the template (shouldn't happen - it's the same file we
     // inspected to build this mapping) - skip rather than fail the whole roster over one field.
+  }
+}
+
+// Same as setTextSafely, but shrinks the font to fit instead of using the field's fixed default
+// size (Keeley's report, 2026-09-21: the Course Start/End line was clipping "AM"/"PM" off the
+// end). Deliberately its own function rather than the default for every field: a field with
+// multiple widgets (like "Lead Instructor" and "Date", shared between pages 1 and 2 - see
+// SIGNATURE_RECT's comment) doesn't auto-size reliably across every widget in this pdf-lib
+// version, so this is reserved for single-widget fields that actually risk overflowing.
+function setTextAutoSize(form, fieldName, value) {
+  if (!value) return;
+  try {
+    const field = form.getTextField(fieldName);
+    field.setFontSize(0); // 0 is pdf-lib/Acrobat's convention for "size the font to fit the box"
+    field.setText(String(value));
+  } catch {
+    /* see setTextSafely */
   }
 }
 
@@ -112,7 +151,7 @@ async function generateAhaRoster(session, attendees, outputPath) {
   const additionalInstructors = JSON.parse(session.hs_additional_instructors || '[]');
   additionalInstructors.slice(0, 8).forEach((instructor, i) => {
     const n = i + 1;
-    setTextSafely(form, `Name-Instructor ID ${n}`, instructor.name_id);
+    setTextAutoSize(form, `Name-Instructor ID ${n}`, instructor.name_id);
     setTextSafely(form, `Card Exp Date ${n}`, instructor.card_exp_date);
   });
 
@@ -121,7 +160,6 @@ async function generateAhaRoster(session, attendees, outputPath) {
   setTextSafely(form, 'Course', session.training_type_label);
   setTextSafely(form, 'Lead Instructor', leadInstructorName);
   setTextSafely(form, 'Lead Instructor ID#', session.trainer_aha_instructor_id);
-  setTextSafely(form, 'Lead Instructor Signature', leadInstructorName);
   setTextSafely(form, 'Card Expriation Date', session.hs_card_expiration_date);
   setTextSafely(form, 'Training Center', session.hs_training_center);
   setTextSafely(form, 'Training Center ID#', session.hs_training_center_id);
@@ -129,12 +167,13 @@ async function generateAhaRoster(session, attendees, outputPath) {
   setTextSafely(form, 'Address', session.hs_address);
   setTextSafely(form, 'City, State ZIP', session.hs_city_state_zip);
   setTextSafely(form, 'Course Location', session.location);
-  setTextSafely(form, 'Course Start', session.hs_course_start);
-  setTextSafely(form, 'Course End', session.hs_course_end);
+  setTextAutoSize(form, 'Course Start', session.hs_course_start);
+  setTextAutoSize(form, 'Course End', session.hs_course_end);
   setTextSafely(form, 'Total Hours', session.hs_total_hours);
   setTextSafely(form, 'No of Cards Issued', session.hs_no_of_cards_issued);
   setTextSafely(form, 'Student-Manikin Ratio', session.hs_student_manikin_ratio);
   setTextSafely(form, 'Issue Date of Cards', session.hs_issue_date_of_cards);
+  await drawSignatureImage(doc, doc.getPages()[0], SIGNATURE_RECT, session.trainer_signature);
 
   const firstBatch = attendees.slice(0, MAX_ROSTER_ROWS);
   firstBatch.forEach((a, i) => {

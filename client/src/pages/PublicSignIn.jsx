@@ -10,14 +10,15 @@ import { AHA_OPTIONAL_TOPICS } from '../lib/ahaOptionalTopics';
 // matches server/routes/publicSessions.js's AHA_ROSTER_TRAINING_ID.
 const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 
-// Renders an <input type="datetime-local"> value ("2026-09-21T08:00") as the plain "9/21/2026
-// 8:00 AM" style the printed AHA form expects. Deliberately does its own string parsing instead
-// of round-tripping through `new Date(...)` - a datetime-local value is just wall-clock numbers
-// with no timezone attached, and this app's whole convention is that a time typed in means
-// Eastern, the business's own timezone, regardless of what timezone the trainer's phone/laptop
-// happens to be set to (see client/src/lib/dates.js) - building a real Date object here would
-// silently reinterpret those numbers through the device's local offset instead of leaving them
-// exactly as entered.
+// Renders an <input type="datetime-local"> value ("2026-09-21T08:00") as the short "09/21/26
+// 8:00 AM" style the printed AHA form expects - short-dated (MM/DD/YY) so the whole thing still
+// fits on the form's one-line "Course Start/End Date/Time" field alongside the time. Deliberately
+// does its own string parsing instead of round-tripping through `new Date(...)` - a datetime-
+// local value is just wall-clock numbers with no timezone attached, and this app's whole
+// convention is that a time typed in means Eastern, the business's own timezone, regardless of
+// what timezone the trainer's phone/laptop happens to be set to (see client/src/lib/dates.js) -
+// building a real Date object here would silently reinterpret those numbers through the device's
+// local offset instead of leaving them exactly as entered.
 function formatDateTimeLocal(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value || '');
   if (!match) return '';
@@ -25,7 +26,7 @@ function formatDateTimeLocal(value) {
   const hour24Num = Number(hour24);
   const period = hour24Num >= 12 ? 'PM' : 'AM';
   const hour12 = hour24Num % 12 === 0 ? 12 : hour24Num % 12;
-  return `${Number(month)}/${Number(day)}/${year} ${hour12}:${minute} ${period}`;
+  return `${month}/${day}/${year.slice(2)} ${hour12}:${minute} ${period}`;
 }
 
 function formatDate(d) {
@@ -528,11 +529,11 @@ export default function PublicSignIn() {
                     </div>
                     <div className="field">
                       <label>Issue Date of Cards</label>
-                      <input value={hsIssueDateOfCards} onChange={(e) => setHsIssueDateOfCards(e.target.value)} />
+                      <input type="date" value={hsIssueDateOfCards} onChange={(e) => setHsIssueDateOfCards(e.target.value)} />
                     </div>
                     <div className="field">
                       <label>Card Expiration Date</label>
-                      <input value={hsCardExpirationDate} onChange={(e) => setHsCardExpirationDate(e.target.value)} />
+                      <input type="date" value={hsCardExpirationDate} onChange={(e) => setHsCardExpirationDate(e.target.value)} />
                     </div>
 
                     <div className="field">
