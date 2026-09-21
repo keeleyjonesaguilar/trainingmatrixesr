@@ -29,9 +29,33 @@ router.post('/duplicates/ignore', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Trainer profiles that share a name/phone with a real employee elsewhere in the system
+// (Keeley's request, 2026-09-21) - the actual merge reuses POST /api/employees/merge (already
+// type-agnostic; see server/lib/repo.js's mergeEmployees), this just surfaces the pairing.
+router.get('/cross-matches', async (req, res) => {
+  res.json(await repo.findTrainerEmployeeCrossMatches());
+});
+
+router.post('/cross-matches/ignore', requireAdmin, async (req, res) => {
+  const { trainer_id, employee_id } = req.body || {};
+  if (!trainer_id || !employee_id) {
+    return res.status(400).json({ error: 'trainer_id and employee_id are required' });
+  }
+  await repo.ignoreDuplicateCluster('trainer_employee', [trainer_id, employee_id]);
+  res.json({ ok: true });
+});
+
+// A "trainer" here means anyone who trains, not only a standalone trainer-type profile under
+// the internal client (Keeley's request, 2026-09-21) - a real employee who's ever taught a
+// session (most often after being merged with what used to be their own separate trainer
+// profile) still belongs on this page, under their real client, with their own completed-
+// trainings history intact.
 router.get('/', async (req, res) => {
   const rows = await dbAll(
-    `SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer' ORDER BY full_name ASC`,
+    `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id
+     WHERE (e.client_id = ? AND e.employee_type = 'trainer')
+        OR e.employee_id IN (SELECT DISTINCT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
+     ORDER BY e.full_name ASC`,
     [INTERNAL_CLIENT_ID]
   );
   res.json(rows);

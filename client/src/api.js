@@ -90,6 +90,9 @@ export const api = {
   getPossibleDuplicateTrainers: () => request('/trainers/duplicates'),
   createTrainer: (data) => request('/trainers', { method: 'POST', body: JSON.stringify(data) }),
   ignoreDuplicateTrainers: (memberIds) => request('/trainers/duplicates/ignore', { method: 'POST', body: JSON.stringify({ member_ids: memberIds }) }),
+  getTrainerEmployeeCrossMatches: () => request('/trainers/cross-matches'),
+  ignoreTrainerEmployeeCrossMatch: (trainerId, employeeId) =>
+    request('/trainers/cross-matches/ignore', { method: 'POST', body: JSON.stringify({ trainer_id: trainerId, employee_id: employeeId }) }),
 
   // Master Trainings
   listMasterTrainings: (activeOnly = false) => request(`/master-trainings${activeOnly ? '?activeOnly=true' : ''}`),
@@ -109,6 +112,7 @@ export const api = {
   mergeEmployees: (winnerId, loserIds) => request('/employees/merge', { method: 'POST', body: JSON.stringify({ winner_id: winnerId, loser_ids: loserIds }) }),
   ignoreDuplicateEmployees: (memberIds) => request('/employees/duplicates/ignore', { method: 'POST', body: JSON.stringify({ member_ids: memberIds }) }),
   getEmployeeFacets: (clientId) => request(`/employees/facets/list${clientId ? `?client_id=${clientId}` : ''}`),
+  searchAnyEmployee: (q, excludeId) => request(`/employees/search-any?${new URLSearchParams({ q, ...(excludeId ? { exclude_id: excludeId } : {}) }).toString()}`),
 
   // Training Requirements (Client Settings)
   getClientRequirements: (clientId) => request(`/training-requirements/client/${clientId}`),

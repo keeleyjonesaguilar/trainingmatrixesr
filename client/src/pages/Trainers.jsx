@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import DuplicateTrainersPanel from '../components/DuplicateTrainersPanel.jsx';
+import TrainerEmployeeMatchesPanel from '../components/TrainerEmployeeMatchesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 
@@ -135,6 +136,7 @@ export default function Trainers() {
         />
       )}
 
+      {isAdmin && <TrainerEmployeeMatchesPanel onMerged={load} />}
       {isAdmin && <DuplicateTrainersPanel onMerged={load} />}
 
       <div className="card">
@@ -144,6 +146,7 @@ export default function Trainers() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Client</th>
                 <th>Role / Trade</th>
                 <th>Phone Number</th>
                 <th>Status</th>
@@ -153,6 +156,7 @@ export default function Trainers() {
               {visibleTrainers.map((t) => (
                 <tr key={t.employee_id}>
                   <td><Link to={`/employees/${t.employee_id}`}>{t.full_name}</Link></td>
+                  <td>{t.client_name}</td>
                   <td>{t.job_title || '—'}</td>
                   <td>{t.employee_number || '—'}</td>
                   <td><span className={`badge ${t.active ? 'badge-current' : 'badge-notapplicable'}`}>{t.active ? 'Active' : 'Inactive'}</span></td>
@@ -160,7 +164,7 @@ export default function Trainers() {
               ))}
               {visibleTrainers.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="empty-state">
+                  <td colSpan={5} className="empty-state">
                     {trainers.length === 0
                       ? 'No trainers yet — add one above.'
                       : showActive ? 'No active trainers.' : 'No inactive trainers.'}

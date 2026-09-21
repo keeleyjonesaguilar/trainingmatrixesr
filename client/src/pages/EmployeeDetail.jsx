@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
 // Keeley wants - Employee Phone Number is now how employees are tracked/identified.
@@ -165,6 +166,7 @@ export default function EmployeeDetail() {
   const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
   const [deactivateConfirmText, setDeactivateConfirmText] = useState('');
   const [trainers, setTrainers] = useState([]);
+  const [showMergeModal, setShowMergeModal] = useState(false);
 
   useEffect(() => { api.listTrainers().then(setTrainers).catch(() => {}); }, []);
 
@@ -227,9 +229,24 @@ export default function EmployeeDetail() {
           {isAdmin && !employee.active && (
             <button className="secondary" onClick={reactivateEmployee}>Reactivate Employee</button>
           )}
+          {isAdmin && <button className="secondary" onClick={() => setShowMergeModal(true)}>Merge With Another Profile</button>}
           {isAdmin && !confirmingDelete && <button className="danger" onClick={() => setConfirmingDelete(true)}>Delete Employee</button>}
         </div>
       </div>
+
+      {showMergeModal && (
+        <MergeWithProfileModal
+          employee={{ ...employee, client_name: isTrainer ? 'Internal / Trainers' : client?.client_name }}
+          onMerged={(winnerId) => {
+            setShowMergeModal(false);
+            // This profile may have been the one that got merged away - its own id is gone, so
+            // reloading the same URL would 404. Land on the surviving profile instead.
+            if (winnerId !== employee.employee_id) navigate(`/employees/${winnerId}`);
+            else load();
+          }}
+          onCancel={() => setShowMergeModal(false)}
+        />
+      )}
 
       {confirmingDeactivate && (
         <div className="card">

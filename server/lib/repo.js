@@ -457,6 +457,14 @@ async function mergeEmployees(winnerId, loserIds) {
 
     await dbRun('UPDATE employee_training_records SET employee_id = ?, client_id = ? WHERE employee_id = ?', [winnerId, winner.client_id, loserId]);
     await dbRun('UPDATE session_attendees SET employee_id = ? WHERE employee_id = ?', [winnerId, loserId]);
+    // Both trainer_employee_id columns default to ON DELETE SET NULL (migrations 010, 014) -
+    // without repointing these first, deleting the loser below would silently erase the record
+    // of every session/training record they're credited as the trainer on (Keeley's report,
+    // 2026-09-21: a merge between a trainer profile and their own separate employee profile was
+    // quietly losing everything they'd taught). Applies to every merge, not just a trainer-into-
+    // employee one - two trainer profiles merging today has the exact same bug.
+    await dbRun('UPDATE training_sessions SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
+    await dbRun('UPDATE employee_training_records SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
     await dbRun('DELETE FROM employees WHERE employee_id = ?', [loserId]);
   }
 
@@ -556,6 +564,48 @@ async function findDuplicateTrainerClusters() {
   return result;
 }
 
+// A trainer profile (lives under the internal client) and a real employee (lives under their
+// own client) sharing a name or phone number are very likely the same real person (Keeley's
+// request, 2026-09-21: several trainers turned out to also be employees with their own
+// completed-training history). Unlike findDuplicateEmployeeClusters/findDuplicateTrainerClusters,
+// this deliberately crosses both the client and employee_type boundary those two respect, since
+// the whole point is finding the pair that's split across them.
+async function findTrainerEmployeeCrossMatches() {
+  const trainers = await dbAll(`SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer'`, [INTERNAL_CLIENT_ID]);
+  const employees = await dbAll(
+    `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE e.employee_type != 'trainer'`
+  );
+  const employeesByName = new Map();
+  const employeesByPhone = new Map();
+  for (const e of employees) {
+    const nameKey = (e.full_name || '').trim().toLowerCase();
+    if (nameKey) {
+      if (!employeesByName.has(nameKey)) employeesByName.set(nameKey, []);
+      employeesByName.get(nameKey).push(e);
+    }
+    const phoneKey = (e.employee_number || '').replace(/\D/g, '');
+    if (phoneKey) {
+      if (!employeesByPhone.has(phoneKey)) employeesByPhone.set(phoneKey, []);
+      employeesByPhone.get(phoneKey).push(e);
+    }
+  }
+
+  const result = [];
+  for (const trainer of trainers) {
+    const nameKey = (trainer.full_name || '').trim().toLowerCase();
+    const phoneKey = (trainer.employee_number || '').replace(/\D/g, '');
+    const matches = new Map();
+    for (const e of employeesByName.get(nameKey) || []) matches.set(e.employee_id, e);
+    for (const e of employeesByPhone.get(phoneKey) || []) matches.set(e.employee_id, e);
+    for (const employee of matches.values()) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isClusterIgnored('trainer_employee', [trainer.employee_id, employee.employee_id])) continue;
+      result.push({ trainer, employee });
+    }
+  }
+  return result;
+}
+
 // Groups real (non-internal) clients sharing a normalized name - simpler than the employee
 // version since there's no phone number to also match on for clients.
 async function findDuplicateClientClusters() {
@@ -647,5 +697,6 @@ module.exports = {
   mergeClients,
   findDuplicateClientClusters,
   findDuplicateTrainerClusters,
+  findTrainerEmployeeCrossMatches,
   ignoreDuplicateCluster,
 };

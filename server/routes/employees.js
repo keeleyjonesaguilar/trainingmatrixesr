@@ -28,6 +28,24 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
+// Search across every employee AND trainer by name, regardless of client or employee_type
+// (Keeley's request, 2026-09-21) - feeds the manual "merge with another profile" picker on an
+// employee/trainer's own page, since neither the regular list above nor the Trainers page search
+// crosses that boundary on their own.
+router.get('/search-any', async (req, res) => {
+  const { q, exclude_id } = req.query;
+  if (!q || !q.trim()) return res.json([]);
+  const clauses = ['LOWER(e.full_name) LIKE ?'];
+  const params = [`%${q.trim().toLowerCase()}%`];
+  if (exclude_id) { clauses.push('e.employee_id != ?'); params.push(exclude_id); }
+  const rows = await dbAll(
+    `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id
+     WHERE ${clauses.join(' AND ')} ORDER BY e.full_name ASC LIMIT 20`,
+    params
+  );
+  res.json(rows);
+});
+
 // Distinct department/job title lists, used to populate matrix filter dropdowns (spec section 8).
 router.get('/facets/list', async (req, res) => {
   const { client_id } = req.query;
