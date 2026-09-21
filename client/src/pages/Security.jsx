@@ -28,6 +28,7 @@ const ACTIVITY_ACTION_LABELS = {
   session_link_copied: 'Sign-in/feedback link copied',
   qr_code_downloaded: 'QR code downloaded',
   roster_downloaded: 'Roster downloaded',
+  aha_roster_downloaded: 'AHA roster downloaded',
   certificate_downloaded: 'Certificate downloaded',
   certificates_zip_downloaded: 'Certificates ZIP downloaded',
   client_created: 'Client created',

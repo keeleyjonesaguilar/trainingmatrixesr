@@ -8,6 +8,7 @@ const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
+const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 
 const router = express.Router();
 
@@ -36,9 +37,10 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
-// Employee ID is captured here too (Keeley's call: trainers are identified by their own
-// company Employee ID, not phone number) - stored on the same employee_number column a
-// regular employee's phone uses; free-typed, no format validation.
+// Trainers are identified by phone number, same as a regular employee (Keeley's call,
+// 2026-09-18: trainer and employee IDs are both phone numbers now) - stored on the same
+// employee_number column, validated/formatted the same way as server/routes/employees.js's
+// POST /.
 //
 // Open to the plain 'user' role too (Keeley's request, 2026-09-16) - see the matching note on
 // server/routes/clients.js's POST /.
@@ -47,11 +49,14 @@ router.post('/', async (req, res) => {
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ error: 'full_name is required' });
   }
+  if (employee_number && !isValidPhoneNumber(employee_number)) {
+    return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
+  }
   const employee_id = uuidv4();
   await dbRun(
     `INSERT INTO employees (employee_id, client_id, full_name, job_title, employee_number, active, employee_type)
      VALUES (?, ?, ?, ?, ?, 1, 'trainer')`,
-    [employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, employee_number ? employee_number.trim() : null]
+    [employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, formatPhoneNumber(employee_number)]
   );
   logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: full_name.trim(), req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));

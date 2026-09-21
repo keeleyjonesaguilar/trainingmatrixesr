@@ -61,8 +61,8 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
           <input type="text" autoFocus placeholder="e.g. Jamie Trainer" value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div className="field-row">
-          <label>Employee ID</label>
-          <input type="text" placeholder="e.g. E-1042" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} />
+          <label>Phone Number</label>
+          <input type="text" placeholder="(555) 123-4567" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} />
           <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Used to match this trainer to their sessions - add it so sessions created for them link up correctly.</p>
         </div>
         <div className="field-row">
@@ -145,7 +145,7 @@ export default function Trainers() {
               <tr>
                 <th>Name</th>
                 <th>Role / Trade</th>
-                <th>Employee ID</th>
+                <th>Phone Number</th>
                 <th>Status</th>
               </tr>
             </thead>

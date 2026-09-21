@@ -289,6 +289,29 @@ router.put('/:id', requireAdmin, async (req, res) => {
   res.json({ ...session, translation_warning: warning });
 });
 
+// Two independent fulfillment checkboxes (Keeley's request, 2026-09-21) - whether this
+// session's roster/certs were sent to the client and/or saved to the server. Deliberately its
+// own lightweight endpoint rather than folded into the "Edit Session Details" PUT above, since
+// that one requires the full set of session fields and these two flags need to be toggleable on
+// their own from both the session page and (eventually) the list.
+router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
+  const existing = await dbGet('SELECT session_id FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Session not found' });
+  const { sent_to_client, saved_to_server } = req.body || {};
+  await dbRun(
+    `UPDATE training_sessions SET
+       sent_to_client = COALESCE(?, sent_to_client),
+       saved_to_server = COALESCE(?, saved_to_server)
+     WHERE session_id = ?`,
+    [
+      sent_to_client === undefined ? null : (sent_to_client ? 1 : 0),
+      saved_to_server === undefined ? null : (saved_to_server ? 1 : 0),
+      req.params.id,
+    ]
+  );
+  res.json(await dbGet('SELECT sent_to_client, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
+});
+
 // Delete a session created by accident (Keeley's request - lives under the session's own
 // "Edit Session Details" panel). Attendee rows cascade-delete via the FK; certificate/roster
 // files on disk don't, so they're unlinked first, mirroring the client-delete cleanup pattern.
@@ -362,6 +385,20 @@ router.get('/:id/roster.pdf', async (req, res) => {
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'PDF', req,
   });
   res.download(session.roster_pdf_path, buildRosterFilename(session, 'pdf'));
+});
+
+// The official AHA Heartsaver Course Roster (Keeley's request, 2026-09-21) - only ever
+// populated for First Aid/CPR/AED (TRN-020) sessions; see server/lib/ahaRoster.js.
+router.get('/:id/aha-roster.pdf', async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session || !session.hs_roster_pdf_path) {
+    return res.status(404).json({ error: 'AHA roster not available yet — close the session first' });
+  }
+  logActivity({
+    actor: req.user, action: 'aha_roster_downloaded', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
+  });
+  res.download(session.hs_roster_pdf_path, buildRosterFilename(session, 'pdf').replace('.pdf', '_AHA-Roster.pdf'));
 });
 
 router.get('/:sessionId/attendees/:attendeeId/certificate.pdf', async (req, res) => {

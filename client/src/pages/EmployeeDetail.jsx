@@ -15,12 +15,13 @@ function formatPhoneInput(value) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
-function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
+function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
   const isTrainer = employee.employee_type === 'trainer';
   const [form, setForm] = useState({
     job_title: employee.job_title || '',
     employee_number: employee.employee_number || '',
     active: employee.active,
+    aha_instructor_id: employee.aha_instructor_id || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -43,34 +44,41 @@ function EmployeeProfileEditor({ employee, onSaved, onCancel }) {
       {error && <div className="error-banner">{error}</div>}
       <div className="toolbar">
         <div className="field-row">
-          <label>{isTrainer ? 'Employee ID' : 'Employee Phone Number'}</label>
-          {isTrainer ? (
-            <input
-              type="text"
-              placeholder="e.g. E-1042"
-              value={form.employee_number}
-              onChange={(e) => setForm({ ...form, employee_number: e.target.value })}
-            />
-          ) : (
-            <input
-              type="text"
-              placeholder="(xxx) xxx-xxxx"
-              value={form.employee_number}
-              onChange={(e) => setForm({ ...form, employee_number: formatPhoneInput(e.target.value) })}
-            />
-          )}
+          <label>Employee Phone Number</label>
+          <input
+            type="text"
+            placeholder="(xxx) xxx-xxxx"
+            value={form.employee_number}
+            onChange={(e) => setForm({ ...form, employee_number: formatPhoneInput(e.target.value) })}
+          />
         </div>
         <div className="field-row">
           <label>Role / Trade</label>
           <input type="text" value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} />
         </div>
-        <div className="field-row">
-          <label>Status</label>
-          <select value={form.active ? '1' : '0'} onChange={(e) => setForm({ ...form, active: e.target.value === '1' })}>
-            <option value="1">Active</option>
-            <option value="0">Inactive</option>
-          </select>
-        </div>
+        {isAdmin && isTrainer && (
+          <div className="field-row">
+            <label>AHA Instructor ID#</label>
+            <input
+              type="text"
+              placeholder="e.g. 123456789"
+              value={form.aha_instructor_id}
+              onChange={(e) => setForm({ ...form, aha_instructor_id: e.target.value })}
+            />
+            <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+              Only needed for trainers who teach First Aid/CPR/AED - printed on the AHA Course Roster.
+            </p>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="field-row">
+            <label>Status</label>
+            <select value={form.active ? '1' : '0'} onChange={(e) => setForm({ ...form, active: e.target.value === '1' })}>
+              <option value="1">Active</option>
+              <option value="0">Inactive</option>
+            </select>
+          </div>
+        )}
       </div>
       <button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save Profile'}</button>{' '}
       <button className="secondary" onClick={onCancel}>Cancel</button>
@@ -265,7 +273,12 @@ export default function EmployeeDetail() {
         </div>
       )}
       {editingProfile ? (
-        <EmployeeProfileEditor employee={employee} onSaved={() => { setEditingProfile(false); load(); }} onCancel={() => setEditingProfile(false)} />
+        <EmployeeProfileEditor
+          employee={employee}
+          isAdmin={isAdmin}
+          onSaved={() => { setEditingProfile(false); load(); }}
+          onCancel={() => setEditingProfile(false)}
+        />
       ) : (
         <div className="card detail-header-card">
           <div className="detail-identity">
@@ -277,7 +290,7 @@ export default function EmployeeDetail() {
           </div>
           <div className="detail-meta">
             <div className="detail-meta-item">
-              <div className="detail-meta-label">{isTrainer ? 'Employee ID' : 'Employee Phone Number'}</div>
+              <div className="detail-meta-label">Employee Phone Number</div>
               <div className="detail-meta-value">{employee.employee_number || '—'}</div>
             </div>
             <div className="detail-meta-item">
@@ -285,7 +298,7 @@ export default function EmployeeDetail() {
               <div className="detail-meta-value">{employee.active ? 'Active' : 'Inactive'}</div>
             </div>
           </div>
-          {isAdmin && <button className="secondary" onClick={() => setEditingProfile(true)}>Edit Profile</button>}
+          <button className="secondary" onClick={() => setEditingProfile(true)}>Edit Profile</button>
         </div>
       )}
 

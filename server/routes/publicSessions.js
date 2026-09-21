@@ -6,6 +6,11 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
+const { generateAhaRoster } = require('../lib/ahaRoster');
+
+// The one training this special AHA-format roster applies to (Keeley's request, 2026-09-21) -
+// every other training keeps using the regular in-house roster/certificate only.
+const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
 const { buildCertificateFilename } = require('../lib/certificateFilename');
 const { DATA_DIR } = require('../lib/paths');
@@ -59,6 +64,7 @@ router.get('/:token', async (req, res) => {
   );
   res.json({
     client_name: session.client_name,
+    master_training_id: session.master_training_id,
     training_type_label: session.training_type_label,
     training_type_label_es: session.training_type_label_es,
     additional_training_labels: additionalTrainings.map((t) => t.training_type_label),
@@ -129,7 +135,16 @@ router.post('/:token/close', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This session is already closed.' });
   }
-  const { trainer_signed_name, trainer_email, trainer_phone, signature, pin } = req.body || {};
+  const {
+    trainer_signed_name, trainer_email, trainer_phone, signature, pin,
+    // AHA Heartsaver Course Roster fields (Keeley's request, 2026-09-21) - only meaningful, and
+    // only validated, when this session's training is First Aid/CPR/AED; every other training
+    // ignores these even if somehow present in the request body.
+    hs_course_options, hs_training_center, hs_training_center_id, hs_training_site_name,
+    hs_address, hs_city_state_zip, hs_course_start, hs_course_end, hs_total_hours,
+    hs_no_of_cards_issued, hs_student_manikin_ratio, hs_issue_date_of_cards, hs_card_expiration_date,
+    hs_optional_topics, hs_additional_instructors,
+  } = req.body || {};
   if (!trainer_signed_name || !trainer_signed_name.trim()) {
     return res.status(400).json({ error: 'Trainer name is required to close the session.' });
   }
@@ -157,13 +172,34 @@ router.post('/:token/close', async (req, res) => {
     return res.status(400).json({ error: 'Incorrect PIN.' });
   }
 
+  // Defensive cap matching the template's own layout (only 8 Assisting Instructor rows exist on
+  // the form) - the close-out form already enforces this, but a direct API call shouldn't be
+  // able to send more than the PDF has room to print.
+  const cappedAdditionalInstructors = Array.isArray(hs_additional_instructors)
+    ? hs_additional_instructors.slice(0, 8)
+    : null;
+
   const formattedTrainerPhone = formatPhoneNumber(trainer_phone);
   await dbRun(
     `UPDATE training_sessions
      SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_phone = ?, trainer_signature = ?,
-         trainer_signed_at = now_utc_text(), closed_at = now_utc_text()
+         trainer_signed_at = now_utc_text(), closed_at = now_utc_text(),
+         hs_course_options = ?, hs_training_center = ?, hs_training_center_id = ?, hs_training_site_name = ?,
+         hs_address = ?, hs_city_state_zip = ?, hs_course_start = ?, hs_course_end = ?, hs_total_hours = ?,
+         hs_no_of_cards_issued = ?, hs_student_manikin_ratio = ?, hs_issue_date_of_cards = ?, hs_card_expiration_date = ?,
+         hs_optional_topics = ?, hs_additional_instructors = ?
      WHERE session_id = ?`,
-    [trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature, session.session_id]
+    [
+      trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature,
+      Array.isArray(hs_course_options) ? JSON.stringify(hs_course_options) : null,
+      hs_training_center || null, hs_training_center_id || null, hs_training_site_name || null,
+      hs_address || null, hs_city_state_zip || null, hs_course_start || null, hs_course_end || null,
+      hs_total_hours || null, hs_no_of_cards_issued || null, hs_student_manikin_ratio || null,
+      hs_issue_date_of_cards || null, hs_card_expiration_date || null,
+      Array.isArray(hs_optional_topics) ? JSON.stringify(hs_optional_topics) : null,
+      cappedAdditionalInstructors ? JSON.stringify(cappedAdditionalInstructors) : null,
+      session.session_id,
+    ]
   );
 
   // Keep the trainer's own profile current from what they just signed off with (Keeley's
@@ -253,6 +289,24 @@ router.post('/:token/close', async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Roster PDF generation failed for session ${session.session_id}:`, err);
+  }
+
+  if (updatedSession.master_training_id === AHA_ROSTER_TRAINING_ID) {
+    try {
+      let trainerAhaInstructorId = null;
+      if (updatedSession.trainer_employee_id) {
+        const trainerEmployee = await dbGet('SELECT aha_instructor_id FROM employees WHERE employee_id = ?', [updatedSession.trainer_employee_id]);
+        trainerAhaInstructorId = trainerEmployee?.aha_instructor_id || null;
+      }
+      const ahaRosterPath = await generateAhaRoster(
+        { ...updatedSession, trainer_aha_instructor_id: trainerAhaInstructorId },
+        attendeesFinal
+      );
+      await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`AHA roster generation failed for session ${session.session_id}:`, err);
+    }
   }
 
   try {

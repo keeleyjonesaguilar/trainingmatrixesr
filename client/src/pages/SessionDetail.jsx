@@ -313,6 +313,7 @@ export default function SessionDetail() {
   const [clients, setClients] = useState([]);
   const [trainings, setTrainings] = useState([]);
   const [copiedLink, setCopiedLink] = useState('');
+  const [savingFulfillment, setSavingFulfillment] = useState('');
 
   const load = () => {
     api.getTrainingSession(id).then(setSession).catch((err) => setError(err.message));
@@ -366,6 +367,18 @@ export default function SessionDetail() {
     }
   };
 
+  const toggleFulfillment = async (field, value) => {
+    setSavingFulfillment(field);
+    try {
+      const updated = await api.updateSessionFulfillment(id, { [field]: value });
+      setSession((prev) => (prev ? { ...prev, ...updated } : prev));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingFulfillment('');
+    }
+  };
+
   const retryProcessing = async (attendeeId) => {
     setRetryingId(attendeeId);
     try {
@@ -405,6 +418,29 @@ export default function SessionDetail() {
           <>{' '}· <button type="button" className="link-button" onClick={() => setEditingSession(true)}>Edit session details</button></>
         )}
       </p>
+
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 16, marginBottom: 16, fontSize: 13 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!session.sent_to_client}
+              disabled={savingFulfillment === 'sent_to_client'}
+              onChange={(e) => toggleFulfillment('sent_to_client', e.target.checked)}
+            />
+            Sent to Client
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!session.saved_to_server}
+              disabled={savingFulfillment === 'saved_to_server'}
+              onChange={(e) => toggleFulfillment('saved_to_server', e.target.checked)}
+            />
+            Saved to Server
+          </label>
+        </div>
+      )}
 
       {editingSession && (
         <EditSessionForm
@@ -451,6 +487,15 @@ export default function SessionDetail() {
                 <a href={`/api/training-sessions/${id}/roster.pdf`} className="btn btn-sm" style={{ justifyContent: 'center' }}>
                   Download Roster (PDF)
                 </a>
+                {session.master_training_id === 'TRN-020' && (
+                  <a
+                    href={`/api/training-sessions/${id}/aha-roster.pdf`}
+                    className="btn btn-accent btn-sm"
+                    style={{ justifyContent: 'center' }}
+                  >
+                    Download AHA Course Roster (PDF)
+                  </a>
+                )}
                 <a
                   href={`/api/training-sessions/${id}/roster.csv`}
                   className="btn btn-secondary btn-sm"

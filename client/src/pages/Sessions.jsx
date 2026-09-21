@@ -8,6 +8,16 @@ function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
 }
 
+// Whether this session's roster/certs were sent to the client and/or saved to the server
+// (Keeley's request, 2026-09-21) - two independent checkboxes on the session's own page,
+// summarized here as a single badge so the list stays scannable.
+function FulfillmentBadge({ sentToClient, savedToServer }) {
+  if (sentToClient && savedToServer) return <span className="badge badge-current">Sent & Saved</span>;
+  if (sentToClient) return <span className="badge badge-noexpiration">Sent to Client</span>;
+  if (savedToServer) return <span className="badge badge-pendingreview">Saved to Server</span>;
+  return <span className="page-subtitle" style={{ margin: 0 }}>—</span>;
+}
+
 export default function Sessions() {
   const [searchParams] = useSearchParams();
   const clientIdFilter = searchParams.get('client_id') || '';
@@ -395,6 +405,7 @@ export default function Sessions() {
               <th>Trainer</th>
               <th>Attendees</th>
               <th>Status</th>
+              <th>Fulfillment</th>
             </tr>
           </thead>
           <tbody>
@@ -407,6 +418,9 @@ export default function Sessions() {
                 <td>{s.attendee_count}</td>
                 <td>
                   <StatusBadge status={s.status} />
+                </td>
+                <td>
+                  <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />
                 </td>
               </tr>
             ))}

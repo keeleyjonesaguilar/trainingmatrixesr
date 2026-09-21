@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { computeStatus } = require('../lib/statusEngine');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, requireAuth, isAdminRole } = require('../middleware/auth');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
@@ -241,10 +241,22 @@ router.post('/', async (req, res) => {
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 
-router.put('/:id', requireAdmin, async (req, res) => {
+// A plain "user" may edit an employee/trainer's basic profile (Keeley's request, 2026-09-18) -
+// but not their name, department, notes, or active status, which stay admin-only (the
+// Deactivate/Reactivate and Delete flows already require admin separately). Only employee_number
+// and job_title come from req.body for a non-admin caller; everything else is pinned to its
+// existing value regardless of what's in the request body, so a direct API call can't sneak in
+// a broader change than the UI exposes.
+router.put('/:id', requireAuth, async (req, res) => {
   const existing = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
-  const merged = { ...existing, ...req.body };
+  let incoming = req.body;
+  if (!isAdminRole(req.user.role)) {
+    incoming = {};
+    if ('employee_number' in req.body) incoming.employee_number = req.body.employee_number;
+    if ('job_title' in req.body) incoming.job_title = req.body.job_title;
+  }
+  const merged = { ...existing, ...incoming };
   try {
     assertClientTypeInvariant(merged.client_id, merged.employee_type);
   } catch (err) {
@@ -254,8 +266,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
   await dbRun(
-    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=? WHERE employee_id=?`,
-    [formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department, merged.active ? 1 : 0, merged.notes, req.params.id]
+    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=? WHERE employee_id=?`,
+    [
+      formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department,
+      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, req.params.id,
+    ]
   );
   logActivity({ actor: req.user, action: 'employee_updated', entityType: 'employee', entityId: req.params.id, entityLabel: merged.full_name, req });
   res.json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]));

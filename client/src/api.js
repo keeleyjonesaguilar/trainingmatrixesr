@@ -186,6 +186,8 @@ export const api = {
   createTrainingSession: (payload) => request('/training-sessions', { method: 'POST', body: JSON.stringify(payload) }),
   updateTrainingSession: (id, payload) => request(`/training-sessions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteTrainingSession: (id) => request(`/training-sessions/${id}`, { method: 'DELETE' }),
+  updateSessionFulfillment: (id, payload) =>
+    request(`/training-sessions/${id}/fulfillment`, { method: 'PATCH', body: JSON.stringify(payload) }),
   logSessionLinkCopied: (id, linkType) => request(`/training-sessions/${id}/log-link-copied`, { method: 'POST', body: JSON.stringify({ link_type: linkType }) }),
   updateSessionAttendee: (sessionId, attendeeId, payload) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),

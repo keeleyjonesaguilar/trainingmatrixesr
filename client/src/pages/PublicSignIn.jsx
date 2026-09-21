@@ -3,6 +3,30 @@ import { useParams } from 'react-router-dom';
 import { api } from '../api';
 import esrMark from '../assets/brand/esr-mark.png';
 import SignaturePad from '../components/SignaturePad';
+import { AHA_COURSE_OPTIONS, AHA_COURSE_GROUPS } from '../lib/ahaCourseOptions';
+import { AHA_OPTIONAL_TOPICS } from '../lib/ahaOptionalTopics';
+
+// The one training this extra AHA-format section applies to (Keeley's request, 2026-09-21) -
+// matches server/routes/publicSessions.js's AHA_ROSTER_TRAINING_ID.
+const AHA_ROSTER_TRAINING_ID = 'TRN-020';
+
+// Renders an <input type="datetime-local"> value ("2026-09-21T08:00") as the plain "9/21/2026
+// 8:00 AM" style the printed AHA form expects. Deliberately does its own string parsing instead
+// of round-tripping through `new Date(...)` - a datetime-local value is just wall-clock numbers
+// with no timezone attached, and this app's whole convention is that a time typed in means
+// Eastern, the business's own timezone, regardless of what timezone the trainer's phone/laptop
+// happens to be set to (see client/src/lib/dates.js) - building a real Date object here would
+// silently reinterpret those numbers through the device's local offset instead of leaving them
+// exactly as entered.
+function formatDateTimeLocal(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value || '');
+  if (!match) return '';
+  const [, year, month, day, hour24, minute] = match;
+  const hour24Num = Number(hour24);
+  const period = hour24Num >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24Num % 12 === 0 ? 12 : hour24Num % 12;
+  return `${Number(month)}/${Number(day)}/${year} ${hour12}:${minute} ${period}`;
+}
 
 function formatDate(d) {
   if (!d) return '';
@@ -106,6 +130,53 @@ export default function PublicSignIn() {
   const [closedNow, setClosedNow] = useState(false);
   const sigRef = useRef(null);
 
+  // AHA Heartsaver Course Roster fields (Keeley's request, 2026-09-21) - only ever shown/sent
+  // when this session's training is First Aid/CPR/AED; every other training ignores them.
+  const [hsCourseOptions, setHsCourseOptions] = useState([]);
+  const [hsTrainingCenter, setHsTrainingCenter] = useState('');
+  const [hsTrainingCenterId, setHsTrainingCenterId] = useState('');
+  const [hsTrainingSiteName, setHsTrainingSiteName] = useState('');
+  const [hsAddress, setHsAddress] = useState('');
+  const [hsCityStateZip, setHsCityStateZip] = useState('');
+  const [hsCourseStart, setHsCourseStart] = useState('');
+  const [hsCourseEnd, setHsCourseEnd] = useState('');
+  const [hsTotalHours, setHsTotalHours] = useState('');
+  const [hsNoOfCardsIssued, setHsNoOfCardsIssued] = useState('');
+  const [hsStudentManikinRatio, setHsStudentManikinRatio] = useState('');
+  const [hsIssueDateOfCards, setHsIssueDateOfCards] = useState('');
+  const [hsCardExpirationDate, setHsCardExpirationDate] = useState('');
+  const [hsOptionalTopics, setHsOptionalTopics] = useState([]);
+  const [hasAdditionalInstructors, setHasAdditionalInstructors] = useState(false);
+  const [additionalInstructors, setAdditionalInstructors] = useState([{ name_id: '', card_exp_date: '' }]);
+
+  const toggleHsOption = (key) => {
+    setHsCourseOptions((prev) => {
+      if (prev.includes(key)) {
+        // Unchecking a top-level course also clears its own sub-options - they're meaningless
+        // without the course they belong to.
+        const subKeys = AHA_COURSE_OPTIONS.filter((o) => o.group === key).map((o) => o.key);
+        return prev.filter((k) => k !== key && !subKeys.includes(k));
+      }
+      return [...prev, key];
+    });
+  };
+
+  const toggleHsTopic = (key) => {
+    setHsOptionalTopics((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  };
+
+  const updateAdditionalInstructor = (index, field, value) => {
+    setAdditionalInstructors((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  };
+
+  const addAdditionalInstructorRow = () => {
+    setAdditionalInstructors((prev) => (prev.length >= 8 ? prev : [...prev, { name_id: '', card_exp_date: '' }]));
+  };
+
+  const removeAdditionalInstructorRow = (index) => {
+    setAdditionalInstructors((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  };
+
   const load = () => {
     api
       .publicSessionInfo(token)
@@ -171,12 +242,34 @@ export default function PublicSignIn() {
     if (sigRef.current?.isEmpty()) return setFormError(t('err_trainer_signature'));
     setSubmitting(true);
     try {
+      const isAhaSession = info?.master_training_id === AHA_ROSTER_TRAINING_ID;
       await api.publicCloseSession(token, {
         trainer_signed_name: trainerName.trim(),
         trainer_email: trainerEmail.trim(),
         trainer_phone: trainerPhone.trim(),
         pin: pin.trim(),
         signature: sigRef.current.toDataURL(),
+        ...(isAhaSession
+          ? {
+              hs_course_options: hsCourseOptions,
+              hs_training_center: hsTrainingCenter.trim(),
+              hs_training_center_id: hsTrainingCenterId.trim(),
+              hs_training_site_name: hsTrainingSiteName.trim(),
+              hs_address: hsAddress.trim(),
+              hs_city_state_zip: hsCityStateZip.trim(),
+              hs_course_start: formatDateTimeLocal(hsCourseStart),
+              hs_course_end: formatDateTimeLocal(hsCourseEnd),
+              hs_total_hours: hsTotalHours.trim(),
+              hs_no_of_cards_issued: hsNoOfCardsIssued.trim(),
+              hs_student_manikin_ratio: hsStudentManikinRatio.trim(),
+              hs_issue_date_of_cards: hsIssueDateOfCards.trim(),
+              hs_card_expiration_date: hsCardExpirationDate.trim(),
+              hs_optional_topics: hsOptionalTopics,
+              hs_additional_instructors: hasAdditionalInstructors
+                ? additionalInstructors.filter((row) => row.name_id.trim() || row.card_exp_date.trim()).slice(0, 8)
+                : [],
+            }
+          : {}),
       });
       setClosedNow(true);
     } catch (err) {
@@ -358,6 +451,160 @@ export default function PublicSignIn() {
                     autoComplete="off"
                   />
                 </div>
+                {info.master_training_id === AHA_ROSTER_TRAINING_ID && (
+                  <div className="card" style={{ margin: '4px 0 16px', textAlign: 'left' }}>
+                    <h3 style={{ marginTop: 0, fontSize: 14 }}>AHA Course Roster Details</h3>
+                    <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -6 }}>
+                      Fills out the official AHA Heartsaver Course Roster for this class - leave anything blank that doesn't apply.
+                    </p>
+                    <div className="field">
+                      <label>Course Type</label>
+                      {AHA_COURSE_GROUPS.map((groupOpt) => (
+                        <div key={groupOpt.key} style={{ marginBottom: 6 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
+                            <input
+                              type="checkbox"
+                              checked={hsCourseOptions.includes(groupOpt.key)}
+                              onChange={() => toggleHsOption(groupOpt.key)}
+                            />
+                            {groupOpt.label}
+                          </label>
+                          {hsCourseOptions.includes(groupOpt.key) && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginLeft: 24, marginTop: 4 }}>
+                              {AHA_COURSE_OPTIONS.filter((o) => o.group === groupOpt.key).map((sub) => (
+                                <label key={sub.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, fontSize: 13 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={hsCourseOptions.includes(sub.key)}
+                                    onChange={() => toggleHsOption(sub.key)}
+                                  />
+                                  {sub.label}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="field">
+                      <label>Training Center</label>
+                      <input value={hsTrainingCenter} onChange={(e) => setHsTrainingCenter(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Training Center ID#</label>
+                      <input value={hsTrainingCenterId} onChange={(e) => setHsTrainingCenterId(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Training Site Name (if applicable)</label>
+                      <input value={hsTrainingSiteName} onChange={(e) => setHsTrainingSiteName(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Address</label>
+                      <input value={hsAddress} onChange={(e) => setHsAddress(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>City, State ZIP</label>
+                      <input value={hsCityStateZip} onChange={(e) => setHsCityStateZip(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Course Start Date/Time</label>
+                      <input type="datetime-local" value={hsCourseStart} onChange={(e) => setHsCourseStart(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Course End Date/Time</label>
+                      <input type="datetime-local" value={hsCourseEnd} onChange={(e) => setHsCourseEnd(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Total Hours of Instruction</label>
+                      <input value={hsTotalHours} onChange={(e) => setHsTotalHours(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>No. of Cards Issued</label>
+                      <input value={hsNoOfCardsIssued} onChange={(e) => setHsNoOfCardsIssued(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Student-Manikin Ratio</label>
+                      <input value={hsStudentManikinRatio} onChange={(e) => setHsStudentManikinRatio(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Issue Date of Cards</label>
+                      <input value={hsIssueDateOfCards} onChange={(e) => setHsIssueDateOfCards(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Card Expiration Date</label>
+                      <input value={hsCardExpirationDate} onChange={(e) => setHsCardExpirationDate(e.target.value)} />
+                    </div>
+
+                    <div className="field">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
+                        <input
+                          type="checkbox"
+                          checked={hasAdditionalInstructors}
+                          onChange={(e) => setHasAdditionalInstructors(e.target.checked)}
+                        />
+                        Any additional/assisting instructors?
+                      </label>
+                    </div>
+                    {hasAdditionalInstructors && (
+                      <div style={{ marginBottom: 12 }}>
+                        {additionalInstructors.map((row, i) => (
+                          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 8 }}>
+                            <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                              <label>Name and Instructor ID#</label>
+                              <input
+                                value={row.name_id}
+                                onChange={(e) => updateAdditionalInstructor(i, 'name_id', e.target.value)}
+                              />
+                            </div>
+                            <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                              <label>Card Exp. Date</label>
+                              <input
+                                value={row.card_exp_date}
+                                onChange={(e) => updateAdditionalInstructor(i, 'card_exp_date', e.target.value)}
+                              />
+                            </div>
+                            {additionalInstructors.length > 1 && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => removeAdditionalInstructorRow(i)}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {additionalInstructors.length < 8 && (
+                          <button type="button" className="btn btn-secondary btn-sm" onClick={addAdditionalInstructorRow}>
+                            + Add Another Instructor
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="field">
+                      <label>Optional Topics Checklist</label>
+                      <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '0 0 8px' }}>
+                        Only relevant for course paths with optional topics (Office/Educator/Babysitter/Water Safety, etc.) - leave unchecked if none applied.
+                      </p>
+                      {[...new Set(AHA_OPTIONAL_TOPICS.map((t) => t.section))].map((section) => (
+                        <div key={section} style={{ marginBottom: 10 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{section}</div>
+                          {AHA_OPTIONAL_TOPICS.filter((t) => t.section === section).map((topic) => (
+                            <label key={topic.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, fontSize: 13, marginBottom: 2 }}>
+                              <input
+                                type="checkbox"
+                                checked={hsOptionalTopics.includes(topic.key)}
+                                onChange={() => toggleHsTopic(topic.key)}
+                              />
+                              {topic.label}
+                            </label>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="field">
                   <label>{t('trainer_signature')}</label>
                   <SignaturePad ref={sigRef} />
