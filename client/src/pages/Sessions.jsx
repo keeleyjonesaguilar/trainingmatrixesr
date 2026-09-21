@@ -3,6 +3,17 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import { useSortableRows } from '../lib/useSortableRows';
+
+const SESSION_SORT_ACCESSORS = {
+  session_date: (s) => s.session_date || '',
+  client_name: (s) => (s.client_name || '').toLowerCase(),
+  training_type_label: (s) => (s.training_type_label || '').toLowerCase(),
+  trainer_name: (s) => (s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
+  attendee_count: (s) => s.attendee_count || 0,
+  status: (s) => (s.status || '').toLowerCase(),
+  fulfillment: (s) => (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0),
+};
 
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
@@ -23,6 +34,7 @@ export default function Sessions() {
   const clientIdFilter = searchParams.get('client_id') || '';
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+  const { sortedRows: sortedSessions, toggleSort, sortIndicator } = useSortableRows(sessions, SESSION_SORT_ACCESSORS, 'session_date', 'desc');
   const [trainings, setTrainings] = useState([]);
   const [clients, setClients] = useState([]);
   const [trainers, setTrainers] = useState([]);
@@ -399,17 +411,17 @@ export default function Sessions() {
         <table>
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Client</th>
-              <th>Training</th>
-              <th>Trainer</th>
-              <th>Attendees</th>
-              <th>Status</th>
-              <th>Fulfillment</th>
+              <th className="sortable" onClick={() => toggleSort('session_date')}>Date{sortIndicator('session_date')}</th>
+              <th className="sortable" onClick={() => toggleSort('client_name')}>Client{sortIndicator('client_name')}</th>
+              <th className="sortable" onClick={() => toggleSort('training_type_label')}>Training{sortIndicator('training_type_label')}</th>
+              <th className="sortable" onClick={() => toggleSort('trainer_name')}>Trainer{sortIndicator('trainer_name')}</th>
+              <th className="sortable" onClick={() => toggleSort('attendee_count')}>Attendees{sortIndicator('attendee_count')}</th>
+              <th className="sortable" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</th>
+              <th className="sortable" onClick={() => toggleSort('fulfillment')}>Fulfillment{sortIndicator('fulfillment')}</th>
             </tr>
           </thead>
           <tbody>
-            {sessions.map((s) => (
+            {sortedSessions.map((s) => (
               <tr key={s.session_id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/sessions/${s.session_id}`)}>
                 <td>{s.session_date}</td>
                 <td>{s.client_name}</td>

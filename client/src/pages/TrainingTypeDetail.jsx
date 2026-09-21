@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import { useSortableRows } from '../lib/useSortableRows';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
@@ -166,13 +167,28 @@ function TrainingOutline({ training, isAdmin, onSaved }) {
 
 // "Everyone with this training" (Keeley's request): replaces the old Expired-only view with
 // everyone who has any real status for it - Current, Expired, No Expiration, Pending Review.
+const EVERYONE_SORT_ACCESSORS = {
+  full_name: (r) => (r.full_name || '').toLowerCase(),
+  status: (r) => (r.status || '').toLowerCase(),
+  completion_date: (r) => r.completion_date || '',
+  expiration_date: (r) => r.expiration_date || '',
+};
+
 function EveryoneList({ rows }) {
+  const { sortedRows, toggleSort, sortIndicator } = useSortableRows(rows, EVERYONE_SORT_ACCESSORS, 'full_name');
   if (!rows.length) return <div className="empty-state">No one has this training on file yet.</div>;
   return (
     <table>
-      <thead><tr><th>Employee</th><th>Status</th><th>Completed</th><th>Expiration Date</th></tr></thead>
+      <thead>
+        <tr>
+          <th className="sortable" onClick={() => toggleSort('full_name')}>Employee{sortIndicator('full_name')}</th>
+          <th className="sortable" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</th>
+          <th className="sortable" onClick={() => toggleSort('completion_date')}>Completed{sortIndicator('completion_date')}</th>
+          <th className="sortable" onClick={() => toggleSort('expiration_date')}>Expiration Date{sortIndicator('expiration_date')}</th>
+        </tr>
+      </thead>
       <tbody>
-        {rows.map((r) => (
+        {sortedRows.map((r) => (
           <tr key={r.employee_id}>
             <td><Link to={`/employees/${r.employee_id}`}>{r.full_name}</Link></td>
             <td><StatusBadge status={r.status} /></td>

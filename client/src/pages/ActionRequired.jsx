@@ -3,6 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import { useSortableRows } from '../lib/useSortableRows';
 
 function formatDate(d) {
   if (!d) return '';
@@ -36,6 +37,13 @@ function actionDescription(item) {
       return '';
   }
 }
+
+const ITEM_SORT_ACCESSORS = {
+  employee_name: (i) => (i.employee_name || '').toLowerCase(),
+  training: (i) => `${i.training_id} - ${i.training_name}`.toLowerCase(),
+  status: (i) => (i.status || '').toLowerCase(),
+  action: (i) => actionDescription(i).toLowerCase(),
+};
 
 // Collapsed audit list of everything permanently ignored (Keeley's design: no un-ignore, but
 // the ignored_at/ignored_by columns exist specifically so this isn't invisible after the fact).
@@ -102,11 +110,16 @@ export default function ActionRequired() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
+  // Called unconditionally, ahead of the early returns below, per the rules of hooks - the
+  // hook itself is fine with `data?.items` being undefined until the page has loaded.
+  const { sortedRows: sortedItems, toggleSort, sortIndicator } = useSortableRows(data?.items, ITEM_SORT_ACCESSORS, 'employee_name');
+
   if (!clientId) return <div className="error-banner">No client specified.</div>;
   if (error) return <div className="error-banner">{error}</div>;
   if (!data) return <div className="empty-state">Loading...</div>;
 
-  const { client, items } = data;
+  const { client } = data;
+  const items = sortedItems;
 
   const ignore = async (item) => {
     if (!window.confirm(
@@ -147,10 +160,10 @@ export default function ActionRequired() {
           <table>
             <thead>
               <tr>
-                <th>Employee</th>
-                <th>Training</th>
-                <th>Status</th>
-                <th>What's Needed</th>
+                <th className="sortable" onClick={() => toggleSort('employee_name')}>Employee{sortIndicator('employee_name')}</th>
+                <th className="sortable" onClick={() => toggleSort('training')}>Training{sortIndicator('training')}</th>
+                <th className="sortable" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</th>
+                <th className="sortable" onClick={() => toggleSort('action')}>What's Needed{sortIndicator('action')}</th>
                 {isAdmin && <th></th>}
               </tr>
             </thead>

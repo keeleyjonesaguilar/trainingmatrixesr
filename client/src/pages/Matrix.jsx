@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
@@ -8,6 +8,13 @@ import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { formatCell, STATUS_OPTIONS, buildComplianceReportRows } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
+import { useSortableRows } from '../lib/useSortableRows';
+
+const MATRIX_BASE_SORT_ACCESSORS = {
+  full_name: (r) => (r.full_name || '').toLowerCase(),
+  client_name: (r) => (r.client_name || '').toLowerCase(),
+  job_title: (r) => (r.job_title || '').toLowerCase(),
+};
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
 function normalizeName(s) { return (s || '').trim().toLowerCase(); }
@@ -155,6 +162,21 @@ export default function Matrix() {
     setSearchParams(next, { replace: true });
   };
 
+  // One accessor per training column, added to the fixed Employee/Client/Role ones - sorting by
+  // a training column orders by that training's own completion date (oldest/newest), with
+  // employees who have no cell for it (blank/dash) sorted last regardless of direction
+  // (useSortableRows' own null handling). Memoized on the training list, which is stable once
+  // loaded, so this doesn't rebuild - and the sort doesn't re-run - on every render.
+  const matrixSortAccessors = useMemo(() => {
+    const trainingAccessors = {};
+    for (const mt of data?.masterTrainings || []) {
+      trainingAccessors[mt.training_id] = (r) => r.cells[mt.training_id]?.completion_date || null;
+    }
+    return { ...MATRIX_BASE_SORT_ACCESSORS, ...trainingAccessors };
+  }, [data?.masterTrainings]);
+
+  const { sortedRows: sortedEmployees, toggleSort, sortIndicator } = useSortableRows(data?.employees, matrixSortAccessors, 'full_name');
+
   const setTrainingIds = (ids) => updateParam('trainings', ids.join(','));
 
   return (
@@ -269,18 +291,19 @@ export default function Matrix() {
             <table>
               <thead>
                 <tr>
-                  <th>Employee / Badge</th>
-                  <th>Client Company</th>
-                  <th>Role / Trade</th>
+                  <th className="sortable" onClick={() => toggleSort('full_name')}>Employee / Badge{sortIndicator('full_name')}</th>
+                  <th className="sortable" onClick={() => toggleSort('client_name')}>Client Company{sortIndicator('client_name')}</th>
+                  <th className="sortable" onClick={() => toggleSort('job_title')}>Role / Trade{sortIndicator('job_title')}</th>
                   {data.masterTrainings.map((mt) => (
-                    <th key={mt.training_id} title={mt.training_name}>
-                      <Link to={`/training-types/${mt.training_id}`}>{mt.training_id}</Link>
+                    <th key={mt.training_id} className="sortable" title={mt.training_name} onClick={() => toggleSort(mt.training_id)}>
+                      <Link to={`/training-types/${mt.training_id}`} onClick={(e) => e.stopPropagation()}>{mt.training_id}</Link>
+                      {sortIndicator(mt.training_id)}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {data.employees.map((emp) => (
+                {sortedEmployees.map((emp) => (
                   <tr key={emp.employee_id}>
                     <td><Link to={`/employees/${emp.employee_id}`}>{emp.full_name}</Link></td>
                     <td>{emp.client_name}</td>
