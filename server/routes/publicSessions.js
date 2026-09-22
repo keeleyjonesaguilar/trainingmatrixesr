@@ -12,11 +12,13 @@ const { generateAhaRoster } = require('../lib/ahaRoster');
 // every other training keeps using the regular in-house roster/certificate only.
 const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
-const { buildCertificateFilename } = require('../lib/certificateFilename');
+const { buildCertificateFilename, buildRosterFilename } = require('../lib/certificateFilename');
 const { DATA_DIR } = require('../lib/paths');
 const path = require('path');
+const fs = require('fs');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
+const { sendEmail } = require('../lib/email');
 
 const router = express.Router();
 
@@ -80,6 +82,7 @@ router.get('/:token', async (req, res) => {
     total_days: session.total_days,
     current_day: session.current_day,
     day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
+    day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
   });
 });
 
@@ -302,11 +305,16 @@ router.post('/:token/close', async (req, res) => {
       await dbRun('UPDATE training_sessions SET trainer_employee_id = ? WHERE session_id = ?', [trainerEmployeeId, session.session_id]);
     }
   }
+  // The trainer's profile email, read before the update below - documents go to both this and
+  // the sign-off email when they differ (Keeley's call, 2026-09-22).
+  let trainerProfileEmail = null;
   if (trainerEmployeeId) {
-    // employee_number only fills in when blank (never overwrites - it may already hold a real
-    // Employee ID entered by an admin via the Trainers page, a different thing entirely).
+    trainerProfileEmail = (await dbGet('SELECT email FROM employees WHERE employee_id = ?', [trainerEmployeeId]))?.email || null;
+    // employee_number and email only fill in when blank (never overwrite) - employee_number may
+    // already hold a real Employee ID entered by an admin via the Trainers page, and email may be
+    // one an admin assigned on the trainer's profile (Keeley's request, 2026-09-22).
     await dbRun(
-      'UPDATE employees SET employee_number = COALESCE(NULLIF(employee_number, \'\'), ?), email = ? WHERE employee_id = ?',
+      'UPDATE employees SET employee_number = COALESCE(NULLIF(employee_number, \'\'), ?), email = COALESCE(NULLIF(email, \'\'), ?) WHERE employee_id = ?',
       [formattedTrainerPhone, trainer_email.trim().toLowerCase(), trainerEmployeeId]
     );
   }
@@ -386,6 +394,18 @@ router.post('/:token/close', async (req, res) => {
 
   const attendeesFinal = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
 
+  // Documents emailed to the trainer once close-out finishes (Keeley's request, 2026-09-22): the
+  // sign-in roster PDF for every session, plus the AHA roster for First Aid/CPR/AED.
+  const formAttachments = [];
+  const attachFile = (filePath, filename) => {
+    try {
+      formAttachments.push({ filename, content: fs.readFileSync(filePath).toString('base64') });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`Could not attach ${filename} to trainer email for session ${session.session_id}:`, err);
+    }
+  };
+
   try {
     // Roster lists every training this one sign-in covers, not just the primary one.
     const rosterSession = {
@@ -394,6 +414,7 @@ router.post('/:token/close', async (req, res) => {
     };
     const rosterPath = await generateRosterPdf(rosterSession, attendeesFinal);
     await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
+    attachFile(rosterPath, buildRosterFilename(updatedSession, 'pdf'));
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Roster PDF generation failed for session ${session.session_id}:`, err);
@@ -411,19 +432,47 @@ router.post('/:token/close', async (req, res) => {
         attendeesFinal
       );
       await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
+      attachFile(ahaRosterPath, buildRosterFilename(updatedSession, 'pdf').replace('.pdf', '_AHA-Roster.pdf'));
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`AHA roster generation failed for session ${session.session_id}:`, err);
     }
   }
 
+  // The completed forms go to the trainer (sign-off and profile address) and to every app user,
+  // attached - no link back into the app (Keeley's call, 2026-09-22: "just a download of the
+  // completed forms emailed, nothing else"). One email per address so recipients never see each
+  // other's addresses; each send has its own catch so one bad address (or email not being
+  // configured - see server/lib/email.js) never blocks the rest or undoes the close-out above.
+  const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL', []);
+  const documentRecipients = [...new Set(
+    [updatedSession.trainer_email, trainerProfileEmail, ...appUsers.map((u) => u.email)]
+      .filter(Boolean)
+      .map((e) => e.trim().toLowerCase())
+  )];
+  if (formAttachments.length) {
+    await Promise.all(documentRecipients.map((to) =>
+      sendEmail({
+        to,
+        subject: `Completed Training Forms - ${updatedSession.training_type_label} - ${updatedSession.client_name} - ${updatedSession.session_date}`,
+        html: `<p>Attached ${formAttachments.length === 1 ? 'is the completed form' : 'are the completed forms'} for the ${updatedSession.training_type_label} session at ${updatedSession.client_name} on ${updatedSession.session_date}.</p>`,
+        attachments: formAttachments,
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`Completed forms email to ${to} failed for session ${session.session_id}:`, err.message);
+      })
+    ));
+  }
+
   try {
     const allLabels = [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', ');
+    // Bell notification only - the forms email above replaces the old link-only email.
     await notifyAllUsers({
       type: 'session_completed',
       title: `${allLabels} training completed`,
       body: `${updatedSession.client_name} · ${attendeesFinal.length} attendee(s) · ${updatedSession.session_date}`,
       link_path: `/sessions/${updatedSession.session_id}`,
+      email: false,
     });
   } catch (err) {
     // eslint-disable-next-line no-console

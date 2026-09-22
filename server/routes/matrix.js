@@ -106,21 +106,37 @@ router.get('/', async (req, res) => {
     });
   }
 
-  let filteredRows = status ? rows.filter((r) => Object.values(r.cells).some((c) => c.status === status)) : rows;
+  // "Current" also matches "No Expiration" (Keeley's report, 2026-09-22: #9 still returned an
+  // empty list) - 83 of the 107 trainings are one-time trainings that never expire, so their
+  // holders are always "No Expiration" and never "Current". Filtering e.g. Electrical Safety by
+  // Current returned nobody even though 331 people hold it. Picking "No Expiration" on its own
+  // still narrows to just the never-expiring ones.
+  const cellMatchesStatus = (cell) =>
+    !!cell && (cell.status === status || (status === 'Current' && cell.status === 'No Expiration'));
+
+  let filteredRows = status ? rows.filter((r) => Object.values(r.cells).some(cellMatchesStatus)) : rows;
   if (trainingIdsFilter.length) {
     // "Holds" a selected training correlates with the Status filter (Keeley's report, 2026-09-18:
     // picking TRN-001 alone returned nobody, since every recorded completion of it happened to be
     // Expired) - with no status chosen this still means "currently valid" (Current or No
     // Expiration), the original job-placement-style meaning, but picking e.g. Status=Expired
-    // changes "has all of" to mean everyone whose selected training(s) are specifically Expired.
-    filteredRows = filteredRows.filter((r) =>
-      trainingIdsFilter.every((tid) => {
+    // changes "has all of" to mean everyone with at least one selected training in that status.
+    //
+    // With a status active, this is deliberately .some() rather than .every() across the
+    // selected trainings (Keeley's report, 2026-09-22, flagged BIG issue): checking 2+ trainings
+    // together with a status used to require ALL of them to share that exact status, which
+    // silently dropped anyone who, say, was Expired on one selected training but Current on
+    // another - even though they clearly belong in an "Expired" filter. With a single training
+    // selected .some()/.every() are equivalent, so this doesn't change that already-working case.
+    filteredRows = filteredRows.filter((r) => {
+      if (status) {
+        return trainingIdsFilter.some((tid) => cellMatchesStatus(r.cells[tid]));
+      }
+      return trainingIdsFilter.every((tid) => {
         const cell = r.cells[tid];
-        if (!cell) return false;
-        if (status) return cell.status === status;
-        return cell.status === 'Current' || cell.status === 'No Expiration';
-      })
-    );
+        return cell ? (cell.status === 'Current' || cell.status === 'No Expiration') : false;
+      });
+    });
   }
 
   res.json({

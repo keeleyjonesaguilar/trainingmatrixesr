@@ -25,7 +25,11 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // persistent) doesn't change for anyone who doesn't interact with the new checkbox.
 function issueSessionCookie(req, res, user, rememberMe = true) {
   return getOrCreateSessionSecret().then((secret) => {
-    const token = signToken({ sub: user.user_id, username: user.username }, secret, SESSION_MS);
+    // lastActivity/rememberMe ride along in the token itself so the idle-timeout check and
+    // sliding refresh in server/middleware/auth.js's attachUser can enforce/extend it without a
+    // database lookup - rememberMe is carried here (not re-derived) so a refreshed cookie knows
+    // whether to stay persistent without needing to ask the login form again.
+    const token = signToken({ sub: user.user_id, username: user.username, lastActivity: Date.now(), rememberMe }, secret, SESSION_MS);
     const cookieOptions = {
       httpOnly: true,
       sameSite: 'lax',

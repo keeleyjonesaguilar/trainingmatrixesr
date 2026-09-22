@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatCell, STATUS_OPTIONS, buildComplianceReportRows } from '../lib/matrixCell.js';
+import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
@@ -247,13 +247,13 @@ function ClientEmployeesSection({ clientId, clientName }) {
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
-          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>all</strong> of:{' '}
+          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>{status ? 'any' : 'all'}</strong> of:{' '}
           {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
         </p>
       )}
 
       {data.employees.length === 0 ? (
-        <div className="empty-state">No employees match these filters.</div>
+        <div className="empty-state">{emptyFilterHint(status, trainingIds, allMasterTrainings) || 'No employees match these filters.'}</div>
       ) : (
         <div className="matrix-scroll">
           <table>

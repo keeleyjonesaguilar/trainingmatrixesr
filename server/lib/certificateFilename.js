@@ -17,14 +17,39 @@ function stripTrainingIdPrefix(label) {
   return String(label || '').replace(/^TRN-\d+\s*[-–—:]\s*/i, '');
 }
 
+// Even with the TRN-ID prefix stripped above, some catalog names are still long enough on their
+// own ("PIT Operator: Class I – Electric motor, sit-down or stand-up rider trucks
+// (counterbalanced forklifts)") that stacking client/trainer/date/trainee name around one still
+// pushes the whole path past Windows' ~260-char limit ("path name too long", Keeley's report,
+// 2026-09-22 - the TRN-ID fix from 2026-09-16 wasn't enough on its own). Rather than special-case
+// which field is "least important," this trims whichever field is currently longest, one
+// character at a time, until the joined name fits comfortably under that limit even inside a
+// nested download folder - so it degrades gracefully no matter which field turns out to be huge.
+const MAX_FILENAME_CHARS = 180;
+const MIN_PART_CHARS = 10;
+
+function capTotalLength(parts) {
+  const arr = [...parts];
+  const totalLength = () => arr.reduce((sum, p) => sum + p.length, 0) + (arr.length - 1);
+  while (totalLength() > MAX_FILENAME_CHARS) {
+    let longestIndex = 0;
+    for (let i = 1; i < arr.length; i += 1) {
+      if (arr[i].length > arr[longestIndex].length) longestIndex = i;
+    }
+    if (arr[longestIndex].length <= MIN_PART_CHARS) break; // nothing left that's safe to trim further
+    arr[longestIndex] = arr[longestIndex].slice(0, -1).trim();
+  }
+  return arr;
+}
+
 function buildCertificateFilename(session, attendee) {
-  const parts = [
+  const parts = capTotalLength([
     stripTrainingIdPrefix(session.training_type_label),
     session.client_name,
     session.trainer_signed_name || session.trainer_name,
     session.session_date,
     attendee.trainee_name,
-  ].map(sanitizeFilenamePart);
+  ].map(sanitizeFilenamePart));
   return `${parts.join('_')}.pdf`;
 }
 
@@ -33,13 +58,13 @@ function buildCertificateFilename(session, attendee) {
 // which every session was producing identically-prefixed files under (Keeley's request,
 // 2026-09-16: keep this consistent with the certificate naming so nothing needs renaming by hand).
 function buildRosterFilename(session, ext) {
-  const parts = [
+  const parts = capTotalLength([
     stripTrainingIdPrefix(session.training_type_label),
     session.client_name,
     session.trainer_signed_name || session.trainer_name,
     session.session_date,
     'Roster',
-  ].map(sanitizeFilenamePart);
+  ].map(sanitizeFilenamePart));
   return `${parts.join('_')}.${ext}`;
 }
 
@@ -47,13 +72,13 @@ function buildRosterFilename(session, ext) {
 // named "qrcode.png"/"feedback-qrcode.png" regardless of session, so dragging several into a
 // PowerPoint left no way to tell which slide/session each belonged to).
 function buildQrFilename(session, kind) {
-  const parts = [
+  const parts = capTotalLength([
     stripTrainingIdPrefix(session.training_type_label),
     session.client_name,
     session.trainer_signed_name || session.trainer_name,
     session.session_date,
     kind,
-  ].map(sanitizeFilenamePart);
+  ].map(sanitizeFilenamePart));
   return `${parts.join('_')}.png`;
 }
 

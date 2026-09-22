@@ -63,7 +63,8 @@ export function buildComplianceReportRows(employees, masterTrainings, { status, 
       const cell = emp.cells[mt.training_id];
       if (!cell) continue;
       if (status) {
-        if (cell.status !== status) continue;
+        // Same rule as server/routes/matrix.js: "Current" includes never-expiring trainings.
+        if (cell.status !== status && !(status === 'Current' && cell.status === 'No Expiration')) continue;
       } else if (['Missing', 'Not Applicable', 'Ignored'].includes(cell.status)) {
         continue;
       }
@@ -79,4 +80,16 @@ export function buildComplianceReportRows(employees, masterTrainings, { status, 
     }
   }
   return rows;
+}
+
+// Explains an empty Expired filter (Keeley's report, 2026-09-22: #9 "still an empty list") -
+// most catalog trainings are set to never expire, so nobody can ever be Expired on them. Only
+// shown when every selected training is "None" in the catalog; a client-level override could
+// still make one expire, which is why this is a hint on the empty state, not a disabled option.
+export function emptyFilterHint(status, trainingIds, masterTrainings) {
+  if (status !== 'Expired' || !trainingIds.length) return null;
+  const picked = trainingIds.map((tid) => masterTrainings.find((mt) => mt.training_id === tid)).filter(Boolean);
+  if (!picked.length || !picked.every((mt) => mt.default_expiration === 'None')) return null;
+  const names = picked.map((mt) => mt.training_name).join(', ');
+  return `${names} ${picked.length === 1 ? 'is' : 'are'} set to never expire in the Training Catalog, so no one can be Expired on ${picked.length === 1 ? 'it' : 'them'}. If ${picked.length === 1 ? 'it' : 'they'} should expire, set an expiration period on the training in the catalog.`;
 }

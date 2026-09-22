@@ -6,7 +6,9 @@ const { v4: uuidv4 } = require('uuid');
 const { dbAll, dbRun } = require('../db');
 const { sendEmail } = require('./email');
 
-async function notifyAllUsers({ type, title, body, link_path }) {
+// `email: false` writes only the in-app bell notification - for callers that send their own email
+// instead (e.g. session close-out, which emails the completed forms rather than a link).
+async function notifyAllUsers({ type, title, body, link_path, email = true }) {
   const users = await dbAll('SELECT user_id, email FROM app_users', []);
   for (const user of users) {
     // eslint-disable-next-line no-await-in-loop
@@ -15,6 +17,7 @@ async function notifyAllUsers({ type, title, body, link_path }) {
       [uuidv4(), user.user_id, type, title, body || null, link_path || null]
     );
   }
+  if (!email) return;
 
   // Email is a "nice to have" alongside the bell, not the primary path - one bad/unconfigured
   // address (or Resend being unset entirely in a dev environment) should never block the

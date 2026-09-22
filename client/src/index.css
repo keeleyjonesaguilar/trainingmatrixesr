@@ -710,3 +710,10 @@ tr:hover td { background: #fafbfc; }
   opacity: 0.65;
   text-align: center;
 }
+
+/* Employee/trainer profile layout (Keeley's request, 2026-09-22) - short cards side by side,
+   wrapping to one column on narrow screens; wide tables get their own full-width row. */
+.profile-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; margin-top: 16px; }
+.profile-row > .card { margin-top: 0; min-width: 0; overflow-x: auto; }
+.profile-row .card table { width: 100%; }
+.profile-full { margin-top: 16px; }

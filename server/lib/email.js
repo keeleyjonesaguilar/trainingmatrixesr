@@ -5,7 +5,10 @@
 // Requires RESEND_API_KEY and RESEND_FROM_EMAIL in .env (see .env.example). RESEND_FROM_EMAIL
 // must be an address on a domain verified in the Resend dashboard - Resend rejects sends from an
 // unverified domain, so this throws a clear error rather than silently failing if that happens.
-async function sendEmail({ to, subject, html }) {
+// `attachments` (optional, Keeley's request, 2026-09-22: email the trainer their AHA roster PDF)
+// is a list of { filename, content } where `content` is the file's bytes base64-encoded -
+// Resend's own attachment shape, passed straight through.
+async function sendEmail({ to, subject, html, attachments }) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
   if (!apiKey || !from) {
@@ -18,7 +21,7 @@ async function sendEmail({ to, subject, html }) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from, to, subject, html }),
+    body: JSON.stringify({ from, to, subject, html, ...(attachments?.length ? { attachments } : {}) }),
   });
 
   if (!res.ok) {

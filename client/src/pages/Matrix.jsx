@@ -6,7 +6,7 @@ import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
-import { formatCell, STATUS_OPTIONS, buildComplianceReportRows } from '../lib/matrixCell.js';
+import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
 import { useSortableRows } from '../lib/useSortableRows';
 
@@ -28,6 +28,7 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [possibleMatches, setPossibleMatches] = useState(null);
@@ -40,6 +41,7 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
         client_id: clientId,
         full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
         employee_number: phone.trim(),
+        email: email.trim() || null,
       });
       onAdded(employee);
     } catch (e2) {
@@ -96,6 +98,10 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
         <div className="field-row">
           <label>Phone Number</label>
           <input type="text" placeholder="(555) 123-4567" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+        </div>
+        <div className="field-row">
+          <label>Email (optional)</label>
+          <input type="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
       </div>
       <button type="submit" disabled={saving}>{saving ? 'Adding...' : 'Add Employee'}</button>{' '}
@@ -276,7 +282,7 @@ export default function Matrix() {
 
       {trainingIds.length > 0 && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
-          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>all</strong> of:{' '}
+          Showing employees whose {status ? <><strong>{status}</strong> trainings include</> : <>currently valid trainings include</>} <strong>{status ? 'any' : 'all'}</strong> of:{' '}
           {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
         </p>
       )}
@@ -285,7 +291,7 @@ export default function Matrix() {
 
       {data && !loading && (
         data.employees.length === 0 ? (
-          <div className="empty-state">No employees match these filters.</div>
+          <div className="empty-state">{emptyFilterHint(status, trainingIds, allMasterTrainings) || 'No employees match these filters.'}</div>
         ) : (
           <div className="matrix-scroll">
             <table>

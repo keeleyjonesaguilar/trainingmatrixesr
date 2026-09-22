@@ -1,0 +1,11 @@
+-- Lets a multi-day session record its own outline text per day (Keeley's request, 2026-09-22:
+-- "Day 1 has its own outline, day 2 and so on"), shown to attendees as "Today's outline" on
+-- whichever day is currently open instead of one blanket outline for the whole course. The
+-- existing single `outline` column stays as the session's overall/summary outline (still used to
+-- seed each day's textarea when the admin sets one up, and still what non-multi-day sessions use
+-- unchanged) - this is additive, not a replacement.
+-- Stored as a JSON array of strings, one per day, same convention as day_dates
+-- (056_multiday_session_dates.sql). No machine translation for now (Keeley didn't ask for it and
+-- translating N day-outlines instead of one would multiply the DeepL calls per session save) -
+-- day outlines display in English regardless of the session's language setting.
+ALTER TABLE training_sessions ADD COLUMN day_outlines TEXT;

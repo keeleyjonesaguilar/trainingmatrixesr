@@ -21,6 +21,7 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
   const [name, setName] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [employeeId, setEmployeeId] = useState('');
+  const [email, setEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [possibleMatches, setPossibleMatches] = useState(null);
@@ -29,7 +30,7 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
     setSaving(true);
     setError('');
     try {
-      await api.createTrainer({ full_name: name.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null });
+      await api.createTrainer({ full_name: name.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null, email: email.trim() || null });
       onAdded();
     } catch (e2) {
       setError(e2.message);
@@ -65,6 +66,11 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
           <label>Phone Number</label>
           <input type="text" placeholder="(555) 123-4567" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} />
           <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Used to match this trainer to their sessions - add it so sessions created for them link up correctly.</p>
+        </div>
+        <div className="field-row">
+          <label>Email (optional)</label>
+          <input type="email" placeholder="trainer@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Session documents are emailed here when this trainer closes out a session.</p>
         </div>
         <div className="field-row">
           <label>Role / Trade (optional)</label>
@@ -149,6 +155,7 @@ export default function Trainers() {
                 <th>Client</th>
                 <th>Role / Trade</th>
                 <th>Phone Number</th>
+                <th>Email</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -159,12 +166,13 @@ export default function Trainers() {
                   <td>{t.client_name}</td>
                   <td>{t.job_title || '—'}</td>
                   <td>{t.employee_number || '—'}</td>
+                  <td>{t.email || '—'}</td>
                   <td><span className={`badge ${t.active ? 'badge-current' : 'badge-notapplicable'}`}>{t.active ? 'Active' : 'Inactive'}</span></td>
                 </tr>
               ))}
               {visibleTrainers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="empty-state">
+                  <td colSpan={6} className="empty-state">
                     {trainers.length === 0
                       ? 'No trainers yet — add one above.'
                       : showActive ? 'No active trainers.' : 'No inactive trainers.'}

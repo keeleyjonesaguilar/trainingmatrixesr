@@ -1,9 +1,16 @@
 const { dbGet } = require('../db');
-const { verifyToken } = require('../lib/auth');
+const { verifyToken, signToken } = require('../lib/auth');
 const { getOrCreateSessionSecret } = require('../lib/settings');
 
 const COOKIE_NAME = 'tm_session';
-const SESSION_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+const SESSION_MS = 1000 * 60 * 60 * 24 * 7; // 7 days - the hard cap on a session's total age
+
+// Auto-logout after inactivity (Keeley's request, 2026-09-22) - separate from the 7-day cap
+// above, which just bounds how old a still-active session can get. Enforced server-side by
+// carrying `lastActivity` inside the signed token itself (see routes/auth.js's
+// issueSessionCookie and the refresh below) rather than in a database, so it works without any
+// schema change and can't be bypassed by editing anything client-side - the signature covers it.
+const IDLE_TIMEOUT_MS = 1000 * 60 * 30; // 30 minutes
 
 function parseCookies(header) {
   const out = {};
@@ -31,8 +38,42 @@ async function attachUser(req, res, next) {
     const secret = await getOrCreateSessionSecret();
     const payload = verifyToken(token, secret);
     if (payload && payload.sub) {
-      const user = await dbGet('SELECT user_id, username, role, full_name FROM app_users WHERE user_id = ?', [payload.sub]);
-      if (user) req.user = user;
+      // Idle timeout (see IDLE_TIMEOUT_MS above) - a token that's otherwise still validly signed
+      // and within its 7-day cap is nonetheless treated as logged-out once it's gone quiet too
+      // long. `lastActivity` is missing on a token issued before this feature shipped; treat
+      // those as already-idle rather than trusting them indefinitely, so nobody's existing
+      // session silently skips the new check.
+      const idleSince = Date.now() - (payload.lastActivity || 0);
+      if (idleSince > IDLE_TIMEOUT_MS) {
+        res.clearCookie(COOKIE_NAME);
+      } else {
+        const user = await dbGet('SELECT user_id, username, role, full_name FROM app_users WHERE user_id = ?', [payload.sub]);
+        if (user) {
+          req.user = user;
+          // Slide the idle window forward on every authenticated request, without extending the
+          // token's own absolute expiry (`payload.exp`, the original 7-day cap from login) - so
+          // an actively-used session stays logged in indefinitely up to that cap, but a merely
+          // still-valid, unused one still times out at IDLE_TIMEOUT_MS.
+          const remainingMs = payload.exp - Date.now();
+          if (remainingMs > 0) {
+            const refreshed = signToken(
+              { sub: payload.sub, username: payload.username, lastActivity: Date.now() },
+              secret,
+              remainingMs
+            );
+            const cookieOptions = {
+              httpOnly: true,
+              sameSite: 'lax',
+              secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+            };
+            // Only a "remember me" login gets a persistent cookie in the first place (see
+            // issueSessionCookie) - refreshing must preserve that, or every session would quietly
+            // become a browser-session-only cookie the moment it's used once.
+            if (payload.rememberMe) cookieOptions.maxAge = remainingMs;
+            res.cookie(COOKIE_NAME, refreshed, cookieOptions);
+          }
+        }
+      }
     }
   }
   next();

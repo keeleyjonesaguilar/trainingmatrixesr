@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
+import { EASTERN_TZ } from '../lib/dates.js';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
 // Keeley wants - Employee Phone Number is now how employees are tracked/identified.
@@ -21,6 +22,7 @@ function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
   const [form, setForm] = useState({
     job_title: employee.job_title || '',
     employee_number: employee.employee_number || '',
+    email: employee.email || '',
     active: employee.active,
     aha_instructor_id: employee.aha_instructor_id || '',
   });
@@ -56,6 +58,15 @@ function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
         <div className="field-row">
           <label>Role / Trade</label>
           <input type="text" value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })} />
+        </div>
+        <div className="field-row">
+          <label>Email</label>
+          <input type="email" placeholder="name@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          {isTrainer && (
+            <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+              Session documents are emailed here when this trainer closes out a session.
+            </p>
+          )}
         </div>
         {isAdmin && isTrainer && (
           <div className="field-row">
@@ -130,25 +141,178 @@ function TrainingsTaughtSection({ employeeId }) {
     api.listTrainingSessions({ trainer_employee_id: employeeId }).then(setSessions).catch(() => {}).finally(() => setLoading(false));
   }, [employeeId]);
 
+  // Upcoming = still open and dated today or later (Keeley's request, 2026-09-22) - same
+  // definition as the Sessions page's "X Upcoming" badge, but on Eastern time so a session
+  // doesn't flip to "past" at 8 PM. Soonest first; everything else stays under Trainings Taught.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(new Date());
+  const upcoming = sessions
+    .filter((s) => s.status === 'open' && s.session_date >= today)
+    .sort((a, b) => a.session_date.localeCompare(b.session_date));
+  const taught = sessions.filter((s) => !upcoming.includes(s));
+
+  return (
+    <div className="profile-row">
+      <div className="card">
+        <h2>Upcoming Trainings to Teach ({upcoming.length})</h2>
+        {loading ? <LoadingState label="Loading sessions..." /> : upcoming.length === 0 ? (
+          <div className="empty-state">No upcoming sessions scheduled.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Date</th><th>Client</th><th>Training</th><th>Location</th></tr></thead>
+            <tbody>
+              {upcoming.map((s) => (
+                <tr key={s.session_id}>
+                  <td><Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link></td>
+                  <td>{s.client_name}</td>
+                  <td>{s.training_type_label}</td>
+                  <td>{s.location || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="card">
+        <h2>Trainings Taught ({taught.length})</h2>
+        {loading ? <LoadingState label="Loading sessions..." /> : taught.length === 0 ? (
+          <div className="empty-state">No sessions taught yet.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Date</th><th>Client</th><th>Training</th><th>Attendees</th></tr></thead>
+            <tbody>
+              {taught.map((s) => (
+                <tr key={s.session_id}>
+                  <td><Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link></td>
+                  <td>{s.client_name}</td>
+                  <td>{s.training_type_label}</td>
+                  <td>{s.attendee_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// General supporting documents on an employee's own record (Keeley's request, 2026-09-22) - an
+// existing OSHA/CPR card, a medical eval, etc., not tied to one specific training completion the
+// way a certificate-of-completion upload is (see the Completed Trainings table below instead).
+function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] }) {
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [label, setLabel] = useState('');
+  const [trainingId, setTrainingId] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState('');
+  const inputRef = useRef(null);
+
+  const load = () => {
+    api.listEmployeeDocuments(employeeId).then(setDocuments).catch((e) => setError(e.message)).finally(() => setLoading(false));
+  };
+  useEffect(load, [employeeId]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!label.trim()) {
+      setError('Enter a label for this document first (e.g. "OSHA 10 Card").');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      await api.uploadEmployeeDocument(employeeId, file, label.trim(), trainingId);
+      setLabel('');
+      setTrainingId('');
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteDocument = async (documentId) => {
+    if (!window.confirm('Delete this document?')) return;
+    setDeletingId(documentId);
+    try {
+      await api.deleteEmployeeDocument(employeeId, documentId);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingId('');
+    }
+  };
+
   return (
     <div className="card">
-      <h2>Trainings Taught ({sessions.length})</h2>
-      {loading ? <LoadingState label="Loading sessions..." /> : sessions.length === 0 ? (
-        <div className="empty-state">No sessions taught yet.</div>
-      ) : (
-        <table>
-          <thead><tr><th>Date</th><th>Client</th><th>Training</th><th>Attendees</th></tr></thead>
-          <tbody>
-            {sessions.map((s) => (
-              <tr key={s.session_id}>
-                <td><Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link></td>
-                <td>{s.client_name}</td>
-                <td>{s.training_type_label}</td>
-                <td>{s.attendee_count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <h2>Documents ({documents.length})</h2>
+      <p className="page-subtitle" style={{ marginTop: -8 }}>
+        Existing OSHA/CPR cards, medical evaluations, or anything else worth keeping on file for this employee.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {loading ? <LoadingState label="Loading documents..." /> : (
+        <>
+          {documents.length === 0 ? (
+            <div className="empty-state">No documents on file yet.</div>
+          ) : (
+            <table>
+              <thead><tr><th>Label</th><th>Training</th><th>Uploaded</th><th></th></tr></thead>
+              <tbody>
+                {documents.map((d) => (
+                  <tr key={d.document_id}>
+                    <td>
+                      <a href={api.getEmployeeDocumentUrl(employeeId, d.document_id)} target="_blank" rel="noreferrer">{d.label}</a>
+                    </td>
+                    <td>{d.training_id ? `${d.training_id} - ${d.training_name}` : '—'}</td>
+                    <td>{d.uploaded_at?.slice(0, 10)}</td>
+                    <td>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          style={{ padding: '2px 8px', fontSize: 12 }}
+                          disabled={deletingId === d.document_id}
+                          onClick={() => deleteDocument(d.document_id)}
+                        >
+                          {deletingId === d.document_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {isAdmin && (
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <label>Add a Document</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="Label, e.g. OSHA 10 Card"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  style={{ flexGrow: 1 }}
+                />
+                <button type="button" className="secondary" disabled={uploading} onClick={() => inputRef.current?.click()}>
+                  {uploading ? 'Uploading...' : 'Choose File'}
+                </button>
+              </div>
+              {/* Optional (Keeley's request, 2026-09-22) - e.g. a CPR card to First Aid/CPR/AED. */}
+              <select value={trainingId} onChange={(e) => setTrainingId(e.target.value)} style={{ marginTop: 8 }}>
+                <option value="">Attach to a training (optional)</option>
+                {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+              </select>
+              <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={handleFile} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -311,6 +475,10 @@ export default function EmployeeDetail() {
               <div className="detail-meta-value">{employee.employee_number || '—'}</div>
             </div>
             <div className="detail-meta-item">
+              <div className="detail-meta-label">Email</div>
+              <div className="detail-meta-value">{employee.email || '—'}</div>
+            </div>
+            <div className="detail-meta-item">
               <div className="detail-meta-label">Status</div>
               <div className="detail-meta-value">{employee.active ? 'Active' : 'Inactive'}</div>
             </div>
@@ -319,11 +487,32 @@ export default function EmployeeDetail() {
         </div>
       )}
 
-      {isTrainer && <TrainerRatingSummary summary={trainerFeedbackSummary} />}
+      {/* Layout (Keeley's request, 2026-09-22: "the employee page UI is a little wide"): the short
+          summary cards sit side by side up top, and the 9-column Completed Trainings table gets
+          the full page width below instead of being squeezed into two-thirds of it. */}
+      <div className="profile-row">
+        {isTrainer && <TrainerRatingSummary summary={trainerFeedbackSummary} />}
+        <div className="card">
+          <h2>Recent Completions</h2>
+          <div className="activity-feed">
+            {history.map((t) => (
+              <div key={t.record_id} className="activity-item">
+                <div>
+                  <div className="activity-item-title">{t.training_name}</div>
+                  <div className="activity-item-desc">Completed {t.completion_date}</div>
+                </div>
+                <div className="activity-item-time">{t.status}</div>
+              </div>
+            ))}
+            {history.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No completion history yet.</p>}
+          </div>
+        </div>
+        <EmployeeDocumentsSection employeeId={employee.employee_id} isAdmin={isAdmin} trainingOptions={trainings} />
+      </div>
+
       {isTrainer && <TrainingsTaughtSection employeeId={employee.employee_id} />}
 
-      <div className="layout-2col">
-        <div>
+      <div className="profile-full">
           <EmployeeCompliancePanel
             employee={employee}
             client={client}
@@ -336,25 +525,6 @@ export default function EmployeeDetail() {
             collapsible={false}
             heading={isTrainer ? 'Trainings Obtained' : 'Completed Trainings'}
           />
-        </div>
-
-        <div>
-          <div className="card">
-            <h2>Recent Completions</h2>
-            <div className="activity-feed">
-              {history.map((t) => (
-                <div key={t.record_id} className="activity-item">
-                  <div>
-                    <div className="activity-item-title">{t.training_name}</div>
-                    <div className="activity-item-desc">Completed {t.completion_date}</div>
-                  </div>
-                  <div className="activity-item-time">{t.status}</div>
-                </div>
-              ))}
-              {history.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No completion history yet.</p>}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

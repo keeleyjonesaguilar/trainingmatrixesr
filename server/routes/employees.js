@@ -1,5 +1,7 @@
 const fs = require('fs');
+const path = require('path');
 const express = require('express');
+const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
@@ -9,7 +11,37 @@ const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
 
+// Same pattern as server/routes/auth.js's and publicSessions.js's EMAIL_PATTERN.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const router = express.Router();
+
+// General employee documents (Keeley's request, 2026-09-22): an existing OSHA/CPR card, a
+// medical eval, etc. attached to the employee directly rather than one specific training
+// completion - same DATA_DIR/multer convention as the certificate-of-completion upload in
+// server/routes/trainingRecords.js (same allowed types/size, own subfolder so the two never mix).
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
+const EMPLOYEE_DOCS_DIR = path.join(DATA_DIR, 'employee-documents');
+if (!fs.existsSync(EMPLOYEE_DOCS_DIR)) fs.mkdirSync(EMPLOYEE_DOCS_DIR, { recursive: true });
+
+const ALLOWED_DOCUMENT_EXTENSIONS = /\.(pdf|jpg|jpeg|png)$/i;
+
+const documentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, EMPLOYEE_DOCS_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '';
+      cb(null, `${req.params.id}-${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_DOCUMENT_EXTENSIONS.test(file.originalname)) {
+      return cb(new Error('Only PDF, JPG, or PNG files are allowed for a document upload'));
+    }
+    cb(null, true);
+  },
+});
 
 // Trainers live under the internal pseudo-client and are managed from their own dedicated
 // Trainers page (server/routes/trainers.js) - they're excluded here so they never show up in
@@ -242,6 +274,10 @@ router.post('/', async (req, res) => {
   if (employee_number && !isValidPhoneNumber(employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
+  const email = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
+  if (email && !EMAIL_PATTERN.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
   const client = await dbGet('SELECT client_id FROM clients WHERE client_id = ?', [client_id]);
   if (!client) return res.status(400).json({ error: 'client_id does not exist' });
   try {
@@ -251,9 +287,9 @@ router.post('/', async (req, res) => {
   }
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes, employee_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type]
+    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes, employee_type, email)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type, email]
   );
   logActivity({ actor: req.user, action: 'employee_created', entityType: 'employee', entityId: employee_id, entityLabel: full_name.trim(), req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
@@ -273,8 +309,15 @@ router.put('/:id', requireAuth, async (req, res) => {
     incoming = {};
     if ('employee_number' in req.body) incoming.employee_number = req.body.employee_number;
     if ('job_title' in req.body) incoming.job_title = req.body.job_title;
+    if ('email' in req.body) incoming.email = req.body.email;
   }
   const merged = { ...existing, ...incoming };
+  // Admin-assigned email (Keeley's request, 2026-09-22) - a trainer's session documents (roster
+  // PDF, AHA roster) are emailed here on close-out, alongside whatever email they sign off with.
+  merged.email = merged.email ? String(merged.email).trim().toLowerCase() : null;
+  if (merged.email && !EMAIL_PATTERN.test(merged.email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
   try {
     assertClientTypeInvariant(merged.client_id, merged.employee_type);
   } catch (err) {
@@ -284,10 +327,10 @@ router.put('/:id', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
   await dbRun(
-    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=? WHERE employee_id=?`,
+    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=? WHERE employee_id=?`,
     [
       formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department,
-      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, req.params.id,
+      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, req.params.id,
     ]
   );
   logActivity({ actor: req.user, action: 'employee_updated', entityType: 'employee', entityId: req.params.id, entityLabel: merged.full_name, req });
@@ -310,6 +353,10 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   for (const { certificate_path } of certs) {
     if (certificate_path && fs.existsSync(certificate_path)) fs.unlink(certificate_path, () => {});
   }
+  const docs = await dbAll('SELECT file_path FROM employee_documents WHERE employee_id = ?', [req.params.id]);
+  for (const { file_path } of docs) {
+    if (file_path && fs.existsSync(file_path)) fs.unlink(file_path, () => {});
+  }
 
   // session_attendees.training_record_id also restricts deletion of the records it points to -
   // detach those too, since this employee's records are about to cascade-delete with them.
@@ -321,6 +368,73 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   await dbRun('UPDATE session_attendees SET employee_id = NULL WHERE employee_id = ?', [req.params.id]);
   await dbRun('DELETE FROM employees WHERE employee_id = ?', [req.params.id]);
   logActivity({ actor: req.user, action: 'employee_deleted', entityType: 'employee', entityId: req.params.id, entityLabel: existing.full_name, req });
+  res.status(204).end();
+});
+
+// General supporting documents on an employee's own record (Keeley's request, 2026-09-22) -
+// an existing OSHA/CPR card, a medical eval, etc., not tied to one specific training completion
+// the way a certificate-of-completion upload is.
+router.get('/:id/documents', async (req, res) => {
+  const employee = await dbGet('SELECT employee_id FROM employees WHERE employee_id = ?', [req.params.id]);
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  const documents = await dbAll(
+    'SELECT d.document_id, d.label, d.filename, d.uploaded_at, d.uploaded_by, d.training_id, mt.training_name FROM employee_documents d LEFT JOIN master_trainings mt ON mt.training_id = d.training_id WHERE d.employee_id = ? ORDER BY d.uploaded_at DESC',
+    [req.params.id]
+  );
+  res.json(documents);
+});
+
+router.post('/:id/documents', requireAdmin, async (req, res) => {
+  const employee = await dbGet('SELECT employee_id, full_name FROM employees WHERE employee_id = ?', [req.params.id]);
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  documentUpload.single('document')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'A document file is required (field name "document")' });
+    const label = (req.body?.label || '').trim();
+    if (!label) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'A label is required (e.g. "OSHA 10 Card", "Medical Eval")' });
+    }
+    // Optional link to one catalog training (server/migrations/060_employee_document_training.sql).
+    const trainingId = (req.body?.training_id || '').trim() || null;
+    if (trainingId && !(await dbGet('SELECT training_id FROM master_trainings WHERE training_id = ?', [trainingId]))) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'That training is not in the catalog.' });
+    }
+    const document_id = uuidv4();
+    await dbRun(
+      `INSERT INTO employee_documents (document_id, employee_id, label, filename, file_path, uploaded_by, training_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [document_id, req.params.id, label, req.file.originalname, req.file.path, req.user.username, trainingId]
+    );
+    logActivity({
+      actor: req.user, action: 'employee_document_uploaded', entityType: 'employee', entityId: req.params.id,
+      entityLabel: employee.full_name, details: label, req,
+    });
+    res.status(201).json(await dbGet('SELECT d.document_id, d.label, d.filename, d.uploaded_at, d.uploaded_by, d.training_id, mt.training_name FROM employee_documents d LEFT JOIN master_trainings mt ON mt.training_id = d.training_id WHERE d.document_id = ?', [document_id]));
+  });
+});
+
+// Download/view a document - any authenticated user (view-only accounts can still see documents,
+// requireAdmin only gates upload/delete), same as the certificate-of-completion download.
+router.get('/:id/documents/:documentId', async (req, res) => {
+  const document = await dbGet(
+    'SELECT * FROM employee_documents WHERE document_id = ? AND employee_id = ?',
+    [req.params.documentId, req.params.id]
+  );
+  if (!document) return res.status(404).json({ error: 'Document not found' });
+  if (!fs.existsSync(document.file_path)) return res.status(404).json({ error: 'Document file is missing on disk' });
+  res.download(document.file_path, document.filename);
+});
+
+router.delete('/:id/documents/:documentId', requireAdmin, async (req, res) => {
+  const document = await dbGet(
+    'SELECT * FROM employee_documents WHERE document_id = ? AND employee_id = ?',
+    [req.params.documentId, req.params.id]
+  );
+  if (!document) return res.status(404).json({ error: 'Document not found' });
+  if (fs.existsSync(document.file_path)) fs.unlink(document.file_path, () => {});
+  await dbRun('DELETE FROM employee_documents WHERE document_id = ?', [document.document_id]);
   res.status(204).end();
 });
 

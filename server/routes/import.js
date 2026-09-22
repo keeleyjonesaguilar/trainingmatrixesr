@@ -83,6 +83,21 @@ function parseEmployeeActiveStatus(raw) {
   return norm && INACTIVE_EMPLOYEE_STATUS_VALUES.has(norm) ? 0 : 1;
 }
 
+// A row's name cell can list several people who all completed that row's training together
+// (Keeley's request, 2026-09-22 - e.g. a sign-in-sheet-style export where one row = one training
+// event and the name cell reads "John Smith, Jane Doe, Bob Jones"). Only 3+ comma-separated parts
+// (2+ commas) are ever treated this way - a real "Last, First" name always has exactly ONE comma,
+// so that shape is left completely untouched to avoid the one case that's genuinely ambiguous:
+// a single person with a compound surname ("Van Buren, John") is textually indistinguishable from
+// two people ("John Smith, Jane Doe") when there's only one comma. Guessing wrong there risks
+// silently splitting one real employee into two fake ones, so that case intentionally still
+// imports exactly as it always has (unaffected by this function) rather than being auto-split.
+function splitMultiPersonNames(fullNameRaw) {
+  const parts = String(fullNameRaw || '').split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 3) return parts;
+  return [String(fullNameRaw || '').trim()];
+}
+
 function classifyIdentityColumn(header) {
   for (const [field, patterns] of Object.entries(IDENTITY_COLUMN_PATTERNS)) {
     if (patterns.some((p) => p.test(header.trim()))) return field;
@@ -535,50 +550,83 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       }
 
       const clientId = row.resolved_client_id;
+      const namesInRow = splitMultiPersonNames(row.full_name_raw);
+      const employees = [];
 
-      // A flagged possible match (see detectEmployeeMatches above) takes priority over the plain
-      // exact-name lookup below - it only ever exists when that lookup would otherwise have
-      // found nothing and been about to create a second profile for someone already on file.
-      const employeeMatch = await dbGet(
-        'SELECT * FROM import_employee_matches WHERE batch_id = ? AND client_id = ? AND full_name_raw = ?',
-        [req.params.batchId, clientId, row.full_name_raw]
-      );
-      if (employeeMatch && employeeMatch.status === 'needs_review') {
-        rowsSkippedNeedsEmployeeReview += 1; // still waiting on a decision - picked up by a later commit
-        continue;
-      }
-
-      let employee = employeeMatch && employeeMatch.status === 'confirmed_existing'
-        ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeMatch.candidate_employee_id])
-        : await dbGet(
-            // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
-            // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
-            'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
-            [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
-          );
-      if (!employee) {
-        const employeeId = uuidv4();
-        await dbRun(
-          `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            employeeId,
-            clientId,
-            formatPhoneNumber(row.employee_number_raw),
-            fullName,
-            row.job_title_raw,
-            row.department_raw,
-            parseEmployeeActiveStatus(row.employee_status_raw),
-            `Created by import: ${batch.filename}`,
-          ]
+      if (namesInRow.length === 1) {
+        // A flagged possible match (see detectEmployeeMatches above) takes priority over the
+        // plain exact-name lookup below - it only ever exists when that lookup would otherwise
+        // have found nothing and been about to create a second profile for someone already on file.
+        const employeeMatch = await dbGet(
+          'SELECT * FROM import_employee_matches WHERE batch_id = ? AND client_id = ? AND full_name_raw = ?',
+          [req.params.batchId, clientId, row.full_name_raw]
         );
-        employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
-        employeesCreated += 1;
+        if (employeeMatch && employeeMatch.status === 'needs_review') {
+          rowsSkippedNeedsEmployeeReview += 1; // still waiting on a decision - picked up by a later commit
+          continue;
+        }
+
+        let employee = employeeMatch && employeeMatch.status === 'confirmed_existing'
+          ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeMatch.candidate_employee_id])
+          : await dbGet(
+              // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
+              // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
+              'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
+              [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
+            );
+        if (!employee) {
+          const employeeId = uuidv4();
+          await dbRun(
+            `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              employeeId,
+              clientId,
+              formatPhoneNumber(row.employee_number_raw),
+              fullName,
+              row.job_title_raw,
+              row.department_raw,
+              parseEmployeeActiveStatus(row.employee_status_raw),
+              `Created by import: ${batch.filename}`,
+            ]
+          );
+          employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
+          employeesCreated += 1;
+        }
+        employees.push(employee);
+      } else {
+        // Multiple people who all completed this row's training together (splitMultiPersonNames
+        // above) - each comma-separated name matched/created independently by exact name at this
+        // client. The employee-match review queue above is keyed on the WHOLE raw cell text (one
+        // name), so it doesn't apply per split name here; a reordered/fuzzy name among these still
+        // gets caught by the normal Employees "possible duplicates" tool after the fact, same as
+        // any other import.
+        for (const oneName of namesInRow) {
+          // eslint-disable-next-line no-await-in-loop
+          let employee = await dbGet(
+            'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ?',
+            [clientId, oneName.toLowerCase()]
+          );
+          if (!employee) {
+            const employeeId = uuidv4();
+            // eslint-disable-next-line no-await-in-loop
+            await dbRun(
+              `INSERT INTO employees (employee_id, client_id, full_name, active, notes)
+               VALUES (?, ?, ?, 1, ?)`,
+              [employeeId, clientId, oneName, `Created by import: ${batch.filename}`]
+            );
+            // eslint-disable-next-line no-await-in-loop
+            employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
+            employeesCreated += 1;
+          }
+          employees.push(employee);
+        }
       }
+
       const trainerEmployeeId = row.trainer_name_raw ? await repo.findOrCreateTrainerEmployee(row.trainer_name_raw) : null;
 
       eligibleRows.push(row);
-      rowContextById.set(row.staged_row_id, { employee, clientId, trainerEmployeeId });
+      rowContextById.set(row.staged_row_id, employees.map((employee) => ({ employee, clientId, trainerEmployeeId })));
     }
 
     const now = new Date().toISOString();
@@ -587,7 +635,11 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
     // and a row resolved via a column_map label) - the actual record creation/dedup logic is
     // identical either way, only how `trainingId`/`originalClientTrainingName` were determined differs.
     async function commitLongFormatRecord(row, trainingId, masterTraining, originalClientTrainingName) {
-      const { employee, clientId, trainerEmployeeId } = rowContextById.get(row.staged_row_id);
+      // Normally one context (one employee); 2+ when this row's name cell listed multiple people
+      // who all completed this training together (see splitMultiPersonNames above) - same record
+      // created once per person, everything else about the row (training/date/status) shared.
+      const contexts = rowContextById.get(row.staged_row_id);
+      for (const { employee, clientId, trainerEmployeeId } of contexts) {
       // The source's own Expiration date (if any) is written to source_expiration_date, which
       // statusEngine.resolveExpiration treats as the record's explicit override and always
       // prefers over a computed catalog/client duration - so a migrated record shows exactly
@@ -607,15 +659,17 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
       // vs "Fire Watch Training") are still the same event, and matching on the label would miss
       // that. Null-safe on completion_date since a blank/unparsed source value still stages a
       // record (flagged "Pending Review") that shouldn't be duplicated either.
+      // eslint-disable-next-line no-await-in-loop
       const alreadyExists = await dbGet(
         `SELECT 1 FROM employee_training_records
          WHERE employee_id = ? AND training_id = ?
            AND (completion_date = ? OR (completion_date IS NULL AND ?::text IS NULL))`,
         [employee.employee_id, trainingId, parsed.completion_date, parsed.completion_date]
       );
-      if (alreadyExists) return;
+      if (alreadyExists) continue;
 
       const recordId = uuidv4();
+      // eslint-disable-next-line no-await-in-loop
       await dbRun(
         `INSERT INTO employee_training_records
          (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
@@ -640,10 +694,12 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
           now,
         ]
       );
+      // eslint-disable-next-line no-await-in-loop
       const persisted = await repo.recomputeAndPersistRecord(recordId);
       if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
       recordsCreated += 1;
       createdRecordIds.push(recordId);
+      }
     }
 
     // Long format only: rows whose own Training ID column already names an exact, valid master
@@ -687,15 +743,19 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
           continue;
         }
 
-        const { employee, clientId, trainerEmployeeId } = rowContextById.get(row.staged_row_id);
+        // Normally one context (one employee); 2+ when this row's name cell listed multiple
+        // people who all completed this training together (see splitMultiPersonNames above).
+        const contexts = rowContextById.get(row.staged_row_id);
         const rawRow = JSON.parse(row.raw_row_json);
         const cellValue = rawRow[col.source_column_header];
         if (cellValue === undefined || cellValue === null || String(cellValue).trim() === '') continue; // spec 13: blank isn't proof of anything - skip, don't create a false "Missing" record
         const parsed = parseSourceValue(cellValue);
         const originalClientTrainingName = col.source_column_header;
 
+        for (const { employee, clientId, trainerEmployeeId } of contexts) {
         // Global, label-independent duplicate check - see the matching comment in
         // commitLongFormatRecord above for why (Keeley's request, 2026-09-21).
+        // eslint-disable-next-line no-await-in-loop
         const alreadyCommitted = await dbGet(
           `SELECT 1 FROM employee_training_records
            WHERE employee_id = ? AND training_id = ?
@@ -705,6 +765,7 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
         if (alreadyCommitted) continue;
 
         const recordId = uuidv4();
+        // eslint-disable-next-line no-await-in-loop
         await dbRun(
           `INSERT INTO employee_training_records
            (record_id, client_id, employee_id, training_id, original_training_name, original_client_training_name,
@@ -729,10 +790,12 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
             now,
           ]
         );
+        // eslint-disable-next-line no-await-in-loop
         const persisted = await repo.recomputeAndPersistRecord(recordId);
         if (persisted && persisted.status === 'Pending Review') recordsNeedingReview += 1;
         recordsCreated += 1;
         createdRecordIds.push(recordId);
+        }
       }
     }
 

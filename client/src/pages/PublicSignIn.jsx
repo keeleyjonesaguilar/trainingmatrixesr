@@ -472,6 +472,11 @@ export default function PublicSignIn() {
   const isSpanish = info.language === 'spanish';
   const trainingLabelEs = info.training_type_label_es || info.training_type_label;
   const outlineEs = info.outline_es || info.outline;
+  // Per-day outline (Keeley's request, 2026-09-22: "Day 1 has its own outline, day 2 and so
+  // on") - shown instead of the blanket session outline whenever the admin set one for the
+  // current day. English-only for now (no per-day machine translation), unlike the blanket
+  // outline below.
+  const dayOutlineText = info.day_outlines?.[info.current_day - 1];
 
   return (
     <div className="public-shell">
@@ -492,7 +497,12 @@ export default function PublicSignIn() {
           </div>
         </div>
 
-        {info.outline && (
+        {dayOutlineText ? (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <strong style={{ fontSize: 13 }}>{t('today_outline')}</strong>
+            <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)' }}>{dayOutlineText}</p>
+          </div>
+        ) : info.outline && (
           <div className="card" style={{ marginBottom: 16 }}>
             <strong style={{ fontSize: 13 }}>{t('today_outline')}</strong>
             {isBoth ? (

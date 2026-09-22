@@ -12,11 +12,18 @@ const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
 const { logActivity } = require('../lib/activityLog');
+const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
+const { generateAhaRoster } = require('../lib/ahaRoster');
+const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const fs = require('fs');
 
 const router = express.Router();
 
 const SESSION_LANGUAGES = ['english', 'spanish', 'both'];
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The one training this special AHA-format roster applies to (Keeley's request, 2026-09-21) -
+// matches server/routes/publicSessions.js's AHA_ROSTER_TRAINING_ID.
+const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 
 function tokenGen() {
   return uuidv4().replace(/-/g, '').slice(0, 16);
@@ -60,10 +67,29 @@ function validateDayDates(dayDates, totalDays) {
   return { dayDatesJson: JSON.stringify(dayDates), error: null };
 }
 
-// Parses day_dates back into a plain array for API responses - raw session rows carry it as a
-// JSON string (same TEXT-column convention as hs_course_options/hs_optional_topics).
+// Per-day outline text (server/migrations/057_multiday_session_outlines.sql, Keeley's request,
+// 2026-09-22) - "Day 1 has its own outline, day 2 and so on," shown to attendees instead of one
+// blanket outline for the whole course. Same length-vs-total_days rule as day_dates, but no
+// format check since it's free text.
+function validateDayOutlines(dayOutlines, totalDays) {
+  if (dayOutlines === undefined || dayOutlines === null) return { dayOutlinesJson: null, error: null };
+  if (!Array.isArray(dayOutlines) || dayOutlines.some((o) => typeof o !== 'string')) {
+    return { dayOutlinesJson: null, error: 'day_outlines must be a list of text, one per day.' };
+  }
+  if (totalDays && dayOutlines.length !== totalDays) {
+    return { dayOutlinesJson: null, error: `day_outlines must have exactly ${totalDays} entries to match total_days.` };
+  }
+  return { dayOutlinesJson: JSON.stringify(dayOutlines), error: null };
+}
+
+// Parses day_dates/day_outlines back into plain arrays for API responses - raw session rows
+// carry them as JSON strings (same TEXT-column convention as hs_course_options/hs_optional_topics).
 function withParsedDayDates(session) {
-  return { ...session, day_dates: session.day_dates ? JSON.parse(session.day_dates) : null };
+  return {
+    ...session,
+    day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
+    day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
+  };
 }
 
 async function attendeeCount(sessionId) {
@@ -176,7 +202,7 @@ router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
-    total_days = null, day_dates = null,
+    total_days = null, day_dates = null, day_outlines = null,
   } = req.body || {};
   if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
@@ -198,6 +224,8 @@ router.post('/', async (req, res) => {
   }
   const { dayDatesJson, error: dayDatesError } = validateDayDates(day_dates, totalDays);
   if (dayDatesError) return res.status(400).json({ error: dayDatesError });
+  const { dayOutlinesJson, error: dayOutlinesError } = validateDayOutlines(day_outlines, totalDays);
+  if (dayOutlinesError) return res.status(400).json({ error: dayOutlinesError });
   let clientId;
   try {
     clientId = await repo.findOrCreateClientByName(client_name);
@@ -214,8 +242,8 @@ router.post('/', async (req, res) => {
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates, day_outlines)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
@@ -235,6 +263,7 @@ router.post('/', async (req, res) => {
       outline_es,
       totalDays,
       dayDatesJson,
+      dayOutlinesJson,
     ]
   );
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
@@ -297,6 +326,12 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (result.error) return res.status(400).json({ error: result.error });
     dayDatesJson = result.dayDatesJson;
   }
+  let dayOutlinesJson = existing.day_outlines;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'day_outlines')) {
+    const result = validateDayOutlines(req.body.day_outlines, totalDays);
+    if (result.error) return res.status(400).json({ error: result.error });
+    dayOutlinesJson = result.dayOutlinesJson;
+  }
 
   let clientId = existing.client_id;
   if (req.body.client_name) {
@@ -323,7 +358,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?, day_dates=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?, day_dates=?, day_outlines=?
      WHERE session_id=?`,
     [
       clientId,
@@ -341,6 +376,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       outline_es,
       totalDays,
       dayDatesJson,
+      dayOutlinesJson,
       req.params.id,
     ]
   );
@@ -595,6 +631,109 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     archive.file(f.path, { name: f.name });
   }
   await archive.finalize();
+});
+
+// Manually add a missed attendee to the roster (Keeley's request, 2026-09-22) - works whether the
+// session is still open or already closed. A closed session's roster used to be permanently
+// locked to new entries (only removal was ever allowed, below) - this is the one deliberate way
+// back in, for someone who genuinely attended but never signed in at the kiosk. Signature is
+// optional here (migration 059) since there's often no live signature to capture after the fact.
+// Immediately runs the same certificate/employee-linkage step the close-out itself uses when the
+// session is already closed, and regenerates the combined roster PDF (and the AHA roster, for a
+// First Aid/CPR/AED session) so the newly-added person shows up on both right away. Doesn't
+// extend to a session's *additional* trainings (server/migrations/045_multi_training_sessions.sql)
+// - a rare-enough compounding edge case (multi-training session + a manual add after close) that
+// it's left for a manual Retry-style follow-up rather than adding here.
+router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const { trainee_name, trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
+  if (!trainee_name || !trainee_name.trim()) {
+    return res.status(400).json({ error: 'Name is required.' });
+  }
+  if (trainee_phone && !isValidPhoneNumber(trainee_phone)) {
+    return res.status(400).json({ error: 'Please enter a standard 10-digit phone number.' });
+  }
+  if (trainee_email && !EMAIL_PATTERN.test(trainee_email.trim())) {
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+
+  const attendee_id = uuidv4();
+  await dbRun(
+    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, trainee_email, signature, added_by_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    [
+      attendee_id,
+      session.session_id,
+      trainee_name.trim(),
+      trainee_phone ? formatPhoneNumber(trainee_phone) : null,
+      trainee_job_title ? trainee_job_title.trim() : null,
+      trainee_email ? trainee_email.trim().toLowerCase() : null,
+      signature || null,
+    ]
+  );
+
+  if (session.status === 'closed') {
+    const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee_id]);
+
+    // Multi-day session (server/migrations/055_multiday_sessions.sql): someone added after the
+    // fact has zero recorded attendance days on file, so the same full-attendance gate the close
+    // route itself applies correctly leaves them incomplete unless total_days is unset.
+    let eligible = true;
+    if (session.total_days) {
+      const { n } = await dbGet(
+        'SELECT COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? AND attendee_id = ?',
+        [session.session_id, attendee_id]
+      );
+      eligible = Number(n) >= session.total_days;
+    }
+    if (!eligible) {
+      await dbRun(
+        `UPDATE session_attendees SET processing_status = 'incomplete_attendance', processing_error = ? WHERE attendee_id = ?`,
+        ['Added after the session closed with no recorded attendance days on file.', attendee_id]
+      );
+    } else {
+      let certPath = null;
+      try {
+        certPath = await generateCertificate(session, attendee);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`Certificate generation failed for manually-added attendee ${attendee_id}:`, err);
+      }
+      await processAttendee(session, attendee, certPath);
+    }
+
+    // Regenerate the combined roster (and AHA roster, if applicable) so the new attendee shows
+    // up on both right away, same generation calls the close route itself uses.
+    const allAttendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+    try {
+      const rosterPath = await generateRosterPdf(session, allAttendees);
+      await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`Roster PDF regeneration failed for session ${session.session_id}:`, err);
+    }
+    if (session.master_training_id === AHA_ROSTER_TRAINING_ID) {
+      try {
+        let trainerAhaInstructorId = null;
+        if (session.trainer_employee_id) {
+          const trainerEmployee = await dbGet('SELECT aha_instructor_id FROM employees WHERE employee_id = ?', [session.trainer_employee_id]);
+          trainerAhaInstructorId = trainerEmployee?.aha_instructor_id || null;
+        }
+        const ahaRosterPath = await generateAhaRoster({ ...session, trainer_aha_instructor_id: trainerAhaInstructorId }, allAttendees);
+        await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`AHA roster regeneration failed for session ${session.session_id}:`, err);
+      }
+    }
+  }
+
+  logActivity({
+    actor: req.user, action: 'attendee_added_manually', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: trainee_name.trim(), req,
+  });
+  res.status(201).json(await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee_id]));
 });
 
 // Manual correction of a typo'd attendee entry (name/phone/email), while the session is still open.

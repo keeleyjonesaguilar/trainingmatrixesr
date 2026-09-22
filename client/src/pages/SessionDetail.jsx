@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate } from '../lib/dates';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
+import SignaturePad from '../components/SignaturePad.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
@@ -184,6 +185,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   // The actual calendar date scheduled for each day of a multi-day session (Keeley's request,
   // 2026-09-22) - purely informational, editable independently of total_days.
   const [dayDates, setDayDates] = useState(session.day_dates || []);
+  // Per-day outline text (Keeley's request, 2026-09-22: "Day 1 has its own outline, day 2 and
+  // so on").
+  const [dayOutlines, setDayOutlines] = useState(session.day_outlines || []);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -196,11 +200,17 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       setSaving(false);
       return;
     }
+    if (form.total_days && dayOutlines.some((o) => !o.trim())) {
+      setError('Enter an outline for every day.');
+      setSaving(false);
+      return;
+    }
     try {
       const updated = await api.updateTrainingSession(session.session_id, {
         ...form,
         trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
         day_dates: form.total_days ? dayDates : null,
+        day_outlines: form.total_days ? dayOutlines : null,
       });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
@@ -298,6 +308,11 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   ? prev.slice(0, count)
                   : [...prev, ...sequentialDates(form.session_date, count).slice(prev.length, count)]
               ));
+              setDayOutlines((prev) => (
+                count <= prev.length
+                  ? prev.slice(0, count)
+                  : [...prev, ...Array.from({ length: count - prev.length }, () => form.outline)]
+              ));
             }}
             placeholder="Leave blank for single-day"
           />
@@ -315,6 +330,25 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   value={d}
                   onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
                   style={{ maxWidth: 150 }}
+                  required
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {form.total_days && dayOutlines.length > 0 && (
+        <div className="field">
+          <label>Outline per Day</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {dayOutlines.map((o, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)', width: 44, marginTop: 8 }}>Day {i + 1}</span>
+                <textarea
+                  rows={2}
+                  value={o}
+                  onChange={(e) => setDayOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  style={{ flexGrow: 1 }}
                   required
                 />
               </div>
@@ -345,6 +379,80 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   );
 }
 
+// Manually add a missed attendee to the roster (Keeley's request, 2026-09-22) - works whether
+// the session is open or already closed; a closed session's roster used to be permanently
+// locked to new entries, only removal was ever allowed. Signature is optional since there's
+// often no live signature to capture after the fact.
+function AddAttendeeForm({ sessionId, isClosed, onAdded, onCancel }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+  const [email, setEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const sigRef = useRef(null);
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return setError('Name is required.');
+    setSaving(true);
+    setError('');
+    try {
+      await api.addSessionAttendee(sessionId, {
+        trainee_name: name.trim(),
+        trainee_phone: phone.trim() || null,
+        trainee_job_title: jobTitle.trim() || null,
+        trainee_email: email.trim() || null,
+        signature: sigRef.current?.isEmpty() ? null : sigRef.current?.toDataURL(),
+      });
+      onAdded();
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h3 style={{ marginTop: 0, fontSize: 14 }}>Add Attendee</h3>
+      {isClosed && (
+        <p className="page-subtitle" style={{ marginTop: -6 }}>
+          This session is already closed - adding someone here generates their certificate/training record and
+          updates the roster right away, same as everyone else got at close-out.
+        </p>
+      )}
+      {error && <p className="error-banner">{error}</p>}
+      <form onSubmit={save}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div className="field">
+            <label>Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>Phone (optional)</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" />
+          </div>
+          <div className="field">
+            <label>Job Title (optional)</label>
+            <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Email (optional)</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+          </div>
+        </div>
+        <div className="field">
+          <label>Signature (optional)</label>
+          <SignaturePad ref={sigRef} />
+        </div>
+        <button className="btn btn-accent" type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add Attendee'}</button>{' '}
+        <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+      </form>
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -363,6 +471,7 @@ export default function SessionDetail() {
   const [trainings, setTrainings] = useState([]);
   const [copiedLink, setCopiedLink] = useState('');
   const [savingFulfillment, setSavingFulfillment] = useState('');
+  const [showAddAttendee, setShowAddAttendee] = useState(false);
 
   const load = () => {
     api.getTrainingSession(id).then(setSession).catch((err) => setError(err.message));
@@ -540,6 +649,16 @@ export default function SessionDetail() {
               </button>
             )}
           </div>
+          {session.day_outlines?.length > 0 && (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {session.day_outlines.map((o, i) => (
+                <div key={i} style={{ fontSize: 13 }}>
+                  <strong>Day {i + 1}{session.day_dates?.[i] ? ` (${formatShortDate(session.day_dates[i])})` : ''}:</strong>{' '}
+                  <span style={{ color: 'var(--color-text-muted)' }}>{o}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <table style={{ marginTop: 12 }}>
             <thead>
               <tr>
@@ -719,7 +838,22 @@ export default function SessionDetail() {
               <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)' }}>{session.outline}</p>
             </div>
           )}
-          <h3 style={{ marginTop: 0, fontSize: 14 }}>Roster ({session.attendees.length})</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h3 style={{ marginTop: 0, fontSize: 14 }}>Roster ({session.attendees.length})</h3>
+            {isAdmin && !showAddAttendee && (
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddAttendee(true)}>
+                + Add Attendee
+              </button>
+            )}
+          </div>
+          {isAdmin && showAddAttendee && (
+            <AddAttendeeForm
+              sessionId={id}
+              isClosed={session.status === 'closed'}
+              onAdded={() => { setShowAddAttendee(false); load(); }}
+              onCancel={() => setShowAddAttendee(false)}
+            />
+          )}
           <table>
             <thead>
               <tr>
@@ -758,7 +892,12 @@ export default function SessionDetail() {
                     </>
                   ) : (
                     <>
-                      <td>{a.employee_id ? <Link to={`/employees/${a.employee_id}`}>{a.trainee_name}</Link> : a.trainee_name}</td>
+                      <td>
+                        {a.employee_id ? <Link to={`/employees/${a.employee_id}`}>{a.trainee_name}</Link> : a.trainee_name}
+                        {a.added_by_admin ? (
+                          <span className="badge badge-noexpiration" style={{ marginLeft: 6, fontSize: 10 }}>Added manually</span>
+                        ) : null}
+                      </td>
                       <td>{a.trainee_phone || '—'}</td>
                       <td>{a.trainee_email || '—'}</td>
                       <td>{formatEasternDateTime(a.signed_at)}</td>

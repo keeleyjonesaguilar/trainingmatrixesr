@@ -114,6 +114,25 @@ export const api = {
   getEmployeeFacets: (clientId) => request(`/employees/facets/list${clientId ? `?client_id=${clientId}` : ''}`),
   searchAnyEmployee: (q, excludeId) => request(`/employees/search-any?${new URLSearchParams({ q, ...(excludeId ? { exclude_id: excludeId } : {}) }).toString()}`),
 
+  // General supporting documents on an employee's own record (Keeley's request, 2026-09-22) -
+  // an existing OSHA/CPR card, a medical eval, etc., not tied to one specific training record.
+  listEmployeeDocuments: (employeeId) => request(`/employees/${employeeId}/documents`),
+  uploadEmployeeDocument: (employeeId, file, label, trainingId) => {
+    const formData = new FormData();
+    formData.append('document', file);
+    formData.append('label', label);
+    if (trainingId) formData.append('training_id', trainingId);
+    return fetch(`${BASE}/employees/${employeeId}/documents`, { method: 'POST', body: formData, credentials: 'include' }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Document upload failed (${res.status})`);
+      }
+      return res.json();
+    });
+  },
+  getEmployeeDocumentUrl: (employeeId, documentId) => `${BASE}/employees/${employeeId}/documents/${documentId}`,
+  deleteEmployeeDocument: (employeeId, documentId) => request(`/employees/${employeeId}/documents/${documentId}`, { method: 'DELETE' }),
+
   // Training Requirements (Client Settings)
   getClientRequirements: (clientId) => request(`/training-requirements/client/${clientId}`),
   setClientRequirement: (clientId, trainingId, data) =>
@@ -195,6 +214,11 @@ export const api = {
   updateSessionFulfillment: (id, payload) =>
     request(`/training-sessions/${id}/fulfillment`, { method: 'PATCH', body: JSON.stringify(payload) }),
   logSessionLinkCopied: (id, linkType) => request(`/training-sessions/${id}/log-link-copied`, { method: 'POST', body: JSON.stringify({ link_type: linkType }) }),
+  // Manually add a missed attendee - works whether the session is open or already closed
+  // (Keeley's request, 2026-09-22); when closed, immediately generates their certificate/
+  // training record and regenerates the roster the same way close-out itself does.
+  addSessionAttendee: (sessionId, payload) =>
+    request(`/training-sessions/${sessionId}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
   updateSessionAttendee: (sessionId, attendeeId, payload) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteSessionAttendee: (sessionId, attendeeId) =>

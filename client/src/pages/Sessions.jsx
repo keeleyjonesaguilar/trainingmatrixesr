@@ -86,7 +86,17 @@ export default function Sessions() {
   // session's own page, not these dates), so this is a plain editable array the admin can adjust
   // to skip a weekend/holiday, not something the backend re-derives on its own.
   const [dayDates, setDayDates] = useState([]);
+  // Per-day outline text (Keeley's request, 2026-09-22: "Day 1 has its own outline, day 2 and
+  // so on") - seeded from the main Outline field's current value each time a new day slot opens
+  // up, purely as a convenient starting point; edited independently per day from there.
+  const [dayOutlines, setDayOutlines] = useState([]);
   const [creating, setCreating] = useState(false);
+  // Upcoming-count badge (Keeley's request, 2026-09-22): open sessions dated today or later,
+  // same definition Dashboard.jsx's "Upcoming Trainings Scheduled" box already uses. Fetched on
+  // its own rather than derived from `sessions` above, since that list reflects whatever status/
+  // client filter is currently applied below and would otherwise go to 0 the moment someone
+  // filters to "Closed".
+  const [upcomingCount, setUpcomingCount] = useState(null);
 
   const load = () => {
     setSessionsLoading(true);
@@ -97,6 +107,13 @@ export default function Sessions() {
       .finally(() => setSessionsLoading(false));
   };
 
+  const loadUpcomingCount = () => {
+    api.listTrainingSessions({ status: 'open', client_id: clientIdFilter }).then((rows) => {
+      const today = new Date().toISOString().slice(0, 10);
+      setUpcomingCount(rows.filter((s) => s.session_date >= today).length);
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     api.listMasterTrainings(true).then(setTrainings).catch(() => {});
     api.listClients().then(setClients).catch(() => {});
@@ -105,6 +122,8 @@ export default function Sessions() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only the primitive filter values matter, not object identity
   useEffect(load, [filters.client_name, filters.status, clientIdFilter]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only clientIdFilter matters here
+  useEffect(loadUpcomingCount, [clientIdFilter]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -126,6 +145,10 @@ export default function Sessions() {
     }
     if (isMultiDay && dayDates.some((d) => !d)) {
       setError('Enter a scheduled date for every day.');
+      return;
+    }
+    if (isMultiDay && dayOutlines.some((o) => !o.trim())) {
+      setError('Enter an outline for every day.');
       return;
     }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
@@ -154,6 +177,7 @@ export default function Sessions() {
         language: form.language,
         total_days: isMultiDay ? Number(form.total_days) : null,
         day_dates: isMultiDay ? dayDates : null,
+        day_outlines: isMultiDay ? dayOutlines : null,
       });
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
@@ -168,7 +192,14 @@ export default function Sessions() {
 
   return (
     <div>
-      <h1 className="page-title">Training Sessions</h1>
+      <h1 className="page-title">
+        Training Sessions
+        {upcomingCount !== null && (
+          <span className="badge badge-noexpiration" style={{ marginLeft: 10, verticalAlign: 'middle' }}>
+            {upcomingCount} Upcoming
+          </span>
+        )}
+      </h1>
       <p className="page-subtitle">
         Create a sign-in sheet, generate its QR code, and track rosters as they come in — closing a session writes
         each attendee straight into their employee file.
@@ -390,7 +421,7 @@ export default function Sessions() {
                       checked={isMultiDay}
                       onChange={(e) => {
                         setIsMultiDay(e.target.checked);
-                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); }
+                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); setDayOutlines([]); }
                       }}
                     />
                     Multi-day training (one QR code, used every day)
@@ -408,6 +439,11 @@ export default function Sessions() {
                             count <= prev.length
                               ? prev.slice(0, count)
                               : [...prev, ...sequentialDates(form.session_date, count).slice(prev.length, count)]
+                          ));
+                          setDayOutlines((prev) => (
+                            count <= prev.length
+                              ? prev.slice(0, count)
+                              : [...prev, ...Array.from({ length: count - prev.length }, () => form.outline)]
                           ));
                         }}
                         placeholder="Number of days (e.g. 4)"
@@ -429,6 +465,27 @@ export default function Sessions() {
                                 value={d}
                                 onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
                                 style={{ maxWidth: 160 }}
+                                required
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {dayOutlines.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)' }}>
+                            Outline per Day
+                          </label>
+                          {dayOutlines.map((o, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                              <span style={{ fontSize: 12, color: 'var(--color-text-muted)', width: 44, marginTop: 8 }}>
+                                Day {i + 1}
+                              </span>
+                              <textarea
+                                rows={2}
+                                value={o}
+                                onChange={(e) => setDayOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                style={{ flexGrow: 1 }}
                                 required
                               />
                             </div>
