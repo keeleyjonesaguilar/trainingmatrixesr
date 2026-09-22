@@ -143,12 +143,14 @@ function RecordStatusBadge({ status }) {
     no_catalog_match: 'Employee on file (no catalog match)',
     failed: 'Needs attention',
     pending: 'Processing…',
+    incomplete_attendance: 'Incomplete (missed a day)',
   };
   const classes = {
     linked: 'badge-current',
     no_catalog_match: 'badge-pendingreview',
     failed: 'badge-expired',
     pending: 'badge-pendingreview',
+    incomplete_attendance: 'badge-expired',
   };
   return <span className={`badge ${classes[status] || 'badge-notapplicable'}`}>{labels[status] || status}</span>;
 }
@@ -177,6 +179,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     duration: session.duration || '',
     outline: session.outline || '',
     language: session.language || 'english',
+    total_days: session.total_days || '',
   });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -271,6 +274,16 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             <option value="spanish">Spanish</option>
             <option value="both">Both (English/Spanish)</option>
           </select>
+        </div>
+        <div className="field">
+          <label>Total Days (multi-day training)</label>
+          <input
+            type="number"
+            min={2}
+            value={form.total_days}
+            onChange={(e) => setForm({ ...form, total_days: e.target.value })}
+            placeholder="Leave blank for single-day"
+          />
         </div>
       </div>
       <div className="field">
@@ -379,6 +392,19 @@ export default function SessionDetail() {
     }
   };
 
+  const [advancingDay, setAdvancingDay] = useState(false);
+  const advanceDay = async () => {
+    setAdvancingDay(true);
+    try {
+      await api.advanceSessionDay(id);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdvancingDay(false);
+    }
+  };
+
   const retryProcessing = async (attendeeId) => {
     setRetryingId(attendeeId);
     try {
@@ -411,6 +437,9 @@ export default function SessionDetail() {
         {session.location ? ` · ${session.location}` : ''}
         {session.duration ? ` · ${session.duration}` : ''}{' '}
         · <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
+        {session.total_days && (
+          <>{' '}· <span className="badge badge-noexpiration">Day {session.current_day} of {session.total_days}</span></>
+        )}
         {session.language && session.language !== 'english' && (
           <>{' '}· <span className="badge badge-noexpiration">{session.language === 'both' ? 'English/Spanish' : 'Spanish'}</span></>
         )}
@@ -439,6 +468,79 @@ export default function SessionDetail() {
             />
             Saved to Server
           </label>
+        </div>
+      )}
+
+      {/* Multi-day training (Keeley's request, 2026-09-21/22) - the day advance is manual
+          (never calendar-driven), so it survives a course slipping a day for weather/a holiday
+          without misjudging attendance. New sign-ins and "find your name" check-ins always
+          attach to whichever day is current at the moment they happen. */}
+      {session.total_days && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 14 }}>Attendance by Day</h3>
+              <p className="page-subtitle" style={{ margin: '2px 0 0' }}>
+                One QR code covers all {session.total_days} days. Certificates only generate for attendees present every day.
+              </p>
+            </div>
+            {isAdmin && session.status === 'open' && (
+              <button
+                className="btn btn-accent btn-sm"
+                disabled={advancingDay || session.current_day >= session.total_days}
+                onClick={advanceDay}
+              >
+                {advancingDay
+                  ? 'Opening…'
+                  : session.current_day >= session.total_days
+                    ? `On Final Day (${session.total_days})`
+                    : `Open Day ${session.current_day + 1} →`}
+              </button>
+            )}
+          </div>
+          <table style={{ marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => (
+                  <th key={d} style={{ textAlign: 'center' }}>Day {d}</th>
+                ))}
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {session.attendees.map((a) => {
+                const daysAttended = a.days_attended || [];
+                const isComplete = daysAttended.length >= session.total_days;
+                return (
+                  <tr key={a.attendee_id}>
+                    <td>{a.trainee_name}</td>
+                    {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => (
+                      <td key={d} style={{ textAlign: 'center' }}>
+                        {daysAttended.includes(d) ? (
+                          <span style={{ color: 'var(--status-current-text)', fontWeight: 700 }}>✓</span>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                        )}
+                      </td>
+                    ))}
+                    <td>
+                      {session.status === 'closed' ? (
+                        <RecordStatusBadge status={a.processing_status} />
+                      ) : (
+                        <span className={`badge ${isComplete ? 'badge-current' : 'badge-expired'}`}>
+                          {isComplete ? 'On Track' : `Missing ${session.total_days - daysAttended.length} Day(s)`}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {session.attendees.length === 0 && (
+                <tr><td colSpan={session.total_days + 2} className="empty-state">No sign-ins yet.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 

@@ -95,6 +95,32 @@ const STRINGS = {
     en: 'Trainer signature is required to close the session.',
     es: 'Se requiere la firma del instructor para cerrar la sesión.',
   },
+  // Multi-day training (Keeley's request, 2026-09-21/22): one QR code covers every day of a
+  // course like OSHA 30, so the sign-in page needs to show which day is open and let a returning
+  // attendee find themselves instead of re-typing their whole profile every day.
+  day_progress: { en: 'Day {day} of {total}', es: 'Día {day} de {total}' },
+  multi_day_notice: {
+    en: 'You must sign in every day of this course for it to count toward your certificate.',
+    es: 'Debe registrarse todos los días de este curso para que cuente para su certificado.',
+  },
+  choice_first_time_title: { en: 'First time on this course', es: 'Primera vez en este curso' },
+  choice_first_time_sub: {
+    en: "This is my Day 1, or I haven't signed in yet",
+    es: 'Es mi Día 1, o aún no me he registrado',
+  },
+  choice_returning_title: { en: 'I already signed in before', es: 'Ya me registré antes' },
+  choice_returning_sub: { en: 'Find my name and check in for today', es: 'Buscar mi nombre y registrarme hoy' },
+  find_name_title: { en: 'Find your name', es: 'Busque su nombre' },
+  find_name_placeholder: { en: 'Start typing your name…', es: 'Empiece a escribir su nombre…' },
+  find_name_no_results: { en: "Can't find your name?", es: '¿No encuentra su nombre?' },
+  find_name_switch_new: { en: 'Sign in as a new attendee', es: 'Registrarse como nuevo participante' },
+  find_name_back: { en: '← Back', es: '← Atrás' },
+  find_name_already_today: { en: 'signed in today', es: 'registrado hoy' },
+  find_name_signed_days: { en: 'signed in Day(s)', es: 'registrado el/los Día(s)' },
+  confirm_checkin_title: { en: "Confirm it's you — sign for today", es: 'Confirme que es usted — firme por hoy' },
+  confirm_checkin_button: { en: 'Confirm & Check In', es: 'Confirmar y registrarse' },
+  checking_in_ellipsis: { en: 'Checking in…', es: 'Registrando…' },
+  checkin_success_banner: { en: "You're checked in for today!", es: '¡Está registrado para hoy!' },
 };
 
 // Returns the phrase for `key` in the session's language: English, Spanish, or (for "both")
@@ -109,6 +135,120 @@ function makeTranslator(language) {
     if (language === 'both') return `${entry.en}/${entry.es}`;
     return entry.en;
   };
+}
+
+// "Day {day} of {total}" has to fill in numbers, so it can't be a plain STRINGS lookup like
+// everything else on this page.
+function dayProgressLabel(t, day, total) {
+  return t('day_progress').replace('{day}', day).replace('{total}', total);
+}
+
+// Returning-attendee flow for a multi-day session (Keeley's request, 2026-09-21/22): search by
+// name instead of re-typing a whole profile every day, then sign fresh for whichever day is
+// currently open. Debounced live search (a fresh keystroke cancels the previous lookup) over a
+// small, single-session roster - server/routes/publicSessions.js's plain substring match, not
+// the word-set matching used for import de-duplication (which answers a different question: "is
+// this the exact same words in different order," not "does this look like what's been typed so
+// far").
+function ReturningAttendeeFlow({ token, t, onBack, onDone }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const sigRef = useRef(null);
+
+  useEffect(() => {
+    setSelected(null);
+    if (query.trim().length < 2) {
+      setResults([]);
+      return undefined;
+    }
+    setSearching(true);
+    const handle = setTimeout(() => {
+      api
+        .publicSearchAttendees(token, query.trim())
+        .then(setResults)
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [token, query]);
+
+  const confirmCheckIn = async () => {
+    setError('');
+    if (sigRef.current?.isEmpty()) return setError(t('err_signature'));
+    setSubmitting(true);
+    try {
+      await api.publicCheckinAttendee(token, selected.attendee_id, {
+        signature: sigRef.current.toDataURL(),
+      });
+      onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div>
+      <button type="button" className="link-button" onClick={onBack} style={{ marginBottom: 10 }}>
+        {t('find_name_back')}
+      </button>
+      <div className="field">
+        <label>{t('find_name_title')}</label>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('find_name_placeholder')}
+          autoFocus
+        />
+      </div>
+      {error && <p className="error-banner">{error}</p>}
+      {!searching && query.trim().length >= 2 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+          {results.map((r) => (
+            <button
+              key={r.attendee_id}
+              type="button"
+              className={selected?.attendee_id === r.attendee_id ? 'btn btn-accent' : 'btn btn-secondary'}
+              style={{ textAlign: 'left', justifyContent: 'flex-start' }}
+              onClick={() => setSelected(r)}
+              disabled={r.already_checked_in_today}
+            >
+              {r.trainee_name}
+              {r.already_checked_in_today
+                ? ` — ${t('find_name_already_today')}`
+                : r.days_attended.length
+                  ? ` — ${t('find_name_signed_days')} ${r.days_attended.join(', ')}`
+                  : ''}
+            </button>
+          ))}
+          {results.length === 0 && (
+            <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
+              {t('find_name_no_results')}{' '}
+              <button type="button" className="link-button" onClick={onBack}>
+                {t('find_name_switch_new')}
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+      {selected && !selected.already_checked_in_today && (
+        <div className="card" style={{ textAlign: 'left' }}>
+          <strong style={{ fontSize: 13 }}>{t('confirm_checkin_title')}</strong>
+          <div className="field" style={{ marginTop: 8 }}>
+            <SignaturePad ref={sigRef} />
+          </div>
+          <button className="btn btn-accent" type="button" disabled={submitting} style={{ width: '100%' }} onClick={confirmCheckIn}>
+            {submitting ? t('checking_in_ellipsis') : t('confirm_checkin_button')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function PublicSignIn() {
@@ -130,6 +270,12 @@ export default function PublicSignIn() {
   const [justSigned, setJustSigned] = useState(false);
   const [closedNow, setClosedNow] = useState(false);
   const sigRef = useRef(null);
+
+  // Multi-day session (Keeley's request, 2026-09-21/22): before showing the sign-in form, an
+  // attendee first picks whether this is their first time on this course or they're returning to
+  // check in for today - single-day sessions skip this entirely and go straight to 'new' below.
+  const [signInStep, setSignInStep] = useState('choice'); // 'choice' | 'new' | 'returning'
+  const [justCheckedIn, setJustCheckedIn] = useState(false);
 
   // AHA Heartsaver Course Roster fields (Keeley's request, 2026-09-21) - only ever shown/sent
   // when this session's training is First Aid/CPR/AED; every other training ignores them.
@@ -299,6 +445,7 @@ export default function PublicSignIn() {
   }
 
   const isClosed = info.status === 'closed' || closedNow;
+  const isMultiDay = Number(info.total_days) > 1;
   const isBoth = info.language === 'both';
   const isSpanish = info.language === 'spanish';
   const trainingLabelEs = info.training_type_label_es || info.training_type_label;
@@ -372,48 +519,112 @@ export default function PublicSignIn() {
 
             {formError && <p className="error-banner">{formError}</p>}
 
-            {justSigned && mode === 'trainee' && (
+            {justSigned && mode === 'trainee' && signInStep === 'new' && (
               <p className="success-banner">{t('signed_in_banner')}</p>
+            )}
+            {justCheckedIn && mode === 'trainee' && (
+              <p className="success-banner">{t('checkin_success_banner')}</p>
             )}
 
             {mode === 'trainee' ? (
-              <form onSubmit={handleTraineeSubmit}>
-                <div className="field">
-                  <label>{t('first_name')}</label>
-                  <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
-                </div>
-                <div className="field">
-                  <label>{t('last_name')}</label>
-                  <input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Smith" />
-                </div>
-                <div className="field">
-                  <label>{t('phone_number')}</label>
-                  <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" />
-                </div>
-                <div className="field">
-                  <label>{t('job_title')}</label>
-                  <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Electrician" />
-                </div>
-                <div className="field">
-                  <label>{t('email')}</label>
-                  <input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="jane@example.com"
-                    type="email"
+              <>
+                {isMultiDay && (
+                  <div className="card" style={{ marginBottom: 16, textAlign: 'center' }}>
+                    <strong>{dayProgressLabel(t, info.current_day, info.total_days)}</strong>
+                    <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>{t('multi_day_notice')}</p>
+                  </div>
+                )}
+
+                {isMultiDay && signInStep === 'choice' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ textAlign: 'left', justifyContent: 'flex-start', padding: '14px 16px', height: 'auto' }}
+                      onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('new'); }}
+                    >
+                      <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_first_time_title')}</span>
+                      <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                        {t('choice_first_time_sub')}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ textAlign: 'left', justifyContent: 'flex-start', padding: '14px 16px', height: 'auto' }}
+                      onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('returning'); }}
+                    >
+                      <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_returning_title')}</span>
+                      <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                        {t('choice_returning_sub')}
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {(!isMultiDay || signInStep === 'new') && (
+                  <form onSubmit={handleTraineeSubmit}>
+                    {isMultiDay && (
+                      <button
+                        type="button"
+                        className="link-button"
+                        style={{ marginBottom: 10 }}
+                        onClick={() => setSignInStep('choice')}
+                      >
+                        {t('find_name_back')}
+                      </button>
+                    )}
+                    <div className="field">
+                      <label>{t('first_name')}</label>
+                      <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
+                    </div>
+                    <div className="field">
+                      <label>{t('last_name')}</label>
+                      <input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Smith" />
+                    </div>
+                    <div className="field">
+                      <label>{t('phone_number')}</label>
+                      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" />
+                    </div>
+                    <div className="field">
+                      <label>{t('job_title')}</label>
+                      <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Electrician" />
+                    </div>
+                    <div className="field">
+                      <label>{t('email')}</label>
+                      <input
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="jane@example.com"
+                        type="email"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>{t('signature')}</label>
+                      <SignaturePad ref={sigRef} />
+                    </div>
+                    <button className="btn btn-accent" type="submit" disabled={submitting} style={{ width: '100%' }}>
+                      {submitting ? t('signing_in_ellipsis') : t('sign_in_button')}
+                    </button>
+                    <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10 }}>
+                      {info.attendee_count} {t(info.attendee_count === 1 ? 'person_signed_in_suffix' : 'people_signed_in_suffix')}
+                    </p>
+                  </form>
+                )}
+
+                {isMultiDay && signInStep === 'returning' && (
+                  <ReturningAttendeeFlow
+                    token={token}
+                    t={t}
+                    onBack={() => setSignInStep('choice')}
+                    onDone={() => {
+                      setJustCheckedIn(true);
+                      setSignInStep('choice');
+                      load();
+                    }}
                   />
-                </div>
-                <div className="field">
-                  <label>{t('signature')}</label>
-                  <SignaturePad ref={sigRef} />
-                </div>
-                <button className="btn btn-accent" type="submit" disabled={submitting} style={{ width: '100%' }}>
-                  {submitting ? t('signing_in_ellipsis') : t('sign_in_button')}
-                </button>
-                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10 }}>
-                  {info.attendee_count} {t(info.attendee_count === 1 ? 'person_signed_in_suffix' : 'people_signed_in_suffix')}
-                </p>
-              </form>
+                )}
+              </>
             ) : (
               <form onSubmit={handleTrainerClose}>
                 <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{t('close_note')}</p>

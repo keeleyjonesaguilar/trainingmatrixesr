@@ -74,7 +74,12 @@ export default function Sessions() {
     duration: '',
     outline: '',
     language: 'english',
+    total_days: '',
   });
+  // Multi-day training (Keeley's request, 2026-09-21/22) - one session, one QR code, used across
+  // every day (e.g. OSHA 30 over 4 days). Kept as its own toggle rather than always showing the
+  // day-count field, since the overwhelming majority of sessions are still single-day.
+  const [isMultiDay, setIsMultiDay] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const load = () => {
@@ -109,6 +114,10 @@ export default function Sessions() {
       setError('Every field is required to create a session.');
       return;
     }
+    if (isMultiDay && (!form.total_days || Number(form.total_days) < 2)) {
+      setError('Enter a number of days (2 or more) for a multi-day session.');
+      return;
+    }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
     const training_type_label = `${training.training_id} - ${training.training_name}`;
     const additional_trainings = additionalTrainingIds.map((tid) => {
@@ -133,6 +142,7 @@ export default function Sessions() {
         duration: form.duration,
         outline: form.outline,
         language: form.language,
+        total_days: isMultiDay ? Number(form.total_days) : null,
       });
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
@@ -360,6 +370,32 @@ export default function Sessions() {
                     <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
                       The training name and outline you type below are auto-translated to Spanish when you save.
                     </p>
+                  )}
+                </div>
+                <div className="field">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
+                    <input
+                      type="checkbox"
+                      checked={isMultiDay}
+                      onChange={(e) => { setIsMultiDay(e.target.checked); if (!e.target.checked) setForm((f) => ({ ...f, total_days: '' })); }}
+                    />
+                    Multi-day training (one QR code, used every day)
+                  </label>
+                  {isMultiDay && (
+                    <>
+                      <input
+                        type="number"
+                        min={2}
+                        value={form.total_days}
+                        onChange={(e) => setForm({ ...form, total_days: e.target.value })}
+                        placeholder="Number of days (e.g. 4)"
+                        style={{ marginTop: 8, maxWidth: 160 }}
+                        required
+                      />
+                      <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                        Attendees must sign in every day for it to count. Advance the day and track attendance from the session's own page after it's created.
+                      </p>
+                    </>
                   )}
                 </div>
               </div>

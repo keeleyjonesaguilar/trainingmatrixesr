@@ -1,8 +1,8 @@
 // Machine translation for the sign-in page's Spanish text (Keeley's request). Called only when
 // an admin saves a session with language 'spanish'/'both' - never from the public sign-in page
 // itself - so the result is cached on the session row and attendee traffic never triggers a
-// translation call. DEEPL_API_KEY isn't set up yet, so this throws a clear, catchable error
-// until Keeley provides one; callers must not let that block saving the session itself.
+// translation call. If DEEPL_API_KEY is ever missing/invalid, this throws a clear, catchable
+// error; callers must not let that block saving the session itself.
 function endpointFor(apiKey) {
   return apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
 }

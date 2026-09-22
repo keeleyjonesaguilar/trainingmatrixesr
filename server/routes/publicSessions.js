@@ -77,6 +77,8 @@ router.get('/:token', async (req, res) => {
     language: session.language,
     status: session.status,
     attendee_count: attendeeCount,
+    total_days: session.total_days,
+    current_day: session.current_day,
   });
 });
 
@@ -123,7 +125,82 @@ router.post('/:token/attendees', async (req, res) => {
       signature,
     ]
   );
+  // Multi-day session (server/migrations/055_multiday_sessions.sql): a brand-new sign-in always
+  // counts as attendance for whatever day is currently open, not necessarily "Day 1" - someone
+  // signing in for the first time on Day 2 has, correctly, still missed Day 1.
+  if (session.total_days) {
+    await dbRun(
+      `INSERT INTO session_attendance_days (id, session_id, attendee_id, day_number, signature)
+       VALUES (?, ?, ?, ?, ?)`,
+      [uuidv4(), session.session_id, attendee_id, session.current_day, signature]
+    );
+  }
   res.status(201).json({ ok: true });
+});
+
+// "Find your name" (Keeley's request, 2026-09-21) - a returning attendee on a multi-day session
+// looks themselves up instead of re-typing their whole profile every day. Plain substring search
+// (not the word-set matching used for import de-duplication) since this is a live type-ahead
+// over a small, single-session roster, not a one-shot "is this the same person" judgment call.
+router.get('/:token/attendees/search', async (req, res) => {
+  const session = await getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  const rows = await dbAll(
+    `SELECT attendee_id, trainee_name FROM session_attendees
+     WHERE session_id = ? AND trainee_name ILIKE ? ORDER BY trainee_name LIMIT 8`,
+    [session.session_id, `%${q}%`]
+  );
+  if (rows.length === 0) return res.json([]);
+  const days = await dbAll(
+    `SELECT attendee_id, day_number FROM session_attendance_days WHERE session_id = ? AND attendee_id = ANY(?)`,
+    [session.session_id, rows.map((r) => r.attendee_id)]
+  );
+  res.json(
+    rows.map((r) => {
+      const daysAttended = days.filter((d) => d.attendee_id === r.attendee_id).map((d) => d.day_number).sort((a, b) => a - b);
+      return {
+        attendee_id: r.attendee_id,
+        trainee_name: r.trainee_name,
+        days_attended: daysAttended,
+        already_checked_in_today: daysAttended.includes(session.current_day),
+      };
+    })
+  );
+});
+
+// A returning attendee confirms it's them and signs fresh for whichever day is currently open
+// (Keeley's call: a new signature every day, not just Day 1).
+router.post('/:token/attendees/:attendeeId/checkin', async (req, res) => {
+  const session = await getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
+  if (session.status === 'closed') {
+    return res.status(400).json({ error: 'This training session has been closed and can no longer accept sign-ins.' });
+  }
+  if (!session.total_days) return res.status(400).json({ error: 'This is not a multi-day session.' });
+  const attendee = await dbGet('SELECT attendee_id FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [
+    req.params.attendeeId,
+    session.session_id,
+  ]);
+  if (!attendee) return res.status(404).json({ error: 'Attendee not found on this session.' });
+  const { signature } = req.body || {};
+  if (!isValidSignature(signature)) {
+    return res.status(400).json({ error: 'A signature is required.' });
+  }
+  const existing = await dbGet(
+    'SELECT id FROM session_attendance_days WHERE session_id = ? AND attendee_id = ? AND day_number = ?',
+    [session.session_id, attendee.attendee_id, session.current_day]
+  );
+  if (existing) {
+    return res.status(400).json({ error: `Already checked in for Day ${session.current_day}.` });
+  }
+  await dbRun(
+    `INSERT INTO session_attendance_days (id, session_id, attendee_id, day_number, signature)
+     VALUES (?, ?, ?, ?, ?)`,
+    [uuidv4(), session.session_id, attendee.attendee_id, session.current_day, signature]
+  );
+  res.status(201).json({ ok: true, day_number: session.current_day });
 });
 
 // The trainer closes out the session at the end of training: locks the roster, generates a
@@ -134,6 +211,13 @@ router.post('/:token/close', async (req, res) => {
   if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This session is already closed.' });
+  }
+  // A multi-day session can only close from its final day (Keeley's call) - otherwise closing
+  // early would judge attendance against a course that hasn't finished yet.
+  if (session.total_days && session.current_day < session.total_days) {
+    return res.status(400).json({
+      error: `This is a ${session.total_days}-day session, currently on Day ${session.current_day}. Advance to Day ${session.total_days} before closing.`,
+    });
   }
   const {
     trainer_signed_name, trainer_email, trainer_phone, signature, pin,
@@ -238,11 +322,34 @@ router.post('/:token/close', async (req, res) => {
     [session.session_id]
   );
 
+  // Multi-day session (server/migrations/055_multiday_sessions.sql, Keeley's request): an
+  // attendee only gets certified if they attended every required day. Counted once here rather
+  // than per-attendee in the loop below, since it's the same query either way.
+  let daysAttendedByAttendee = null;
+  if (updatedSession.total_days && attendees.length) {
+    const dayRows = await dbAll(
+      'SELECT attendee_id, COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? GROUP BY attendee_id',
+      [session.session_id]
+    );
+    daysAttendedByAttendee = Object.fromEntries(dayRows.map((r) => [r.attendee_id, Number(r.n)]));
+  }
+
   // Certificate per attendee for the primary training, then link them into the Matrix
   // (best-effort per attendee so one bad record can't block everyone else's certificate or
   // employee record) - then the same for each additional training, one certificate/record per
   // (attendee, training) pair.
   for (const attendee of attendees) {
+    if (daysAttendedByAttendee) {
+      const daysAttended = daysAttendedByAttendee[attendee.attendee_id] || 0;
+      if (daysAttended < updatedSession.total_days) {
+        // eslint-disable-next-line no-await-in-loop
+        await dbRun(
+          `UPDATE session_attendees SET processing_status = 'incomplete_attendance', processing_error = ? WHERE attendee_id = ?`,
+          [`Attended ${daysAttended} of ${updatedSession.total_days} required days - no certificate generated from this session.`, attendee.attendee_id]
+        );
+        continue; // eslint-disable-line no-continue
+      }
+    }
     let certPath = null;
     try {
       // eslint-disable-next-line no-await-in-loop

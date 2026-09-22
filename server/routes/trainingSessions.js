@@ -24,9 +24,9 @@ function tokenGen() {
 
 // Translates a session's training name/outline to Spanish once, at save time, so the public
 // sign-in page never calls the translation API itself (Keeley's design: cache the result, don't
-// translate on every page view). If the call fails (e.g. DEEPL_API_KEY isn't set up yet), the
-// session still saves with the Spanish text left blank and a warning surfaced to the admin -
-// translation is a nice-to-have, never a reason to block saving the session.
+// translate on every page view). If the call fails (e.g. DeepL is down or the API key becomes
+// invalid), the session still saves with the Spanish text left blank and a warning surfaced to
+// the admin - translation is a nice-to-have, never a reason to block saving the session.
 async function translateSessionFields(trainingTypeLabel, outline, language) {
   if (language === 'english') return { training_type_label_es: null, outline_es: null, warning: null };
   try {
@@ -118,9 +118,16 @@ router.get('/:id', async (req, res) => {
   const additionalCerts = attendees.length
     ? await dbAll('SELECT * FROM attendee_certificates WHERE attendee_id = ANY(?)', [attendees.map((a) => a.attendee_id)])
     : [];
+  // Per-day attendance for a multi-day session (server/migrations/055_multiday_sessions.sql) -
+  // lets SessionDetail.jsx draw the "who made every day" matrix. Empty for every normal
+  // single-day session (total_days is null), so this is a no-op query for the common case.
+  const attendanceDays = session.total_days && attendees.length
+    ? await dbAll('SELECT attendee_id, day_number FROM session_attendance_days WHERE session_id = ?', [session.session_id])
+    : [];
   const attendeesWithCerts = attendees.map((a) => ({
     ...a,
     additional_certificates: additionalCerts.filter((c) => c.attendee_id === a.attendee_id),
+    days_attended: attendanceDays.filter((d) => d.attendee_id === a.attendee_id).map((d) => d.day_number).sort((x, y) => x - y),
   }));
   res.json({
     ...session,
@@ -144,6 +151,7 @@ router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
+    total_days = null,
   } = req.body || {};
   if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
@@ -155,6 +163,13 @@ router.post('/', async (req, res) => {
   }
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
+  }
+  // A multi-day course - one session, one QR code, used across every day (Keeley's request,
+  // 2026-09-21). Left null for the overwhelming majority (single-day) sessions, which behave
+  // exactly as before; 1 is treated the same as null (no meaningful "multi-day" below 2).
+  const totalDays = total_days ? Number(total_days) : null;
+  if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
+    return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
   }
   let clientId;
   try {
@@ -172,8 +187,8 @@ router.post('/', async (req, res) => {
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
@@ -191,6 +206,7 @@ router.post('/', async (req, res) => {
       language,
       training_type_label_es,
       outline_es,
+      totalDays,
     ]
   );
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
@@ -236,6 +252,16 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (!SESSION_LANGUAGES.includes(merged.language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
+  // Same total_days rule as creation (POST / above) - null/1 both mean "not multi-day".
+  // req.body.total_days is checked directly (not `merged.total_days`) so leaving the field out
+  // of the request entirely keeps the session's existing value, matching every other field here.
+  let totalDays = existing.total_days;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'total_days')) {
+    totalDays = req.body.total_days ? Number(req.body.total_days) : null;
+    if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
+      return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
+    }
+  }
 
   let clientId = existing.client_id;
   if (req.body.client_name) {
@@ -262,7 +288,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?
      WHERE session_id=?`,
     [
       clientId,
@@ -278,6 +304,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       merged.language,
       training_type_label_es,
       outline_es,
+      totalDays,
       req.params.id,
     ]
   );
@@ -310,6 +337,28 @@ router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
     ]
   );
   res.json(await dbGet('SELECT sent_to_client, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
+});
+
+// The trainer/admin advances a multi-day session to the next day (Keeley's request, 2026-09-21) -
+// deliberately manual rather than calendar-driven, so a course that slips a day (weather, a
+// holiday) doesn't misjudge who was actually present. New sign-ins and "find your name" check-ins
+// always attach to whatever current_day is at the moment they happen (server/routes/
+// publicSessions.js), so advancing here is what actually opens the next day for attendance.
+router.post('/:id/advance-day', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session.total_days) return res.status(400).json({ error: 'This is not a multi-day session.' });
+  if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
+  if (session.current_day >= session.total_days) {
+    return res.status(400).json({ error: `Already on the final day (Day ${session.total_days}).` });
+  }
+  const nextDay = session.current_day + 1;
+  await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ?', [nextDay, req.params.id]);
+  logActivity({
+    actor: req.user, action: 'session_day_advanced', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `Day ${nextDay} of ${session.total_days}`, req,
+  });
+  res.json({ current_day: nextDay, total_days: session.total_days });
 });
 
 // Delete a session created by accident (Keeley's request - lives under the session's own

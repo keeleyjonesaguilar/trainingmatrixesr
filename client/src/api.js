@@ -201,6 +201,7 @@ export const api = {
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'DELETE' }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
+  advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),
   getTrainingSessionsSummaryByTraining: () => request('/training-sessions/summary-by-training'),
   getSessionsByTraining: (trainingId, params = {}) => {
     const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v));
@@ -212,6 +213,11 @@ export const api = {
   publicSessionInfo: (token) => request(`/public/${token}`),
   publicSignIn: (token, payload) => request(`/public/${token}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
   publicCloseSession: (token, payload) => request(`/public/${token}/close`, { method: 'POST', body: JSON.stringify(payload) }),
+  // "Find your name" returning-attendee check-in on a multi-day session (Keeley's request,
+  // 2026-09-21/22) - no auth, same as the rest of the public sign-in surface.
+  publicSearchAttendees: (token, q) => request(`/public/${token}/attendees/search?q=${encodeURIComponent(q)}`),
+  publicCheckinAttendee: (token, attendeeId, payload) =>
+    request(`/public/${token}/attendees/${attendeeId}/checkin`, { method: 'POST', body: JSON.stringify(payload) }),
 
   // Public post-training feedback (no auth) - reached only via a closed session's second QR
   // code at /feedback/:token.
