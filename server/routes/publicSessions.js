@@ -79,6 +79,7 @@ router.get('/:token', async (req, res) => {
     attendee_count: attendeeCount,
     total_days: session.total_days,
     current_day: session.current_day,
+    day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
   });
 });
 

@@ -4,6 +4,7 @@ import { api } from '../api';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
+import { sequentialDates } from '../lib/dates';
 
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
@@ -80,6 +81,11 @@ export default function Sessions() {
   // every day (e.g. OSHA 30 over 4 days). Kept as its own toggle rather than always showing the
   // day-count field, since the overwhelming majority of sessions are still single-day.
   const [isMultiDay, setIsMultiDay] = useState(false);
+  // The actual calendar date scheduled for each day (Keeley's request, 2026-09-22) - purely
+  // informational (the real attendance gate is the trainer's manual day-advance button on the
+  // session's own page, not these dates), so this is a plain editable array the admin can adjust
+  // to skip a weekend/holiday, not something the backend re-derives on its own.
+  const [dayDates, setDayDates] = useState([]);
   const [creating, setCreating] = useState(false);
 
   const load = () => {
@@ -118,6 +124,10 @@ export default function Sessions() {
       setError('Enter a number of days (2 or more) for a multi-day session.');
       return;
     }
+    if (isMultiDay && dayDates.some((d) => !d)) {
+      setError('Enter a scheduled date for every day.');
+      return;
+    }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
     const training_type_label = `${training.training_id} - ${training.training_name}`;
     const additional_trainings = additionalTrainingIds.map((tid) => {
@@ -143,6 +153,7 @@ export default function Sessions() {
         outline: form.outline,
         language: form.language,
         total_days: isMultiDay ? Number(form.total_days) : null,
+        day_dates: isMultiDay ? dayDates : null,
       });
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
@@ -377,7 +388,10 @@ export default function Sessions() {
                     <input
                       type="checkbox"
                       checked={isMultiDay}
-                      onChange={(e) => { setIsMultiDay(e.target.checked); if (!e.target.checked) setForm((f) => ({ ...f, total_days: '' })); }}
+                      onChange={(e) => {
+                        setIsMultiDay(e.target.checked);
+                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); }
+                      }}
                     />
                     Multi-day training (one QR code, used every day)
                   </label>
@@ -387,7 +401,15 @@ export default function Sessions() {
                         type="number"
                         min={2}
                         value={form.total_days}
-                        onChange={(e) => setForm({ ...form, total_days: e.target.value })}
+                        onChange={(e) => {
+                          const count = Math.max(0, parseInt(e.target.value, 10) || 0);
+                          setForm({ ...form, total_days: e.target.value });
+                          setDayDates((prev) => (
+                            count <= prev.length
+                              ? prev.slice(0, count)
+                              : [...prev, ...sequentialDates(form.session_date, count).slice(prev.length, count)]
+                          ));
+                        }}
                         placeholder="Number of days (e.g. 4)"
                         style={{ marginTop: 8, maxWidth: 160 }}
                         required
@@ -395,6 +417,24 @@ export default function Sessions() {
                       <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
                         Attendees must sign in every day for it to count. Advance the day and track attendance from the session's own page after it's created.
                       </p>
+                      {dayDates.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                          {dayDates.map((d, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', width: 44 }}>
+                                Day {i + 1}
+                              </label>
+                              <input
+                                type="date"
+                                value={d}
+                                onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                style={{ maxWidth: 160 }}
+                                required
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>

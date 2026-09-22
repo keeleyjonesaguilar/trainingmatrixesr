@@ -41,6 +41,31 @@ async function translateSessionFields(trainingTypeLabel, outline, language) {
 }
 
 
+const DAY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// The actual calendar date scheduled for each day of a multi-day session (Keeley's request,
+// 2026-09-22) - purely informational/display (shown alongside "Day X of Y"), never the real
+// gate on attendance, which stays the trainer's own manual day-advance
+// (server/migrations/055_multiday_sessions.sql's current_day) so a slipped day never misjudges
+// who was actually present. `totalDays` may be null (a single-day session, or one being edited
+// without touching total_days) - day_dates is only length-checked against it when both are set.
+function validateDayDates(dayDates, totalDays) {
+  if (dayDates === undefined || dayDates === null) return { dayDatesJson: null, error: null };
+  if (!Array.isArray(dayDates) || dayDates.some((d) => typeof d !== 'string' || !DAY_DATE_PATTERN.test(d))) {
+    return { dayDatesJson: null, error: 'day_dates must be a list of YYYY-MM-DD dates, one per day.' };
+  }
+  if (totalDays && dayDates.length !== totalDays) {
+    return { dayDatesJson: null, error: `day_dates must have exactly ${totalDays} date(s) to match total_days.` };
+  }
+  return { dayDatesJson: JSON.stringify(dayDates), error: null };
+}
+
+// Parses day_dates back into a plain array for API responses - raw session rows carry it as a
+// JSON string (same TEXT-column convention as hs_course_options/hs_optional_topics).
+function withParsedDayDates(session) {
+  return { ...session, day_dates: session.day_dates ? JSON.parse(session.day_dates) : null };
+}
+
 async function attendeeCount(sessionId) {
   const { n } = await dbGet('SELECT COUNT(*) AS n FROM session_attendees WHERE session_id = ?', [sessionId]);
   return n;
@@ -130,7 +155,7 @@ router.get('/:id', async (req, res) => {
     days_attended: attendanceDays.filter((d) => d.attendee_id === a.attendee_id).map((d) => d.day_number).sort((x, y) => x - y),
   }));
   res.json({
-    ...session,
+    ...withParsedDayDates(session),
     public_url: publicSignInUrl(session.qr_token),
     feedback_url: publicFeedbackUrl(session.qr_token),
     attendees: attendeesWithCerts,
@@ -151,7 +176,7 @@ router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
-    total_days = null,
+    total_days = null, day_dates = null,
   } = req.body || {};
   if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
@@ -171,6 +196,8 @@ router.post('/', async (req, res) => {
   if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
     return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
   }
+  const { dayDatesJson, error: dayDatesError } = validateDayDates(day_dates, totalDays);
+  if (dayDatesError) return res.status(400).json({ error: dayDatesError });
   let clientId;
   try {
     clientId = await repo.findOrCreateClientByName(client_name);
@@ -187,8 +214,8 @@ router.post('/', async (req, res) => {
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
@@ -207,6 +234,7 @@ router.post('/', async (req, res) => {
       training_type_label_es,
       outline_es,
       totalDays,
+      dayDatesJson,
     ]
   );
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
@@ -229,7 +257,7 @@ router.post('/', async (req, res) => {
     details: additional_trainings.length ? `+${additional_trainings.length} additional training(s)` : undefined,
     req,
   });
-  res.status(201).json({ ...session, public_url: publicSignInUrl(qr_token), translation_warning: warning });
+  res.status(201).json({ ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning });
 });
 
 // Edit a session's own metadata after creation (client/trainer/date/outline/location/duration).
@@ -262,6 +290,13 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
     }
   }
+  // Same "leave the field out to keep the existing value" rule as total_days above.
+  let dayDatesJson = existing.day_dates;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'day_dates')) {
+    const result = validateDayDates(req.body.day_dates, totalDays);
+    if (result.error) return res.status(400).json({ error: result.error });
+    dayDatesJson = result.dayDatesJson;
+  }
 
   let clientId = existing.client_id;
   if (req.body.client_name) {
@@ -288,7 +323,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?, day_dates=?
      WHERE session_id=?`,
     [
       clientId,
@@ -305,6 +340,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       training_type_label_es,
       outline_es,
       totalDays,
+      dayDatesJson,
       req.params.id,
     ]
   );
@@ -313,7 +349,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
   });
-  res.json({ ...session, translation_warning: warning });
+  res.json({ ...withParsedDayDates(session), translation_warning: warning });
 });
 
 // Two independent fulfillment checkboxes (Keeley's request, 2026-09-21) - whether this

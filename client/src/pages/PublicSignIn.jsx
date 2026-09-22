@@ -5,6 +5,7 @@ import esrMark from '../assets/brand/esr-mark.png';
 import SignaturePad from '../components/SignaturePad';
 import { AHA_COURSE_OPTIONS, AHA_COURSE_GROUPS } from '../lib/ahaCourseOptions';
 import { AHA_OPTIONAL_TOPICS } from '../lib/ahaOptionalTopics';
+import { formatShortDate } from '../lib/dates';
 
 // The one training this extra AHA-format section applies to (Keeley's request, 2026-09-21) -
 // matches server/routes/publicSessions.js's AHA_ROSTER_TRAINING_ID.
@@ -208,24 +209,45 @@ function ReturningAttendeeFlow({ token, t, onBack, onDone }) {
       </div>
       {error && <p className="error-banner">{error}</p>}
       {!searching && query.trim().length >= 2 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
-          {results.map((r) => (
-            <button
-              key={r.attendee_id}
-              type="button"
-              className={selected?.attendee_id === r.attendee_id ? 'btn btn-accent' : 'btn btn-secondary'}
-              style={{ textAlign: 'left', justifyContent: 'flex-start' }}
-              onClick={() => setSelected(r)}
-              disabled={r.already_checked_in_today}
-            >
-              {r.trainee_name}
-              {r.already_checked_in_today
-                ? ` — ${t('find_name_already_today')}`
-                : r.days_attended.length
-                  ? ` — ${t('find_name_signed_days')} ${r.days_attended.join(', ')}`
-                  : ''}
-            </button>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+          {results.map((r) => {
+            const isSelected = selected?.attendee_id === r.attendee_id;
+            const initials = r.trainee_name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+            const meta = r.already_checked_in_today
+              ? t('find_name_already_today')
+              : r.days_attended.length
+                ? `${t('find_name_signed_days')} ${r.days_attended.join(', ')}`
+                : '';
+            return (
+              <button
+                key={r.attendee_id}
+                type="button"
+                className="btn btn-secondary"
+                style={{
+                  textAlign: 'left', justifyContent: 'flex-start', gap: 12, padding: '12px 14px', height: 'auto',
+                  border: isSelected ? '2px solid var(--esr-green)' : '1px solid var(--color-border)',
+                }}
+                onClick={() => setSelected(r)}
+                disabled={r.already_checked_in_today}
+              >
+                <span style={{
+                  width: 34, height: 34, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'var(--status-na-bg)', color: 'var(--status-na-text)', fontSize: 13, fontWeight: 700,
+                }}>
+                  {initials}
+                </span>
+                <span style={{ flexGrow: 1 }}>
+                  <span style={{ display: 'block', fontWeight: 600 }}>{r.trainee_name}</span>
+                  {meta && <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>{meta}</span>}
+                </span>
+                {isSelected && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--esr-green)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
           {results.length === 0 && (
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
               {t('find_name_no_results')}{' '}
@@ -529,9 +551,43 @@ export default function PublicSignIn() {
             {mode === 'trainee' ? (
               <>
                 {isMultiDay && (
-                  <div className="card" style={{ marginBottom: 16, textAlign: 'center' }}>
-                    <strong>{dayProgressLabel(t, info.current_day, info.total_days)}</strong>
-                    <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>{t('multi_day_notice')}</p>
+                  <div className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: 0.4, textTransform: 'uppercase' }}>
+                        Course Progress
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--esr-green)' }}>
+                        {dayProgressLabel(t, info.current_day, info.total_days)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      {Array.from({ length: info.total_days }, (_, i) => i + 1).map((d) => {
+                        const isDone = d < info.current_day;
+                        const isActive = d === info.current_day;
+                        return (
+                          <div key={d} style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                            <div
+                              style={{
+                                width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 12, fontWeight: 700, boxSizing: 'border-box',
+                                background: isDone ? 'var(--status-current-bg)' : isActive ? 'var(--esr-green)' : 'var(--color-surface)',
+                                color: isDone ? 'var(--status-current-text)' : isActive ? '#fff' : 'var(--color-text-muted)',
+                                border: isDone ? '1px solid var(--status-current-text)' : isActive ? '1px solid var(--esr-green)' : '1px solid var(--color-border)',
+                              }}
+                            >
+                              {isDone ? '✓' : d}
+                            </div>
+                            <span style={{ fontSize: 10, color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                              Day {d}
+                              {info.day_dates?.[d - 1] && <><br />{formatShortDate(info.day_dates[d - 1])}</>}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p style={{ fontSize: 12, color: 'var(--status-missing-text)', background: 'var(--status-missing-bg)', borderRadius: 8, padding: '8px 10px', margin: '12px 0 0' }}>
+                      {t('multi_day_notice')}
+                    </p>
                   </div>
                 )}
 
@@ -540,23 +596,47 @@ export default function PublicSignIn() {
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      style={{ textAlign: 'left', justifyContent: 'flex-start', padding: '14px 16px', height: 'auto' }}
+                      style={{ textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto' }}
                       onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('new'); }}
                     >
-                      <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_first_time_title')}</span>
-                      <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                        {t('choice_first_time_sub')}
+                      <span style={{
+                        width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'var(--status-noexp-bg)',
+                      }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--status-noexp-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <line x1="19" y1="8" x2="19" y2="14" />
+                          <line x1="16" y1="11" x2="22" y2="11" />
+                        </svg>
+                      </span>
+                      <span>
+                        <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_first_time_title')}</span>
+                        <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                          {t('choice_first_time_sub')}
+                        </span>
                       </span>
                     </button>
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      style={{ textAlign: 'left', justifyContent: 'flex-start', padding: '14px 16px', height: 'auto' }}
+                      style={{ textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto' }}
                       onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('returning'); }}
                     >
-                      <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_returning_title')}</span>
-                      <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                        {t('choice_returning_sub')}
+                      <span style={{
+                        width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'var(--status-current-bg)',
+                      }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--status-current-text)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <polyline points="22 4 12 14.01 9 11.01" />
+                        </svg>
+                      </span>
+                      <span>
+                        <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_returning_title')}</span>
+                        <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                          {t('choice_returning_sub')}
+                        </span>
                       </span>
                     </button>
                   </div>

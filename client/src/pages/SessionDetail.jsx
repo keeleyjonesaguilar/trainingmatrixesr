@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatEasternDateTime } from '../lib/dates';
+import { formatEasternDateTime, sequentialDates, formatShortDate } from '../lib/dates';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
@@ -181,6 +181,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     language: session.language || 'english',
     total_days: session.total_days || '',
   });
+  // The actual calendar date scheduled for each day of a multi-day session (Keeley's request,
+  // 2026-09-22) - purely informational, editable independently of total_days.
+  const [dayDates, setDayDates] = useState(session.day_dates || []);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -188,10 +191,16 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const save = async () => {
     setSaving(true);
     setError('');
+    if (form.total_days && dayDates.some((d) => !d)) {
+      setError('Enter a scheduled date for every day.');
+      setSaving(false);
+      return;
+    }
     try {
       const updated = await api.updateTrainingSession(session.session_id, {
         ...form,
         trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+        day_dates: form.total_days ? dayDates : null,
       });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
@@ -281,11 +290,38 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             type="number"
             min={2}
             value={form.total_days}
-            onChange={(e) => setForm({ ...form, total_days: e.target.value })}
+            onChange={(e) => {
+              const count = Math.max(0, parseInt(e.target.value, 10) || 0);
+              setForm({ ...form, total_days: e.target.value });
+              setDayDates((prev) => (
+                count <= prev.length
+                  ? prev.slice(0, count)
+                  : [...prev, ...sequentialDates(form.session_date, count).slice(prev.length, count)]
+              ));
+            }}
             placeholder="Leave blank for single-day"
           />
         </div>
       </div>
+      {form.total_days && dayDates.length > 0 && (
+        <div className="field">
+          <label>Scheduled Dates</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {dayDates.map((d, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Day {i + 1}</span>
+                <input
+                  type="date"
+                  value={d}
+                  onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  style={{ maxWidth: 150 }}
+                  required
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="field">
         <label>Outline / Topics Covered</label>
         <textarea rows={3} value={form.outline} onChange={(e) => setForm({ ...form, outline: e.target.value })} required />
@@ -438,7 +474,13 @@ export default function SessionDetail() {
         {session.duration ? ` · ${session.duration}` : ''}{' '}
         · <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
         {session.total_days && (
-          <>{' '}· <span className="badge badge-noexpiration">Day {session.current_day} of {session.total_days}</span></>
+          <>
+            {' '}·{' '}
+            <span className="badge badge-noexpiration">
+              Day {session.current_day} of {session.total_days}
+              {session.day_dates?.[session.current_day - 1] ? ` (${formatShortDate(session.day_dates[session.current_day - 1])})` : ''}
+            </span>
+          </>
         )}
         {session.language && session.language !== 'english' && (
           <>{' '}· <span className="badge badge-noexpiration">{session.language === 'both' ? 'English/Spanish' : 'Spanish'}</span></>
@@ -503,7 +545,14 @@ export default function SessionDetail() {
               <tr>
                 <th>Employee</th>
                 {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => (
-                  <th key={d} style={{ textAlign: 'center' }}>Day {d}</th>
+                  <th key={d} style={{ textAlign: 'center' }}>
+                    Day {d}
+                    {session.day_dates?.[d - 1] && (
+                      <div style={{ fontWeight: 400, fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        {formatShortDate(session.day_dates[d - 1])}
+                      </div>
+                    )}
+                  </th>
                 ))}
                 <th>Status</th>
               </tr>
