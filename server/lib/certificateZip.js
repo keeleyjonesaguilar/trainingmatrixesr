@@ -5,7 +5,7 @@ const fs = require('fs');
 const { PassThrough } = require('stream');
 const archiver = require('archiver');
 const { dbAll } = require('../db');
-const { buildCertificateFilename, stripTrainingIdPrefix } = require('./certificateFilename');
+const { buildCertificateFilename, stripTrainingIdPrefix, shortClientName } = require('./certificateFilename');
 
 // Every certificate on file for one training on the session - `additionalTraining` null means the
 // session's own (primary) training, otherwise a session_additional_trainings row. Skips anyone
@@ -27,7 +27,7 @@ async function listCertificateFiles(session, additionalTraining = null) {
 }
 
 function certificateZipName(session, trainingLabel) {
-  return ['certificates', stripTrainingIdPrefix(trainingLabel), session.client_name, session.session_date]
+  return ['certificates', stripTrainingIdPrefix(trainingLabel), shortClientName(session.client_name), session.session_date]
     .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
     .join('_');
 }

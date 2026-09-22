@@ -4,6 +4,7 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { computeStatus, parseSourceValue } = require('./statusEngine');
+const { nameColumns, nameKey } = require('./names');
 
 async function listMasterTrainings({ activeOnly = false } = {}) {
   const sql = `SELECT * FROM master_trainings ${activeOnly ? 'WHERE active = 1' : ''} ORDER BY display_order ASC`;
@@ -327,6 +328,9 @@ async function generateNextTrainingId() {
 // corrected later), the name is refreshed to match - ID is the durable identity here.
 async function findOrCreateTrainerEmployee(trainerName, trainerId) {
   const trimmedName = String(trainerName || '').trim();
+  // Name compared/stored via first/last parts (server/lib/names.js), so "Kasey Hilton" typed on a
+  // session and "Hilton, Kasey" on file are the same trainer.
+  const cols = nameColumns({ full_name: trimmedName });
   const normalizedId = String(trainerId || '').trim().toLowerCase();
   if (!trimmedName && !normalizedId) return null;
 
@@ -335,8 +339,10 @@ async function findOrCreateTrainerEmployee(trainerName, trainerId) {
   if (normalizedId) {
     const match = candidates.find((e) => (e.employee_number || '').trim().toLowerCase() === normalizedId);
     if (match) {
-      if (trimmedName && match.full_name !== trimmedName) {
-        await dbRun('UPDATE employees SET full_name = ? WHERE employee_id = ?', [trimmedName, match.employee_id]);
+      if (trimmedName && match.full_name !== cols.full_name) {
+        await dbRun('UPDATE employees SET full_name = ?, first_name = ?, last_name = ? WHERE employee_id = ?', [
+          cols.full_name, cols.first_name, cols.last_name, match.employee_id,
+        ]);
       }
       return match.employee_id;
     }
@@ -345,18 +351,20 @@ async function findOrCreateTrainerEmployee(trainerName, trainerId) {
     // popup) - fall back to a case-insensitive name match so the same person typed the same
     // way repeatedly (a whole sheet of rows taught by one trainer) resolves to one profile
     // instead of a new duplicate every time.
-    const match = candidates.find((e) => (e.full_name || '').trim().toLowerCase() === trimmedName.toLowerCase());
+    const match = candidates.find((e) => nameKey(e.full_name) === nameKey(trimmedName));
     if (match) return match.employee_id;
   }
 
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, full_name, employee_number, employee_type, active, notes)
-     VALUES (?, ?, ?, ?, 'trainer', 1, ?)`,
+    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, employee_number, employee_type, active, notes)
+     VALUES (?, ?, ?, ?, ?, ?, 'trainer', 1, ?)`,
     [
       employee_id,
       INTERNAL_CLIENT_ID,
-      trimmedName || 'Unnamed Trainer',
+      cols.full_name || 'Unnamed Trainer',
+      cols.first_name || null,
+      cols.last_name || null,
       trainerId ? String(trainerId).trim() : null,
       'Created automatically from a Training Sessions entry (trainer name/Employee ID).',
     ]

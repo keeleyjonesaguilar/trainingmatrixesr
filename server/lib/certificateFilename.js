@@ -1,4 +1,4 @@
-// Builds "Training Title_Client_Trainer_Date_Trainee Name.pdf" (Keeley's request, 2026-09-16) -
+// Builds "Training Title_Client_Date_Trainee Name.pdf" (Keeley's request, 2026-09-16) -
 // used for both a single certificate download and each entry inside the bulk ZIP, so a file
 // distributed either way is immediately identifiable without opening it.
 function sanitizeFilenamePart(s) {
@@ -42,11 +42,20 @@ function capTotalLength(parts) {
   return arr;
 }
 
+// "Evolution Safety Resources" -> "ESR" in certificate filenames (Keeley's request, 2026-09-22) -
+// ESR's own internal sessions put the full company name in every certificate's filename.
+function shortClientName(clientName) {
+  return /^evolution safety resources\b/i.test(String(clientName || '').trim())
+    ? String(clientName).trim().replace(/^evolution safety resources/i, 'ESR')
+    : clientName;
+}
+
+// Certificates skip the trainer's name (Keeley's request, 2026-09-22) - it's on the certificate
+// itself and made every filename longer: "Training_Client_Date_Trainee Name.pdf".
 function buildCertificateFilename(session, attendee) {
   const parts = capTotalLength([
     stripTrainingIdPrefix(session.training_type_label),
-    session.client_name,
-    session.trainer_signed_name || session.trainer_name,
+    shortClientName(session.client_name),
     session.session_date,
     attendee.trainee_name,
   ].map(sanitizeFilenamePart));
@@ -82,4 +91,4 @@ function buildQrFilename(session, kind) {
   return `${parts.join('_')}.png`;
 }
 
-module.exports = { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix };
+module.exports = { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix, shortClientName };

@@ -29,6 +29,11 @@ async function start() {
   // server/lib/oneTimeFixes.js for what they do and why).
   await require('./lib/oneTimeFixes').runOneTimeFixes();
 
+  // Fills first_name/last_name for any employee still missing them (every row, the first time
+  // after migration 061; afterwards only rows an older deploy created) - see server/lib/names.js.
+  const namesFilled = await require('./lib/names').backfillEmployeeNameParts();
+  if (namesFilled) console.log(`Filled first/last name for ${namesFilled} employee(s).`);
+
   // Daily automated database backup (Keeley's request, 2026-09-09) - runs inside this process so
   // it's always-on regardless of any local PC's power state. See server/lib/backupScheduler.js.
   require('./lib/backupScheduler').start();

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import { parseName } from '../lib/names.js';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate } from '../lib/dates';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
@@ -159,11 +160,17 @@ function RecordStatusBadge({ status }) {
 // Admin-only edit of the session's own metadata (client/trainer/date/outline/location/
 // duration) after creation. Client and Training Type are selects here (not free text like the
 // create form) so a typo can't silently spawn a new client mid-edit.
-// trainer_name is stored as one combined field - split naively (first word / everything else)
-// just to seed the two edit inputs; not meant to be a robust name parser.
+// "2026-10-02" -> "Fri, October 2, 2026" for the session header (plain date, no timezone shift).
+function formatLongDate(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
+  if (!m) return dateStr || '';
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// trainer_name is stored as one combined field - split to seed the two edit inputs. Comma-aware
+// (Keeley's report, 2026-09-22: "Hilton, Kasey" was splitting into first "Hilton,"/last "Kasey").
 function splitTrainerName(name) {
-  const parts = String(name || '').trim().split(/\s+/);
-  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+  return parseName(name);
 }
 
 function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDeleted }) {
@@ -384,7 +391,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
 // locked to new entries, only removal was ever allowed. Signature is optional since there's
 // often no live signature to capture after the fact.
 function AddAttendeeForm({ sessionId, isClosed, onAdded, onCancel }) {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [email, setEmail] = useState('');
@@ -394,12 +402,13 @@ function AddAttendeeForm({ sessionId, isClosed, onAdded, onCancel }) {
 
   const save = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return setError('Name is required.');
+    if (!firstName.trim() || !lastName.trim()) return setError('First and last name are required.');
     setSaving(true);
     setError('');
     try {
       await api.addSessionAttendee(sessionId, {
-        trainee_name: name.trim(),
+        trainee_first_name: firstName.trim(),
+        trainee_last_name: lastName.trim(),
         trainee_phone: phone.trim() || null,
         trainee_job_title: jobTitle.trim() || null,
         trainee_email: email.trim() || null,
@@ -426,8 +435,12 @@ function AddAttendeeForm({ sessionId, isClosed, onAdded, onCancel }) {
       <form onSubmit={save}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div className="field">
-            <label>Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
+            <label>First Name</label>
+            <input value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>Last Name</label>
+            <input value={lastName} onChange={(e) => setLastName(e.target.value)} required />
           </div>
           <div className="field">
             <label>Phone (optional)</label>
@@ -576,12 +589,41 @@ export default function SessionDetail() {
           <span key={t.id}> + {t.training_type_label}</span>
         ))}
       </h1>
+      {/* Labeled details (Keeley's report, 2026-09-22: "I can't see the client" - it was the
+          first, unlabeled item in one long grey line). */}
+      <div className="session-facts">
+        <div className="session-fact">
+          <div className="session-fact-label">Client</div>
+          <div className="session-fact-value session-fact-client">
+            <Link to={`/clients/${session.client_id}`}>{session.client_name}</Link>
+          </div>
+        </div>
+        <div className="session-fact">
+          <div className="session-fact-label">Date</div>
+          <div className="session-fact-value">{formatLongDate(session.session_date)}</div>
+        </div>
+        <div className="session-fact">
+          <div className="session-fact-label">Trainer</div>
+          <div className="session-fact-value">
+            {session.trainer_signed_name || session.trainer_name}
+            {session.trainer_email && <div className="session-fact-sub">{session.trainer_email}</div>}
+          </div>
+        </div>
+        {session.location && (
+          <div className="session-fact">
+            <div className="session-fact-label">Location</div>
+            <div className="session-fact-value">{session.location}</div>
+          </div>
+        )}
+        {session.duration && (
+          <div className="session-fact">
+            <div className="session-fact-label">Duration</div>
+            <div className="session-fact-value">{session.duration}</div>
+          </div>
+        )}
+      </div>
       <p className="page-subtitle">
-        {session.client_name} · {session.session_date} · Trainer: {session.trainer_signed_name || session.trainer_name}
-        {session.trainer_email ? ` (${session.trainer_email})` : ''}
-        {session.location ? ` · ${session.location}` : ''}
-        {session.duration ? ` · ${session.duration}` : ''}{' '}
-        · <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
+        <span className={`badge badge-${session.status}`}>{session.status === 'open' ? 'Open' : 'Closed'}</span>
         {session.total_days && (
           <>
             {' '}·{' '}

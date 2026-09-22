@@ -381,6 +381,8 @@ export default function PublicSignIn() {
     try {
       await api.publicSignIn(token, {
         trainee_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+        trainee_first_name: firstName.trim(),
+        trainee_last_name: lastName.trim(),
         trainee_phone: phone.trim(),
         trainee_job_title: jobTitle.trim(),
         trainee_email: email.trim(),

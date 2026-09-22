@@ -717,3 +717,13 @@ tr:hover td { background: #fafbfc; }
 .profile-row > .card { margin-top: 0; min-width: 0; overflow-x: auto; }
 .profile-row .card table { width: 100%; }
 .profile-full { margin-top: 16px; }
+
+/* Session page details row (Keeley's report, 2026-09-22: the client was easy to miss in one
+   long unlabeled line) - labeled facts, Client first and emphasized. */
+.session-facts { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 10px 0 12px; padding: 14px 18px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; }
+.session-fact { min-width: 0; }
+.session-fact-label { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.session-fact-value { font-size: 14px; font-weight: 600; color: var(--color-text); margin-top: 2px; }
+.session-fact-client { font-size: 16px; }
+.session-fact-client a { color: var(--esr-green); }
+.session-fact-sub { font-size: 12px; font-weight: 400; color: var(--color-text-muted); }

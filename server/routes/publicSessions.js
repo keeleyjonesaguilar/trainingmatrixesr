@@ -21,6 +21,17 @@ const { notifyAllUsers } = require('../lib/notifications');
 const { sendEmail } = require('../lib/email');
 const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('../lib/certificateZip');
 const { buildSessionCompleteEmail } = require('../lib/sessionCompleteEmail');
+const { parseName, firstLast } = require('../lib/names');
+
+// An attendee's name as first/last parts plus the "First Last" trainee_name printed on their
+// certificate - separate parts when the form sent them, otherwise split from one combined field.
+function attendeeNameParts(body) {
+  const first = String(body.trainee_first_name || '').trim();
+  const last = String(body.trainee_last_name || '').trim();
+  if (first || last) return { first, last, full: firstLast(first, last) };
+  const parsed = parseName(body.trainee_name);
+  return { first: parsed.first, last: parsed.last, full: String(body.trainee_name || '').trim() };
+}
 
 const router = express.Router();
 
@@ -95,8 +106,9 @@ router.post('/:token/attendees', async (req, res) => {
   if (session.status === 'closed') {
     return res.status(400).json({ error: 'This training session has been closed and can no longer accept sign-ins.' });
   }
-  const { trainee_name, trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
-  if (!trainee_name || !trainee_name.trim()) {
+  const { trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
+  const traineeName = attendeeNameParts(req.body || {});
+  if (!traineeName.full) {
     return res.status(400).json({ error: 'Name is required.' });
   }
   if (!trainee_phone || !trainee_phone.trim()) {
@@ -119,12 +131,14 @@ router.post('/:token/attendees', async (req, res) => {
   }
   const attendee_id = uuidv4();
   await dbRun(
-    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, trainee_email, signature)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_first_name, trainee_last_name, trainee_phone, trainee_job_title, trainee_email, signature)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       attendee_id,
       session.session_id,
-      trainee_name.trim(),
+      traineeName.full,
+      traineeName.first || null,
+      traineeName.last || null,
       formatPhoneNumber(trainee_phone),
       trainee_job_title.trim(),
       trainee_email.trim().toLowerCase(),

@@ -6,6 +6,7 @@ import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
 import { EASTERN_TZ } from '../lib/dates.js';
+import { nameParts } from '../lib/names.js';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
 // Keeley wants - Employee Phone Number is now how employees are tracked/identified.
@@ -19,7 +20,10 @@ function formatPhoneInput(value) {
 
 function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
   const isTrainer = employee.employee_type === 'trainer';
+  const initialName = nameParts(employee);
   const [form, setForm] = useState({
+    first_name: initialName.first,
+    last_name: initialName.last,
     job_title: employee.job_title || '',
     employee_number: employee.employee_number || '',
     email: employee.email || '',
@@ -32,8 +36,15 @@ function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
   const save = async () => {
     setSaving(true);
     setError('');
+    // Name changes are admin-only on the server too - only send them when they can apply.
+    const { first_name, last_name, ...rest } = form;
+    if (isAdmin && (!first_name.trim() || !last_name.trim())) {
+      setError('First and last name are required.');
+      setSaving(false);
+      return;
+    }
     try {
-      await api.updateEmployee(employee.employee_id, form);
+      await api.updateEmployee(employee.employee_id, isAdmin ? { ...rest, first_name: first_name.trim(), last_name: last_name.trim() } : rest);
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -46,6 +57,18 @@ function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
     <div className="card">
       {error && <div className="error-banner">{error}</div>}
       <div className="toolbar">
+        {isAdmin && (
+          <>
+            <div className="field-row">
+              <label>First Name</label>
+              <input type="text" value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
+            </div>
+            <div className="field-row">
+              <label>Last Name</label>
+              <input type="text" value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
+            </div>
+          </>
+        )}
         <div className="field-row">
           <label>Employee Phone Number</label>
           <input

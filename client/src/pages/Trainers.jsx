@@ -6,9 +6,9 @@ import DuplicateTrainersPanel from '../components/DuplicateTrainersPanel.jsx';
 import TrainerEmployeeMatchesPanel from '../components/TrainerEmployeeMatchesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import { nameKey, nameParts } from '../lib/names.js';
 
 function normalizeId(s) { return (s || '').trim().toLowerCase(); }
-function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 
 // Same shape as ClientSettings.jsx's AddClientForm: a small "+ Add Trainer" button that
 // expands into a form card. Trainers are tracked separately from client employees (they don't
@@ -18,7 +18,8 @@ function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 // Checks the already-loaded trainer list for a name/ID match before creating (Keeley's
 // request, 2026-08-20) - catches an accidental duplicate at the moment it would be created.
 function AddTrainerForm({ trainers, onAdded, onCancel }) {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [email, setEmail] = useState('');
@@ -30,7 +31,7 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
     setSaving(true);
     setError('');
     try {
-      await api.createTrainer({ full_name: name.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null, email: email.trim() || null });
+      await api.createTrainer({ first_name: firstName.trim(), last_name: lastName.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null, email: email.trim() || null });
       onAdded();
     } catch (e2) {
       setError(e2.message);
@@ -41,10 +42,11 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!firstName.trim() || !lastName.trim()) return;
     const idNormalized = normalizeId(employeeId);
+    const typedKey = nameKey(firstName, lastName);
     const matches = trainers.filter((t) =>
-      normalizeName(t.full_name) === normalizeName(name) || (idNormalized && normalizeId(t.employee_number) === idNormalized)
+      nameKey(nameParts(t).first, nameParts(t).last) === typedKey || (idNormalized && normalizeId(t.employee_number) === idNormalized)
     );
     if (matches.length > 0) {
       setPossibleMatches(matches);
@@ -59,8 +61,12 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
         <h2>Add a New Trainer</h2>
         {error && <div className="error-banner">{error}</div>}
         <div className="field-row">
-          <label>Full Name</label>
-          <input type="text" autoFocus placeholder="e.g. Jamie Trainer" value={name} onChange={(e) => setName(e.target.value)} required />
+          <label>First Name</label>
+          <input type="text" autoFocus placeholder="e.g. Jamie" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+        </div>
+        <div className="field-row">
+          <label>Last Name</label>
+          <input type="text" placeholder="e.g. Rivera" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
         </div>
         <div className="field-row">
           <label>Phone Number</label>
@@ -76,7 +82,7 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
           <label>Role / Trade (optional)</label>
           <input type="text" placeholder="e.g. Safety Officer" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
         </div>
-        <button type="submit" disabled={saving || !name.trim()}>{saving ? 'Adding...' : 'Add Trainer'}</button>{' '}
+        <button type="submit" disabled={saving || !firstName.trim() || !lastName.trim()}>{saving ? 'Adding...' : 'Add Trainer'}</button>{' '}
         <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
       </form>
       {possibleMatches && (

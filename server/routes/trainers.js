@@ -9,6 +9,7 @@ const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
+const { nameColumns } = require('../lib/names');
 
 const router = express.Router();
 
@@ -74,8 +75,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const { full_name, job_title = null, employee_number = null } = req.body || {};
   const email = req.body?.email ? String(req.body.email).trim().toLowerCase() : null;
-  if (!full_name || !full_name.trim()) {
-    return res.status(400).json({ error: 'full_name is required' });
+  const names = nameColumns({ first_name: req.body?.first_name, last_name: req.body?.last_name, full_name });
+  if (!names.full_name) {
+    return res.status(400).json({ error: 'A first and last name are required' });
   }
   if (employee_number && !isValidPhoneNumber(employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
@@ -85,11 +87,11 @@ router.post('/', async (req, res) => {
   }
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, full_name, job_title, employee_number, email, active, employee_type)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 'trainer')`,
-    [employee_id, INTERNAL_CLIENT_ID, full_name.trim(), job_title, formatPhoneNumber(employee_number), email]
+    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, job_title, employee_number, email, active, employee_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'trainer')`,
+    [employee_id, INTERNAL_CLIENT_ID, names.full_name, names.first_name || null, names.last_name || null, job_title, formatPhoneNumber(employee_number), email]
   );
-  logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: full_name.trim(), req });
+  logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: names.full_name, req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { displayFirstLast } from '../lib/names.js';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
@@ -45,6 +46,8 @@ export default function Sessions() {
   // needs no separate create step.
   const [clientMode, setClientMode] = useState('select');
   const [trainerMode, setTrainerMode] = useState('select');
+  const [newTrainerFirst, setNewTrainerFirst] = useState('');
+  const [newTrainerLast, setNewTrainerLast] = useState('');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
   const [outlineTouched, setOutlineTouched] = useState(false);
   // Whether the duration box is currently revealed for editing (Keeley's call, 2026-08-25):
@@ -305,12 +308,15 @@ export default function Sessions() {
                       onChange={(e) => {
                         if (e.target.value === '__new__') {
                           setTrainerMode('new');
+                          setNewTrainerFirst('');
+                          setNewTrainerLast('');
                           setSelectedTrainerId('');
                           setForm({ ...form, trainer_name: '', trainer_phone: '' });
                         } else {
                           const t = trainers.find((x) => x.employee_id === e.target.value);
                           setSelectedTrainerId(e.target.value);
-                          setForm({ ...form, trainer_name: t?.full_name || '', trainer_phone: t?.employee_number || '' });
+                          // "Kasey Hilton", not the list-style "Hilton, Kasey" - this prints on certificates.
+                          setForm({ ...form, trainer_name: displayFirstLast(t), trainer_phone: t?.employee_number || '' });
                         }
                       }}
                       required
@@ -321,13 +327,23 @@ export default function Sessions() {
                     </select>
                   ) : (
                     <>
-                      <input
-                        value={form.trainer_name}
-                        onChange={(e) => setForm({ ...form, trainer_name: e.target.value })}
-                        placeholder="Jamie Trainer"
-                        required
-                        autoFocus
-                      />
+                      {/* First/last kept separate (Keeley's request, 2026-09-22), combined into
+                          trainer_name as "First Last". */}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                          value={newTrainerFirst}
+                          onChange={(e) => { setNewTrainerFirst(e.target.value); setForm({ ...form, trainer_name: `${e.target.value.trim()} ${newTrainerLast.trim()}`.trim() }); }}
+                          placeholder="First name"
+                          required
+                          autoFocus
+                        />
+                        <input
+                          value={newTrainerLast}
+                          onChange={(e) => { setNewTrainerLast(e.target.value); setForm({ ...form, trainer_name: `${newTrainerFirst.trim()} ${e.target.value.trim()}`.trim() }); }}
+                          placeholder="Last name"
+                          required
+                        />
+                      </div>
                       <button
                         type="button"
                         className="link-button"

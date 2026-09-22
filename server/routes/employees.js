@@ -10,6 +10,7 @@ const { requireAdmin, requireAuth, isAdminRole } = require('../middleware/auth')
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
+const { nameColumns } = require('../lib/names');
 
 // Same pattern as server/routes/auth.js's and publicSessions.js's EMAIL_PATTERN.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -268,8 +269,10 @@ router.post('/', async (req, res) => {
     client_id, employee_number = null, full_name, job_title = null, department = null, active = 1, notes = null,
     employee_type = 'trainee',
   } = req.body;
-  if (!client_id || !full_name || !full_name.trim()) {
-    return res.status(400).json({ error: 'client_id and full_name are required' });
+  // First/last name (server/lib/names.js) - full_name alone is still accepted and split.
+  const names = nameColumns({ first_name: req.body.first_name, last_name: req.body.last_name, full_name });
+  if (!client_id || !names.full_name) {
+    return res.status(400).json({ error: 'client_id and a first and last name are required' });
   }
   if (employee_number && !isValidPhoneNumber(employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
@@ -287,11 +290,11 @@ router.post('/', async (req, res) => {
   }
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes, employee_type, email)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [employee_id, client_id, formatPhoneNumber(employee_number), full_name.trim(), job_title, department, active ? 1 : 0, notes, employee_type, email]
+    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, first_name, last_name, job_title, department, active, notes, employee_type, email)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [employee_id, client_id, formatPhoneNumber(employee_number), names.full_name, names.first_name || null, names.last_name || null, job_title, department, active ? 1 : 0, notes, employee_type, email]
   );
-  logActivity({ actor: req.user, action: 'employee_created', entityType: 'employee', entityId: employee_id, entityLabel: full_name.trim(), req });
+  logActivity({ actor: req.user, action: 'employee_created', entityType: 'employee', entityId: employee_id, entityLabel: names.full_name, req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));
 });
 
@@ -326,10 +329,18 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (merged.employee_number && !isValidPhoneNumber(merged.employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
+  // Name edits come in as first/last (admin only - a plain user's incoming never carries them);
+  // full_name is always re-derived from the two, never taken as typed.
+  const nameEdited = 'first_name' in incoming || 'last_name' in incoming;
+  const names = nameEdited
+    ? nameColumns({ first_name: merged.first_name, last_name: merged.last_name })
+    : nameColumns({ first_name: existing.first_name, last_name: existing.last_name, full_name: 'full_name' in incoming ? incoming.full_name : existing.full_name });
+  if (!names.full_name) return res.status(400).json({ error: 'A first and last name are required.' });
+  merged.full_name = names.full_name;
   await dbRun(
-    `UPDATE employees SET employee_number=?, full_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=? WHERE employee_id=?`,
+    `UPDATE employees SET employee_number=?, full_name=?, first_name=?, last_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=? WHERE employee_id=?`,
     [
-      formatPhoneNumber(merged.employee_number), merged.full_name, merged.job_title, merged.department,
+      formatPhoneNumber(merged.employee_number), names.full_name, names.first_name || null, names.last_name || null, merged.job_title, merged.department,
       merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, req.params.id,
     ]
   );

@@ -22,6 +22,7 @@ const { formatPhoneNumber } = require('../lib/phone');
 const { maybeGenerateCertificate } = require('../lib/recordCertificates');
 const { logActivity } = require('../lib/activityLog');
 const { normalizeNameForMatching } = require('../lib/nameMatch');
+const { nameColumns, nameKey, formatFullName } = require('../lib/names');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -218,7 +219,8 @@ async function detectEmployeeMatches(batchId) {
   );
   for (const { client_id: clientId, full_name_raw: fullNameRaw } of pairs) {
     // eslint-disable-next-line no-await-in-loop
-    const exact = await dbGet('SELECT 1 FROM employees WHERE client_id = ? AND LOWER(full_name) = ?', [clientId, fullNameRaw.trim().toLowerCase()]);
+    // nameKey (server/lib/names.js): "Bill Zuniga" in a sheet is an exact match for "Zuniga, Bill" on file.
+    const exact = await dbGet('SELECT 1 FROM employees WHERE client_id = ? AND LOWER(full_name) = ?', [clientId, nameKey(fullNameRaw)]);
     if (exact) continue; // commit's own exact-match lookup already handles this row correctly
 
     // eslint-disable-next-line no-await-in-loop
@@ -353,9 +355,11 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
     for (const row of records) {
       const firstName = identityHeaders.first_name ? (row[identityHeaders.first_name] || '').trim() : '';
       const lastName = identityHeaders.last_name ? (row[identityHeaders.last_name] || '').trim() : '';
+      // Separate First/Last columns are combined into the same "Last, First" form names are
+      // stored in (server/lib/names.js), so they match existing employees exactly.
       const fullName = identityHeaders.full_name
         ? (row[identityHeaders.full_name] || '').trim()
-        : `${firstName} ${lastName}`.trim();
+        : formatFullName(firstName, lastName);
       const clientNameRaw = row[identityHeaders.client] || '';
 
       await dbRun(
@@ -572,18 +576,21 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
               // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
               // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
               'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
-              [clientId, fullName.toLowerCase(), row.employee_number_raw, row.employee_number_raw]
+              [clientId, nameKey(fullName), row.employee_number_raw, row.employee_number_raw]
             );
         if (!employee) {
           const employeeId = uuidv4();
+          const names = nameColumns({ first_name: row.first_name_raw, last_name: row.last_name_raw, full_name: fullName });
           await dbRun(
-            `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, department, active, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO employees (employee_id, client_id, employee_number, full_name, first_name, last_name, job_title, department, active, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               employeeId,
               clientId,
               formatPhoneNumber(row.employee_number_raw),
-              fullName,
+              names.full_name,
+              names.first_name || null,
+              names.last_name || null,
               row.job_title_raw,
               row.department_raw,
               parseEmployeeActiveStatus(row.employee_status_raw),
@@ -605,15 +612,16 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
           // eslint-disable-next-line no-await-in-loop
           let employee = await dbGet(
             'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ?',
-            [clientId, oneName.toLowerCase()]
+            [clientId, nameKey(oneName)]
           );
           if (!employee) {
             const employeeId = uuidv4();
+            const names = nameColumns({ full_name: oneName });
             // eslint-disable-next-line no-await-in-loop
             await dbRun(
-              `INSERT INTO employees (employee_id, client_id, full_name, active, notes)
-               VALUES (?, ?, ?, 1, ?)`,
-              [employeeId, clientId, oneName, `Created by import: ${batch.filename}`]
+              `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, active, notes)
+               VALUES (?, ?, ?, ?, ?, 1, ?)`,
+              [employeeId, clientId, names.full_name, names.first_name || null, names.last_name || null, `Created by import: ${batch.filename}`]
             );
             // eslint-disable-next-line no-await-in-loop
             employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);

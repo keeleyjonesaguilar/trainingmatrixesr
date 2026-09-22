@@ -7,6 +7,7 @@ import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
+import { nameKey, nameParts } from '../lib/names.js';
 import { downloadCsv } from '../lib/csv.js';
 import { useSortableRows } from '../lib/useSortableRows';
 
@@ -17,7 +18,6 @@ const MATRIX_BASE_SORT_ACCESSORS = {
 };
 
 function normalizePhone(s) { return (s || '').replace(/\D/g, ''); }
-function normalizeName(s) { return (s || '').trim().toLowerCase(); }
 
 // Manually add an employee without going through the CSV import flow (Keeley's request) -
 // First/Last name combine into the existing single full_name column (same convention used for
@@ -39,7 +39,8 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
     try {
       const employee = await api.createEmployee({
         client_id: clientId,
-        full_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
         employee_number: phone.trim(),
         email: email.trim() || null,
       });
@@ -60,9 +61,9 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
     setError('');
     try {
       const roster = await api.listEmployees({ client_id: clientId });
-      const fullName = normalizeName(`${firstName} ${lastName}`);
+      const fullName = nameKey(firstName, lastName);
       const phoneDigits = normalizePhone(phone);
-      const matches = roster.filter((r) => normalizeName(r.full_name) === fullName || (phoneDigits && normalizePhone(r.employee_number) === phoneDigits));
+      const matches = roster.filter((r) => nameKey(nameParts(r).first, nameParts(r).last) === fullName || (phoneDigits && normalizePhone(r.employee_number) === phoneDigits));
       if (matches.length > 0) {
         setPossibleMatches(matches);
         setSaving(false);

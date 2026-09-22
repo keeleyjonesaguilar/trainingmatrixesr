@@ -9,15 +9,20 @@ const { v4: uuidv4 } = require('uuid');
 const repo = require('./repo');
 const { formatPhoneNumber } = require('./phone');
 const { buildCertificateFilename } = require('./certificateFilename');
+const { nameColumns, nameKey } = require('./names');
 
 // Matches an attendee to an existing employee at this client by name or phone, or creates a
 // new one - same matching rule the old cross-app sync used (name OR phone, scoped to the
 // client), just running in-process now instead of over HTTP.
 async function findOrCreateEmployee(clientId, attendee) {
   const normalizedPhone = (attendee.trainee_phone || '').replace(/\D/g, '');
+  // Compared as first/last parts (server/lib/names.js) - the sign-in form collects "Bill" +
+  // "Zuniga" while the employee on file reads "Zuniga, Bill", which a plain string compare missed.
+  const cols = nameColumns({ first_name: attendee.trainee_first_name, last_name: attendee.trainee_last_name, full_name: attendee.trainee_name });
+  const attendeeKey = nameKey(cols);
   const candidates = await dbAll('SELECT * FROM employees WHERE client_id = ?', [clientId]);
   const match = candidates.find((e) => {
-    const nameMatch = (e.full_name || '').trim().toLowerCase() === attendee.trainee_name.trim().toLowerCase();
+    const nameMatch = nameKey(e.full_name) === attendeeKey;
     const phoneMatch = normalizedPhone && (e.employee_number || '').replace(/\D/g, '') === normalizedPhone;
     return nameMatch || phoneMatch;
   });
@@ -32,13 +37,15 @@ async function findOrCreateEmployee(clientId, attendee) {
 
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, job_title, active, notes)
-     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+    `INSERT INTO employees (employee_id, client_id, employee_number, full_name, first_name, last_name, job_title, active, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [
       employee_id,
       clientId,
       formatPhoneNumber(attendee.trainee_phone || null),
-      attendee.trainee_name.trim(),
+      cols.full_name,
+      cols.first_name || null,
+      cols.last_name || null,
       attendee.trainee_job_title || null,
       'Created automatically from a Training Sign-In session.',
     ]

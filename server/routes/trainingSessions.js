@@ -15,6 +15,7 @@ const { logActivity } = require('../lib/activityLog');
 const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
 const { generateAhaRoster } = require('../lib/ahaRoster');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
+const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
 
 const router = express.Router();
@@ -629,8 +630,13 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
 router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  const { trainee_name, trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
-  if (!trainee_name || !trainee_name.trim()) {
+  const { trainee_phone, trainee_job_title, trainee_email, signature } = req.body || {};
+  // First/last parts (server/lib/names.js), with a single combined name still accepted.
+  let traineeFirst = String(req.body?.trainee_first_name || '').trim();
+  let traineeLast = String(req.body?.trainee_last_name || '').trim();
+  if (!traineeFirst && !traineeLast) ({ first: traineeFirst, last: traineeLast } = parseName(req.body?.trainee_name));
+  const trainee_name = firstLast(traineeFirst, traineeLast);
+  if (!trainee_name) {
     return res.status(400).json({ error: 'Name is required.' });
   }
   if (trainee_phone && !isValidPhoneNumber(trainee_phone)) {
@@ -642,12 +648,14 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
 
   const attendee_id = uuidv4();
   await dbRun(
-    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_phone, trainee_job_title, trainee_email, signature, added_by_admin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_first_name, trainee_last_name, trainee_phone, trainee_job_title, trainee_email, signature, added_by_admin)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       attendee_id,
       session.session_id,
-      trainee_name.trim(),
+      trainee_name,
+      traineeFirst || null,
+      traineeLast || null,
       trainee_phone ? formatPhoneNumber(trainee_phone) : null,
       trainee_job_title ? trainee_job_title.trim() : null,
       trainee_email ? trainee_email.trim().toLowerCase() : null,

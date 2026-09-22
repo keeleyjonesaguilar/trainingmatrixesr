@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { stripTrainingIdPrefix } = require('./certificateFilename');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 // The actual approved letterhead (Keeley's request, 2026-09-16 - after two hand-drawn attempts
@@ -16,36 +17,51 @@ const ESR_GREEN = '#1B5E42';
 
 // Simulates the template's small-caps display font (a tall initial capital, smaller capitals
 // for the rest of each word) using the built-in Times-Roman font, since PDFKit can't apply an
-// OpenType small-caps feature and no matching font file was supplied. Returns the y one line
-// below what was drawn, for stacking multiple centered lines.
-function measureSmallCapsWord(doc, word, bigSize, smallSize) {
-  const first = word.charAt(0).toUpperCase();
-  const rest = word.slice(1).toUpperCase();
-  doc.fontSize(bigSize);
-  const firstWidth = doc.widthOfString(first);
-  doc.fontSize(smallSize);
-  const restWidth = doc.widthOfString(rest);
-  return { first, rest, width: firstWidth + restWidth, firstWidth };
+// OpenType small-caps feature and no matching font file was supplied.
+//
+// Which characters get the tall size (Keeley's report, 2026-09-22: "OSHA 10" printed as
+// "Osha 1₀ (construction)"): the first letter of each word, any letter already capitalized in
+// the source text (so acronyms like OSHA/CPR/AED stay full-height), and every digit (lining
+// figures - a number never mixes sizes). Punctuation before a word's first letter, like the "(" in
+// "(Construction)", takes the tall size too so it frames the capital instead of stealing its place.
+function smallCapsRuns(word, bigSize, smallSize) {
+  const runs = [];
+  let seenLetter = false;
+  for (const ch of word) {
+    const isLetter = /\p{L}/u.test(ch);
+    const isDigit = /\d/.test(ch);
+    let big;
+    if (isDigit) big = true;
+    else if (isLetter) {
+      big = !seenLetter || (ch === ch.toUpperCase() && ch !== ch.toLowerCase());
+      seenLetter = true;
+    } else big = !seenLetter;
+    const size = big ? bigSize : smallSize;
+    const last = runs[runs.length - 1];
+    if (last && last.size === size) last.text += ch.toUpperCase();
+    else runs.push({ text: ch.toUpperCase(), size });
+  }
+  return runs;
 }
 
 function drawSmallCapsLine(doc, text, { x, width, baselineY, bigSize, smallSize, color, font = 'Times-Roman' }) {
   doc.font(font).fillColor(color);
   const words = text.split(' ').filter(Boolean);
-  const spaceWidth = (() => {
-    doc.fontSize(smallSize);
-    return doc.widthOfString(' ');
-  })();
-  const measured = words.map((w) => measureSmallCapsWord(doc, w, bigSize, smallSize));
-  const totalWidth = measured.reduce((sum, m) => sum + m.width, 0) + spaceWidth * (words.length - 1);
+  doc.fontSize(smallSize);
+  const spaceWidth = doc.widthOfString(' ');
+  const measured = words.map((w) => smallCapsRuns(w, bigSize, smallSize).map((r) => {
+    doc.fontSize(r.size);
+    return { ...r, width: doc.widthOfString(r.text) };
+  }));
+  const totalWidth = measured.reduce((sum, runs) => sum + runs.reduce((s, r) => s + r.width, 0), 0) + spaceWidth * (words.length - 1);
 
   let cursorX = x + (width - totalWidth) / 2;
-  const bigY = baselineY - bigSize * 0.72;
-  const smallY = baselineY - smallSize * 0.72;
-  for (const m of measured) {
-    doc.font(font).fontSize(bigSize).text(m.first, cursorX, bigY, { lineBreak: false });
-    cursorX += m.firstWidth;
-    doc.font(font).fontSize(smallSize).text(m.rest, cursorX, smallY, { lineBreak: false });
-    cursorX += m.width - m.firstWidth + spaceWidth;
+  for (const runs of measured) {
+    for (const r of runs) {
+      doc.font(font).fontSize(r.size).text(r.text, cursorX, baselineY - r.size * 0.72, { lineBreak: false });
+      cursorX += r.width;
+    }
+    cursorX += spaceWidth;
   }
 }
 
@@ -151,7 +167,9 @@ function generateCertificate(session, attendee, outputPath) {
     color: '#1A1A1A',
   });
 
-  drawWrappedSmallCaps(doc, session.training_type_label, {
+  // Catalog code ("TRN-060 - ") dropped from the printed title - it's an internal ID, not part
+  // of the training's name.
+  drawWrappedSmallCaps(doc, stripTrainingIdPrefix(session.training_type_label), {
     x: contentLeft,
     width: contentWidth,
     startY: pageHeight * 0.715,

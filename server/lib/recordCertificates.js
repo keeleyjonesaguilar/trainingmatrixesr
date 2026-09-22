@@ -10,6 +10,7 @@ const { dbGet, dbRun } = require('../db');
 const repo = require('./repo');
 const { generateCertificate } = require('./pdfGen');
 const { buildCertificateFilename } = require('./certificateFilename');
+const { displayFirstLast } = require('./names');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const RECORD_CERT_DIR = path.join(DATA_DIR, 'certificates', 'records');
@@ -30,11 +31,11 @@ async function computeFilenameForRecord(record) {
     {
       training_type_label: record.original_client_training_name || masterTraining.training_name,
       client_name: client.client_name,
-      trainer_signed_name: trainer ? trainer.full_name : null,
-      trainer_name: trainer ? trainer.full_name : null,
+      trainer_signed_name: trainer ? displayFirstLast(trainer) : null,
+      trainer_name: trainer ? displayFirstLast(trainer) : null,
       session_date: record.completion_date,
     },
-    { trainee_name: employee.full_name }
+    { trainee_name: displayFirstLast(employee) }
   );
 }
 
@@ -61,11 +62,11 @@ async function maybeGenerateCertificate(recordId) {
         client_name: client.client_name,
         training_type_label: record.original_client_training_name || masterTraining.training_name,
         session_date: record.completion_date,
-        trainer_signed_name: trainer ? trainer.full_name : null,
-        trainer_name: trainer ? trainer.full_name : null,
+        trainer_signed_name: trainer ? displayFirstLast(trainer) : null,
+        trainer_name: trainer ? displayFirstLast(trainer) : null,
         trainer_signature: null,
       },
-      { attendee_id: record.record_id, trainee_name: employee.full_name, signature: null },
+      { attendee_id: record.record_id, trainee_name: displayFirstLast(employee), signature: null },
       filePath
     );
   } catch (err) {
@@ -79,11 +80,11 @@ async function maybeGenerateCertificate(recordId) {
     {
       training_type_label: record.original_client_training_name || masterTraining.training_name,
       client_name: client.client_name,
-      trainer_signed_name: trainer ? trainer.full_name : null,
-      trainer_name: trainer ? trainer.full_name : null,
+      trainer_signed_name: trainer ? displayFirstLast(trainer) : null,
+      trainer_name: trainer ? displayFirstLast(trainer) : null,
       session_date: record.completion_date,
     },
-    { trainee_name: employee.full_name }
+    { trainee_name: displayFirstLast(employee) }
   );
   await dbRun(
     `UPDATE employee_training_records
