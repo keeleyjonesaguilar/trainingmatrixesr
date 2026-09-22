@@ -3,14 +3,14 @@
 // below additionally require requireAdmin, matching the rest of the app's convention.
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const archiver = require('archiver');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee } = require('../lib/sessionRecords');
 const { translateToSpanish } = require('../lib/translate');
-const { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
+const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
+const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
 const { logActivity } = require('../lib/activityLog');
 const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
 const { generateAhaRoster } = require('../lib/ahaRoster');
@@ -583,26 +583,13 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     return res.status(400).json({ error: 'This session covers multiple trainings - choose which one to download.' });
   }
 
-  let trainingLabel;
-  let files;
-  if (trainingKey === 'primary') {
-    trainingLabel = session.training_type_label;
-    const attendees = (await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]))
-      .filter((a) => a.certificate_path && fs.existsSync(a.certificate_path));
-    files = attendees.map((a) => ({ path: a.certificate_path, name: buildCertificateFilename(session, a) }));
-  } else {
-    const training = additionalTrainings.find((t) => t.id === trainingKey);
+  let training = null;
+  if (trainingKey !== 'primary') {
+    training = additionalTrainings.find((t) => t.id === trainingKey);
     if (!training) return res.status(404).json({ error: 'Training not found on this session.' });
-    trainingLabel = training.training_type_label;
-    const trainingSession = { ...session, training_type_label: training.training_type_label };
-    const rows = (await dbAll(
-      `SELECT ac.*, sa.trainee_name FROM attendee_certificates ac
-       JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id
-       WHERE ac.session_additional_training_id = ? ORDER BY sa.signed_at`,
-      [training.id]
-    )).filter((r) => r.certificate_path && fs.existsSync(r.certificate_path));
-    files = rows.map((r) => ({ path: r.certificate_path, name: buildCertificateFilename(trainingSession, r) }));
   }
+  const trainingLabel = training ? training.training_type_label : session.training_type_label;
+  const files = await listCertificateFiles(session, training);
 
   if (files.length === 0) {
     return res.status(404).json({ error: 'No certificates available yet - close the session first.' });
@@ -613,13 +600,11 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     entityLabel: `${trainingLabel} · ${session.client_name}`, details: `${files.length} certificate(s)`, req,
   });
 
-  const zipName = ['certificates', stripTrainingIdPrefix(trainingLabel), session.client_name, session.session_date]
-    .map((s) => String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim())
-    .join('_');
+  const zipName = certificateZipName(session, trainingLabel);
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${zipName}.zip"`);
 
-  const archive = archiver('zip', { zlib: { level: 9 } });
+  const archive = createCertificateZip(files);
   archive.on('error', (err) => {
     // Headers are already sent by the time archiver can fail mid-stream, so the best that can be
     // done is end the response - a JSON error body here would just corrupt the partial zip.
@@ -627,9 +612,6 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
     res.end();
   });
   archive.pipe(res);
-  for (const f of files) {
-    archive.file(f.path, { name: f.name });
-  }
   await archive.finalize();
 });
 

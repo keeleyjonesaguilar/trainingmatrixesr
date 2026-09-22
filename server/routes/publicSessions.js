@@ -12,13 +12,15 @@ const { generateAhaRoster } = require('../lib/ahaRoster');
 // every other training keeps using the regular in-house roster/certificate only.
 const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
-const { buildCertificateFilename, buildRosterFilename } = require('../lib/certificateFilename');
+const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
 const { DATA_DIR } = require('../lib/paths');
 const path = require('path');
 const fs = require('fs');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
 const { sendEmail } = require('../lib/email');
+const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('../lib/certificateZip');
+const { buildSessionCompleteEmail } = require('../lib/sessionCompleteEmail');
 
 const router = express.Router();
 
@@ -394,17 +396,40 @@ router.post('/:token/close', async (req, res) => {
 
   const attendeesFinal = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
 
-  // Documents emailed to the trainer once close-out finishes (Keeley's request, 2026-09-22): the
-  // sign-in roster PDF for every session, plus the AHA roster for First Aid/CPR/AED.
+  // Completed forms emailed once close-out finishes (Keeley's request, 2026-09-22): a ZIP of the
+  // attendees' certificates (one per training on the session), the sign-in roster PDF, and the
+  // AHA roster for First Aid/CPR/AED. Each entry also carries how the email describes it.
   const formAttachments = [];
-  const attachFile = (filePath, filename) => {
+  const attachFile = (filePath, filename, summary) => {
     try {
-      formAttachments.push({ filename, content: fs.readFileSync(filePath).toString('base64') });
+      formAttachments.push({ filename, content: fs.readFileSync(filePath).toString('base64'), summary });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Could not attach ${filename} to trainer email for session ${session.session_id}:`, err);
     }
   };
+  for (const training of [null, ...additionalTrainings]) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const certFiles = await listCertificateFiles(updatedSession, training);
+      if (!certFiles.length) continue; // eslint-disable-line no-continue
+      const label = training ? training.training_type_label : updatedSession.training_type_label;
+      // eslint-disable-next-line no-await-in-loop
+      const zip = await certificateZipBuffer(certFiles);
+      formAttachments.push({
+        filename: `${certificateZipName(updatedSession, label)}.zip`,
+        content: zip.toString('base64'),
+        summary: {
+          kind: 'ZIP',
+          label: additionalTrainings.length ? `Attendee Certificates – ${stripTrainingIdPrefix(label)}` : 'Attendee Certificates',
+          detail: `${certFiles.length} certificate PDF${certFiles.length === 1 ? '' : 's'} in one ZIP file`,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`Certificate ZIP for email failed for session ${session.session_id}:`, err);
+    }
+  }
 
   try {
     // Roster lists every training this one sign-in covers, not just the primary one.
@@ -414,7 +439,7 @@ router.post('/:token/close', async (req, res) => {
     };
     const rosterPath = await generateRosterPdf(rosterSession, attendeesFinal);
     await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
-    attachFile(rosterPath, buildRosterFilename(updatedSession, 'pdf'));
+    attachFile(rosterPath, buildRosterFilename(updatedSession, 'pdf'), { kind: 'PDF', label: 'Sign-In Roster', detail: 'Signed attendance roster for the session' });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Roster PDF generation failed for session ${session.session_id}:`, err);
@@ -432,7 +457,7 @@ router.post('/:token/close', async (req, res) => {
         attendeesFinal
       );
       await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
-      attachFile(ahaRosterPath, buildRosterFilename(updatedSession, 'pdf').replace('.pdf', '_AHA-Roster.pdf'));
+      attachFile(ahaRosterPath, buildRosterFilename(updatedSession, 'pdf').replace('.pdf', '_AHA-Roster.pdf'), { kind: 'PDF', label: 'AHA Course Roster', detail: 'Completed AHA Heartsaver Course Roster' });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`AHA roster generation failed for session ${session.session_id}:`, err);
@@ -444,20 +469,25 @@ router.post('/:token/close', async (req, res) => {
   // completed forms emailed, nothing else"). One email per address so recipients never see each
   // other's addresses; each send has its own catch so one bad address (or email not being
   // configured - see server/lib/email.js) never blocks the rest or undoes the close-out above.
+  const normalize = (e) => (e ? e.trim().toLowerCase() : null);
+  const trainerRecipients = new Set([updatedSession.trainer_email, trainerProfileEmail].map(normalize).filter(Boolean));
   const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL', []);
-  const documentRecipients = [...new Set(
-    [updatedSession.trainer_email, trainerProfileEmail, ...appUsers.map((u) => u.email)]
-      .filter(Boolean)
-      .map((e) => e.trim().toLowerCase())
-  )];
+  const documentRecipients = [...new Set([...trainerRecipients, ...appUsers.map((u) => normalize(u.email))].filter(Boolean))];
   if (formAttachments.length) {
+    // Certificates first, then rosters - the order they're listed in the email.
+    formAttachments.sort((a, b) => (a.summary.kind === 'ZIP' ? 0 : 1) - (b.summary.kind === 'ZIP' ? 0 : 1));
+    const logoUrl = `${(process.env.PUBLIC_APP_URL || 'https://esr-training.com').replace(/\/$/, '')}/email-logo.png`;
+    const attachments = formAttachments.map(({ filename, content }) => ({ filename, content }));
+    const emailFor = (to) => buildSessionCompleteEmail({
+      session: updatedSession,
+      trainingLabels: [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)],
+      attendees: attendeesFinal,
+      attachmentsSummary: formAttachments.map((a) => a.summary),
+      recipientIsTrainer: trainerRecipients.has(to),
+      logoUrl,
+    });
     await Promise.all(documentRecipients.map((to) =>
-      sendEmail({
-        to,
-        subject: `Completed Training Forms - ${updatedSession.training_type_label} - ${updatedSession.client_name} - ${updatedSession.session_date}`,
-        html: `<p>Attached ${formAttachments.length === 1 ? 'is the completed form' : 'are the completed forms'} for the ${updatedSession.training_type_label} session at ${updatedSession.client_name} on ${updatedSession.session_date}.</p>`,
-        attachments: formAttachments,
-      }).catch((err) => {
+      sendEmail({ to, ...emailFor(to), attachments }).catch((err) => {
         // eslint-disable-next-line no-console
         console.error(`Completed forms email to ${to} failed for session ${session.session_id}:`, err.message);
       })
