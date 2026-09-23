@@ -8,6 +8,7 @@ require('express-async-errors');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 
 const db = require('./db');
@@ -114,6 +115,10 @@ async function start() {
       credentials: true,
     })
   );
+
+  // Gzip every response the browser can accept compressed (Keeley's request, 2026-09-23) - the
+  // matrix payload alone is ~14.5 MB of JSON, which compresses to a small fraction of that.
+  app.use(compression());
 
   app.use(express.json({ limit: '5mb' }));
   app.use(attachUser);

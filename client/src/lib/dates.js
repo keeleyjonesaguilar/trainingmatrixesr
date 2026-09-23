@@ -16,10 +16,14 @@ export function parseTimestamp(value) {
   return new Date(value);
 }
 
+// Built once and reused: constructing an Intl.DateTimeFormat costs ~45us per call (same fix as
+// server/lib/dates.js, where it was called per matrix cell and slowed pages by seconds).
+const EASTERN_DATE_FORMAT = new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ });
+
 // Today's calendar date on Eastern time as "YYYY-MM-DD" - `new Date().toISOString()` is the UTC
 // date, which rolls to tomorrow at 8 PM Eastern.
 export function easternToday() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(new Date());
+  return EASTERN_DATE_FORMAT.format(new Date());
 }
 
 export function formatEasternDateTime(iso) {

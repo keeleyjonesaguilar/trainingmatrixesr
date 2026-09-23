@@ -11,9 +11,13 @@ function parseTimestamp(value) {
   return new Date(value);
 }
 
+// Built once and reused: constructing an Intl.DateTimeFormat costs ~45us, and the status engine
+// asks for today once per employee x training cell, which made the matrix seconds slower.
+const EASTERN_DATE_FORMAT = new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ });
+
 // Today's calendar date on Eastern time as "YYYY-MM-DD" - the UTC date rolls over at 8 PM Eastern.
 function easternToday() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(new Date());
+  return EASTERN_DATE_FORMAT.format(new Date());
 }
 
 module.exports = { EASTERN_TZ, parseTimestamp, easternToday };
