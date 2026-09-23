@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const { stripTrainingIdPrefix } = require('./certificateFilename');
+const { EASTERN_TZ, parseTimestamp } = require('./dates');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 // The actual approved letterhead (Keeley's request, 2026-09-16 - after two hand-drawn attempts
@@ -106,11 +107,9 @@ function b64ToBuffer(dataUrl) {
 // needs an explicit timeZone or it prints hours off from when it actually happened. A plain
 // session_date ("YYYY-MM-DD" with no time) doesn't need this - it's anchored to UTC midnight
 // below specifically so formatting it can never roll it to the adjacent calendar day.
-const EASTERN_TZ = 'America/New_York';
-
 function formatDate(d) {
   if (!d) return '';
-  const dt = new Date(d.length === 10 ? `${d}T00:00:00Z` : d);
+  const dt = d.length === 10 ? new Date(`${d}T00:00:00Z`) : parseTimestamp(d);
   if (Number.isNaN(dt.getTime())) return d;
   return dt.toLocaleDateString('en-US', {
     year: 'numeric',
@@ -122,7 +121,7 @@ function formatDate(d) {
 
 function formatDateTime(d) {
   if (!d) return '—';
-  const dt = new Date(d);
+  const dt = parseTimestamp(d);
   if (Number.isNaN(dt.getTime())) return d;
   return dt.toLocaleString('en-US', { timeZone: EASTERN_TZ });
 }

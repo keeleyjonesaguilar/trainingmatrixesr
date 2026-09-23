@@ -6,6 +6,7 @@ import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint 
 import { downloadCsv } from '../lib/csv.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import { easternToday } from '../lib/dates.js';
 
 function healthPillClass(health) {
   return health === 'Compliant' ? 'pill-compliant' : 'pill-action-required';
@@ -62,7 +63,7 @@ function UpcomingTrainingsBox({ clientId }) {
 
   useEffect(() => {
     api.listTrainingSessions({ status: 'open', client_id: clientId || undefined }).then((rows) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = easternToday();
       const upcoming = rows
         .filter((s) => s.session_date >= today)
         .sort((a, b) => a.session_date.localeCompare(b.session_date))

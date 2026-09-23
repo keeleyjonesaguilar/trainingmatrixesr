@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { PNG } = require('pngjs');
 const { AHA_COURSE_OPTIONS } = require('./ahaCourseOptions');
 const { AHA_OPTIONAL_TOPICS } = require('./ahaOptionalTopics');
 
@@ -49,16 +50,50 @@ function isPngDataUrl(value) {
   return typeof value === 'string' && value.startsWith('data:image/png;base64,');
 }
 
+// Tallest the drawn signature may be - taller than the 13.5pt field box on purpose, so the
+// signature rises above the line the way a handwritten one would instead of being squashed
+// into the box's height, but short enough to clear the "I verify..." sentence above the line.
+const SIGNATURE_MAX_HEIGHT = 20;
+
+// The signature pad saves the whole 438x160 canvas on an opaque white background, with the ink
+// covering only a small strip in the middle. Fitting that raw image to the line shrank the ink
+// to a speck at the far left, and its white box blanked out the start of the printed line
+// (Keeley's report, 2026-09-23). This crops to just the ink and makes the background transparent
+// so the form's own line shows through. Returns null for a blank signature.
+function inkOnlyPng(pngBytes) {
+  const src = PNG.sync.read(pngBytes);
+  const isInk = (i) => src.data[i + 3] > 20 && (src.data[i] < 200 || src.data[i + 1] < 200 || src.data[i + 2] < 200);
+  let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
+  for (let y = 0; y < src.height; y++) {
+    for (let x = 0; x < src.width; x++) {
+      if (!isInk((y * src.width + x) * 4)) continue;
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+  }
+  if (maxX < 0) return null;
+
+  const out = new PNG({ width: maxX - minX + 1, height: maxY - minY + 1 });
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      const si = (y * src.width + x) * 4;
+      const oi = ((y - minY) * out.width + (x - minX)) * 4;
+      src.data.copy(out.data, oi, si, si + 4);
+      if (!isInk(si)) out.data[oi + 3] = 0;
+    }
+  }
+  return PNG.sync.write(out);
+}
+
 async function drawSignatureImage(doc, page, rect, signatureDataUrl) {
   if (!isPngDataUrl(signatureDataUrl)) return;
-  const pngBytes = Buffer.from(signatureDataUrl.split(',')[1], 'base64');
-  const pngImage = await doc.embedPng(pngBytes);
-  // Fit within the line's box without distorting the signature's own aspect ratio, then sit it
-  // just above the line rather than filling the box edge-to-edge.
-  const scale = Math.min(rect.width / pngImage.width, rect.height / pngImage.height);
-  const width = pngImage.width * scale;
-  const height = pngImage.height * scale;
-  page.drawImage(pngImage, { x: rect.x, y: rect.y + (rect.height - height) / 2, width, height });
+  const inkBytes = inkOnlyPng(Buffer.from(signatureDataUrl.split(',')[1], 'base64'));
+  if (!inkBytes) return;
+  const pngImage = await doc.embedPng(inkBytes);
+  // Keep the signature's own aspect ratio, and rest its bottom just above the printed line
+  // (the field box's bottom edge), starting a little in from the line's left end.
+  const scale = Math.min((rect.width - 8) / pngImage.width, SIGNATURE_MAX_HEIGHT / pngImage.height);
+  page.drawImage(pngImage, { x: rect.x + 8, y: rect.y + 2.5, width: pngImage.width * scale, height: pngImage.height * scale });
 }
 
 function setTextSafely(form, fieldName, value) {

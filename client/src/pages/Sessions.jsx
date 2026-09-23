@@ -5,7 +5,7 @@ import { displayFirstLast } from '../lib/names.js';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
-import { sequentialDates } from '../lib/dates';
+import { easternToday, sequentialDates } from '../lib/dates';
 
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
@@ -73,7 +73,7 @@ export default function Sessions() {
     master_training_id: '',
     trainer_name: '',
     trainer_phone: '',
-    session_date: new Date().toISOString().slice(0, 10),
+    session_date: easternToday(),
     location: '',
     duration: '',
     outline: '',
@@ -112,7 +112,7 @@ export default function Sessions() {
 
   const loadUpcomingCount = () => {
     api.listTrainingSessions({ status: 'open', client_id: clientIdFilter }).then((rows) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = easternToday();
       setUpcomingCount(rows.filter((s) => s.session_date >= today).length);
     }).catch(() => {});
   };

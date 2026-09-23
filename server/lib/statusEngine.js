@@ -7,6 +7,8 @@
 // cycle) - every validation/UI site that lists these options pulls from here or the two client
 // mirrors (ClientDetail.jsx, TrainingTypeDetail.jsx), so this is the only server-side place a
 // new unit needs to be added.
+const { easternToday } = require('./dates');
+
 const EXPIRATION_UNITS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 
 function addPeriod(isoDateStr, unit) {
@@ -71,10 +73,11 @@ function effectiveRequirementStatus(requirement) {
 /**
  * Computes status + resolved expiration for one (employee, training) combination.
  * `record` may be null (no Employee Training Record exists yet for this pair).
- * `today` is an ISO date string (injected for testability; defaults to current UTC date).
+ * `today` is an ISO date string (injected for testability; defaults to today on Eastern time, so
+ * statuses don't flip a day early at 8 PM).
  */
 function computeStatus({ record, requirement, masterTraining, today }) {
-  const asOf = today || new Date().toISOString().slice(0, 10);
+  const asOf = today || easternToday();
   const reqStatus = effectiveRequirementStatus(requirement);
 
   // Client-level Not Applicable always wins - the training doesn't apply to this client at all.

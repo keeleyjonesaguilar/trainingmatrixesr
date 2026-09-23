@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { EXPIRATION_UNITS } = require('../lib/statusEngine');
+const { easternToday } = require('../lib/dates');
 const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -57,7 +58,7 @@ router.put('/client/:clientId/training/:trainingId', requireAdmin, async (req, r
   // Rule 9: a requirement/override change must not silently rewrite historical records.
   // Default the effective date to today (unless the caller explicitly supplies one, e.g.
   // backdating for a correction) so recompute only reaches forward from this point on.
-  const resolvedEffectiveDate = effective_date === undefined ? new Date().toISOString().slice(0, 10) : (effective_date || null);
+  const resolvedEffectiveDate = effective_date === undefined ? easternToday() : (effective_date || null);
 
   const existing = await repo.getRequirement(clientId, trainingId);
   if (existing) {

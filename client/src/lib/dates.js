@@ -4,16 +4,34 @@
 // request, 2026-09-17). Matches the equivalent fix in server/lib/pdfGen.js for certificates/rosters.
 export const EASTERN_TZ = 'America/New_York';
 
+// The DB default now_utc_text() stores UTC as "YYYY-MM-DD HH:MM:SS" with no zone marker, and
+// `new Date()` reads a zone-less datetime as the *browser's* local time - so every DB-stamped
+// time (signed_at, created_at, submitted_at...) showed 4-5 hours late (Keeley's report,
+// 2026-09-23). Tagging zone-less values as UTC fixes old and new rows alike; values that already
+// carry a zone (JS toISOString's "Z", Postgres TIMESTAMPTZ) pass through untouched.
+const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+export function parseTimestamp(value) {
+  if (!value) return new Date(NaN);
+  if (typeof value === 'string' && ZONELESS_DATETIME.test(value)) return new Date(`${value.replace(' ', 'T')}Z`);
+  return new Date(value);
+}
+
+// Today's calendar date on Eastern time as "YYYY-MM-DD" - `new Date().toISOString()` is the UTC
+// date, which rolls to tomorrow at 8 PM Eastern.
+export function easternToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(new Date());
+}
+
 export function formatEasternDateTime(iso) {
   if (!iso) return '';
-  const dt = new Date(iso);
+  const dt = parseTimestamp(iso);
   if (Number.isNaN(dt.getTime())) return iso;
   return dt.toLocaleString('en-US', { timeZone: EASTERN_TZ });
 }
 
 export function formatEasternDate(iso) {
   if (!iso) return '';
-  const dt = new Date(iso);
+  const dt = parseTimestamp(iso);
   if (Number.isNaN(dt.getTime())) return iso;
   return dt.toLocaleDateString('en-US', { timeZone: EASTERN_TZ });
 }

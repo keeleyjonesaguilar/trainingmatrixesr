@@ -5,7 +5,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
-import { EASTERN_TZ } from '../lib/dates.js';
+import { easternToday, formatEasternDate } from '../lib/dates.js';
 import { nameParts } from '../lib/names.js';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
@@ -167,7 +167,7 @@ function TrainingsTaughtSection({ employeeId }) {
   // Upcoming = still open and dated today or later (Keeley's request, 2026-09-22) - same
   // definition as the Sessions page's "X Upcoming" badge, but on Eastern time so a session
   // doesn't flip to "past" at 8 PM. Soonest first; everything else stays under Trainings Taught.
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(new Date());
+  const today = easternToday();
   const upcoming = sessions
     .filter((s) => s.status === 'open' && s.session_date >= today)
     .sort((a, b) => a.session_date.localeCompare(b.session_date));
@@ -293,7 +293,7 @@ function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] })
                       <a href={api.getEmployeeDocumentUrl(employeeId, d.document_id)} target="_blank" rel="noreferrer">{d.label}</a>
                     </td>
                     <td>{d.training_id ? `${d.training_id} - ${d.training_name}` : '—'}</td>
-                    <td>{d.uploaded_at?.slice(0, 10)}</td>
+                    <td>{formatEasternDate(d.uploaded_at)}</td>
                     <td>
                       {isAdmin && (
                         <button
