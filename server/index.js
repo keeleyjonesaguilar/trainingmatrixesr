@@ -172,6 +172,16 @@ async function start() {
   // NOT behind requireAuth - a trainee scanning a QR code never has a login.
   app.use('/api/training-sessions', requireAuth, require('./routes/trainingSessions'));
   app.use('/api/public', require('./routes/publicSessions'));
+  // Trainer's post-close edit link - public (trainers have no login) but PIN-gated, so it gets
+  // its own limit against someone guessing PINs from a leaked link.
+  const sessionEditRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts from this network. Please try again later.' },
+  });
+  app.use('/api/session-edit', sessionEditRateLimiter, require('./routes/sessionEdit'));
 
   // Serve the built React frontend in production (client/dist), so the whole app is one process.
   const clientDist = path.join(__dirname, '..', 'client', 'dist');

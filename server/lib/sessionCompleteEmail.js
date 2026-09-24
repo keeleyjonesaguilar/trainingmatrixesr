@@ -43,8 +43,10 @@ function attendeeResult(a) {
  * @param attachmentsSummary [{ kind: 'ZIP'|'PDF', label, detail }] - what's attached, in display order
  * @param recipientIsTrainer true for the trainer's own copy, false for ESR staff copies
  * @param logoUrl            absolute URL (or data: URI for previews) of the ESR logo
+ * @param editUrl            the trainer's "Edit close-out details" link - trainer's copy only
+ * @param isUpdate           true for the resend after the trainer edits a closed session
  */
-function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl }) {
+function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, editUrl = null, isUpdate = false }) {
   const trainingNames = trainingLabels.map(stripTrainingIdPrefix);
   const title = trainingNames.join(' + ');
   const trainerName = session.trainer_signed_name || session.trainer_name || 'the trainer';
@@ -52,11 +54,32 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
   const certified = attendees.filter((a) => attendeeResult(a).text === 'Certified').length;
   const notCertified = attendees.length - certified;
 
-  const subject = `Training Completed: ${title} – ${session.client_name} – ${longDate(session.session_date)}`;
+  const subject = `${isUpdate ? 'Training Updated' : 'Training Completed'}: ${title} – ${session.client_name} – ${longDate(session.session_date)}`;
 
-  const intro = recipientIsTrainer
-    ? `Hi ${esc(firstName)}, thank you for leading this session. Your completed paperwork is attached to this email for your records.`
-    : `${esc(trainerName)} just closed out this session. The completed paperwork is attached to this email.`;
+  let intro;
+  if (isUpdate) {
+    intro = recipientIsTrainer
+      ? `Hi ${esc(firstName)}, your changes to this session were saved. The updated paperwork is attached and replaces what was sent before.`
+      : `${esc(trainerName)} updated the close-out details for this session. The updated paperwork is attached and replaces what was sent before.`;
+  } else {
+    intro = recipientIsTrainer
+      ? `Hi ${esc(firstName)}, thank you for leading this session. Your completed paperwork is attached to this email for your records.`
+      : `${esc(trainerName)} just closed out this session. The completed paperwork is attached to this email.`;
+  }
+
+  // Trainer's copy only (Keeley's request, 2026-09-24): lets them fill in details they didn't have
+  // at close-out, or remove a duplicate sign-in. Saving there requires the trainer PIN.
+  const editBlock = editUrl ? `
+        <tr><td style="padding:8px 28px 4px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BORDER};border-radius:10px;">
+            <tr><td style="padding:14px 18px;">
+              <div style="${FONT}font-size:14px;font-weight:700;color:${TEXT};">Need to change something?</div>
+              <div style="${FONT}font-size:13px;line-height:1.5;color:${MUTED};margin:4px 0 12px;">Fill in a missing address or other details, or remove a duplicate sign-in. You'll need your trainer PIN to save.</div>
+              <a href="${esc(editUrl)}" style="display:inline-block;background:${GREEN};color:#ffffff;${FONT}font-size:14px;font-weight:600;text-decoration:none;padding:10px 18px;border-radius:8px;">Edit Close-Out Details</a>
+            </td></tr>
+          </table>
+        </td></tr>
+` : '';
 
   const summaryRows = [
     ['Training', esc(title)],
@@ -103,7 +126,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
         </td></tr>
 
         <tr><td style="background:${GREEN};padding:24px 28px;">
-          <div style="${FONT}font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${GOLD};">Training Session Completed</div>
+          <div style="${FONT}font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${GOLD};">${isUpdate ? 'Training Session Updated' : 'Training Session Completed'}</div>
           <div style="${FONT}font-size:24px;font-weight:700;color:#ffffff;margin-top:6px;line-height:1.25;">${esc(title)}</div>
           <div style="${FONT}font-size:14px;color:#cfe5df;margin-top:6px;">${esc(session.client_name)} &nbsp;·&nbsp; ${esc(sessionDates(session))}</div>
         </td></tr>
@@ -120,7 +143,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
             </td></tr>
           </table>
         </td></tr>
-
+${editBlock}
         <tr><td style="padding:16px 28px 4px;">
           <div style="${FONT}font-size:13px;font-weight:700;color:${GREEN};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Attached to this email</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${attachmentRows}
@@ -143,7 +166,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
         <tr><td style="padding:22px 28px 26px;">
           <div style="border-top:1px solid ${BORDER};padding-top:16px;${FONT}font-size:12px;line-height:1.6;color:${MUTED};">
             <strong style="color:${GREEN};">Evolution Safety Resources</strong><br>
-            Sent automatically by the ESR Safety Training Matrix when this session was closed out.
+            Sent automatically by the ESR Safety Training Matrix when this session was ${isUpdate ? 'updated' : 'closed out'}.
             This mailbox isn't monitored – please contact your ESR representative with any questions.
           </div>
         </td></tr>

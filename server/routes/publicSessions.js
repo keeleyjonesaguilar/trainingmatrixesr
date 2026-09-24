@@ -5,22 +5,14 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
-const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
-const { generateAhaRoster } = require('../lib/ahaRoster');
-
-// The one training this special AHA-format roster applies to (Keeley's request, 2026-09-21) -
-// every other training keeps using the regular in-house roster/certificate only.
-const AHA_ROSTER_TRAINING_ID = 'TRN-020';
+const { generateCertificate } = require('../lib/pdfGen');
 const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
-const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('../lib/certificateFilename');
+const { buildCertificateFilename } = require('../lib/certificateFilename');
 const { DATA_DIR } = require('../lib/paths');
 const path = require('path');
-const fs = require('fs');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
-const { sendEmail } = require('../lib/email');
-const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('../lib/certificateZip');
-const { buildSessionCompleteEmail } = require('../lib/sessionCompleteEmail');
+const { ahaColumnsFromBody, ensureEditToken, regenerateRosters, sendCompletedFormsEmail } = require('../lib/sessionCloseOut');
 const { parseName, firstLast } = require('../lib/names');
 
 // An attendee's name as first/last parts plus the "First Last" trainee_name printed on their
@@ -239,16 +231,9 @@ router.post('/:token/close', async (req, res) => {
       error: `This is a ${session.total_days}-day session, currently on Day ${session.current_day}. Advance to Day ${session.total_days} before closing.`,
     });
   }
-  const {
-    trainer_signed_name, trainer_email, trainer_phone, signature, pin,
-    // AHA Heartsaver Course Roster fields (Keeley's request, 2026-09-21) - only meaningful, and
-    // only validated, when this session's training is First Aid/CPR/AED; every other training
-    // ignores these even if somehow present in the request body.
-    hs_course_options, hs_training_center, hs_training_center_id, hs_training_site_name,
-    hs_address, hs_city_state_zip, hs_course_start, hs_course_end, hs_total_hours,
-    hs_no_of_cards_issued, hs_student_manikin_ratio, hs_issue_date_of_cards, hs_card_expiration_date,
-    hs_optional_topics, hs_additional_instructors,
-  } = req.body || {};
+  // The AHA Heartsaver Course Roster fields (hs_*, Keeley's request, 2026-09-21) are read by
+  // ahaColumnsFromBody below - they only print for First Aid/CPR/AED sessions.
+  const { trainer_signed_name, trainer_email, trainer_phone, signature, pin } = req.body || {};
   if (!trainer_signed_name || !trainer_signed_name.trim()) {
     return res.status(400).json({ error: 'Trainer name is required to close the session.' });
   }
@@ -276,35 +261,22 @@ router.post('/:token/close', async (req, res) => {
     return res.status(400).json({ error: 'Incorrect PIN.' });
   }
 
-  // Defensive cap matching the template's own layout (only 8 Assisting Instructor rows exist on
-  // the form) - the close-out form already enforces this, but a direct API call shouldn't be
-  // able to send more than the PDF has room to print.
-  const cappedAdditionalInstructors = Array.isArray(hs_additional_instructors)
-    ? hs_additional_instructors.slice(0, 8)
-    : null;
-
   const formattedTrainerPhone = formatPhoneNumber(trainer_phone);
+  const ahaColumns = ahaColumnsFromBody(req.body || {});
   await dbRun(
     `UPDATE training_sessions
      SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_phone = ?, trainer_signature = ?,
          trainer_signed_at = now_utc_text(), closed_at = now_utc_text(),
-         hs_course_options = ?, hs_training_center = ?, hs_training_center_id = ?, hs_training_site_name = ?,
-         hs_address = ?, hs_city_state_zip = ?, hs_course_start = ?, hs_course_end = ?, hs_total_hours = ?,
-         hs_no_of_cards_issued = ?, hs_student_manikin_ratio = ?, hs_issue_date_of_cards = ?, hs_card_expiration_date = ?,
-         hs_optional_topics = ?, hs_additional_instructors = ?
+         ${Object.keys(ahaColumns).map((col) => `${col} = ?`).join(', ')}
      WHERE session_id = ?`,
     [
       trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature,
-      Array.isArray(hs_course_options) ? JSON.stringify(hs_course_options) : null,
-      hs_training_center || null, hs_training_center_id || null, hs_training_site_name || null,
-      hs_address || null, hs_city_state_zip || null, hs_course_start || null, hs_course_end || null,
-      hs_total_hours || null, hs_no_of_cards_issued || null, hs_student_manikin_ratio || null,
-      hs_issue_date_of_cards || null, hs_card_expiration_date || null,
-      Array.isArray(hs_optional_topics) ? JSON.stringify(hs_optional_topics) : null,
-      cappedAdditionalInstructors ? JSON.stringify(cappedAdditionalInstructors) : null,
+      ...Object.values(ahaColumns),
       session.session_id,
     ]
   );
+  // The secret behind the trainer's "Edit close-out details" email link (routes/sessionEdit.js).
+  await ensureEditToken(session.session_id);
 
   // Keep the trainer's own profile current from what they just signed off with (Keeley's
   // request, 2026-09-17) - eliminates the need to manually add it on the back end. The session
@@ -411,102 +383,12 @@ router.post('/:token/close', async (req, res) => {
   const attendeesFinal = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
 
   // Completed forms emailed once close-out finishes (Keeley's request, 2026-09-22): a ZIP of the
-  // attendees' certificates (one per training on the session), the sign-in roster PDF, and the
-  // AHA roster for First Aid/CPR/AED. Each entry also carries how the email describes it.
-  const formAttachments = [];
-  const attachFile = (filePath, filename, summary) => {
-    try {
-      formAttachments.push({ filename, content: fs.readFileSync(filePath).toString('base64'), summary });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`Could not attach ${filename} to trainer email for session ${session.session_id}:`, err);
-    }
-  };
-  for (const training of [null, ...additionalTrainings]) {
-    try {
-      // eslint-disable-next-line no-await-in-loop
-      const certFiles = await listCertificateFiles(updatedSession, training);
-      if (!certFiles.length) continue; // eslint-disable-line no-continue
-      const label = training ? training.training_type_label : updatedSession.training_type_label;
-      // eslint-disable-next-line no-await-in-loop
-      const zip = await certificateZipBuffer(certFiles);
-      formAttachments.push({
-        filename: `${certificateZipName(updatedSession, label)}.zip`,
-        content: zip.toString('base64'),
-        summary: {
-          kind: 'ZIP',
-          label: additionalTrainings.length ? `Attendee Certificates – ${stripTrainingIdPrefix(label)}` : 'Attendee Certificates',
-          detail: `${certFiles.length} certificate PDF${certFiles.length === 1 ? '' : 's'} in one ZIP file`,
-        },
-      });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`Certificate ZIP for email failed for session ${session.session_id}:`, err);
-    }
-  }
-
-  try {
-    // Roster lists every training this one sign-in covers, not just the primary one.
-    const rosterSession = {
-      ...updatedSession,
-      training_type_label: [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', '),
-    };
-    const rosterPath = await generateRosterPdf(rosterSession, attendeesFinal);
-    await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
-    attachFile(rosterPath, buildRosterFilename(updatedSession, 'pdf'), { kind: 'PDF', label: 'Sign-In Roster', detail: 'Signed attendance roster for the session' });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`Roster PDF generation failed for session ${session.session_id}:`, err);
-  }
-
-  if (updatedSession.master_training_id === AHA_ROSTER_TRAINING_ID) {
-    try {
-      let trainerAhaInstructorId = null;
-      if (updatedSession.trainer_employee_id) {
-        const trainerEmployee = await dbGet('SELECT aha_instructor_id FROM employees WHERE employee_id = ?', [updatedSession.trainer_employee_id]);
-        trainerAhaInstructorId = trainerEmployee?.aha_instructor_id || null;
-      }
-      const ahaRosterPath = await generateAhaRoster(
-        { ...updatedSession, trainer_aha_instructor_id: trainerAhaInstructorId },
-        attendeesFinal
-      );
-      await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
-      attachFile(ahaRosterPath, buildRosterFilename(updatedSession, 'pdf').replace('.pdf', '_AHA-Roster.pdf'), { kind: 'PDF', label: 'AHA Course Roster', detail: 'Completed AHA Heartsaver Course Roster' });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`AHA roster generation failed for session ${session.session_id}:`, err);
-    }
-  }
-
-  // The completed forms go to the trainer (sign-off and profile address) and to every app user,
-  // attached - no link back into the app (Keeley's call, 2026-09-22: "just a download of the
-  // completed forms emailed, nothing else"). One email per address so recipients never see each
-  // other's addresses; each send has its own catch so one bad address (or email not being
-  // configured - see server/lib/email.js) never blocks the rest or undoes the close-out above.
-  const normalize = (e) => (e ? e.trim().toLowerCase() : null);
-  const trainerRecipients = new Set([updatedSession.trainer_email, trainerProfileEmail].map(normalize).filter(Boolean));
-  const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL', []);
-  const documentRecipients = [...new Set([...trainerRecipients, ...appUsers.map((u) => normalize(u.email))].filter(Boolean))];
-  if (formAttachments.length) {
-    // Certificates first, then rosters - the order they're listed in the email.
-    formAttachments.sort((a, b) => (a.summary.kind === 'ZIP' ? 0 : 1) - (b.summary.kind === 'ZIP' ? 0 : 1));
-    const logoUrl = `${(process.env.PUBLIC_APP_URL || 'https://esr-training.com').replace(/\/$/, '')}/email-logo.png`;
-    const attachments = formAttachments.map(({ filename, content }) => ({ filename, content }));
-    const emailFor = (to) => buildSessionCompleteEmail({
-      session: updatedSession,
-      trainingLabels: [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)],
-      attendees: attendeesFinal,
-      attachmentsSummary: formAttachments.map((a) => a.summary),
-      recipientIsTrainer: trainerRecipients.has(to),
-      logoUrl,
-    });
-    await Promise.all(documentRecipients.map((to) =>
-      sendEmail({ to, ...emailFor(to), attachments }).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error(`Completed forms email to ${to} failed for session ${session.session_id}:`, err.message);
-      })
-    ));
-  }
+  // attendees' certificates, the sign-in roster PDF, and the AHA roster for First Aid/CPR/AED -
+  // attached, to the trainer and every app user (see lib/sessionCloseOut.js).
+  const { rosterPath, ahaRosterPath } = await regenerateRosters(updatedSession, attendeesFinal, additionalTrainings);
+  await sendCompletedFormsEmail({
+    session: updatedSession, additionalTrainings, attendees: attendeesFinal, rosterPath, ahaRosterPath, trainerProfileEmail,
+  });
 
   try {
     const allLabels = [updatedSession.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', ');

@@ -4,7 +4,8 @@
 // create the employee, save their training record via repo.saveTrainingRecord (the exact same
 // path a manual entry uses), and attach the generated certificate. Nothing here is optional/
 // toggleable anymore - it runs every time a session is closed.
-const { dbAll, dbRun } = require('./../db');
+const fs = require('fs');
+const { dbGet, dbAll, dbRun } = require('./../db');
 const { v4: uuidv4 } = require('uuid');
 const repo = require('./repo');
 const { formatPhoneNumber } = require('./phone');
@@ -178,4 +179,32 @@ async function processAttendeeAdditionalTraining(session, attendee, additionalTr
   }
 }
 
-module.exports = { findOrCreateEmployee, processAttendee, processAttendeeAdditionalTraining };
+// Removes one sign-in from a session - open or closed (Keeley's request, 2026-09-24: attendees
+// sometimes sign in twice by accident). On a closed session, that sign-in already produced its
+// own certificate(s) and its own training record(s) in the employee's file (saveTrainingRecord
+// never merges - every completion is its own row), so those go too; nothing another sign-in
+// created is touched. The employee profile itself stays, since it may pre-date this session.
+// Returns the removed attendee row, or null if it wasn't found on this session.
+async function removeAttendee(sessionId, attendeeId) {
+  const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [attendeeId, sessionId]);
+  if (!attendee) return null;
+  const extraCerts = await dbAll('SELECT * FROM attendee_certificates WHERE attendee_id = ?', [attendeeId]);
+  const recordIds = [attendee.training_record_id, ...extraCerts.map((c) => c.training_record_id)].filter(Boolean);
+  const records = recordIds.length
+    ? await dbAll(`SELECT record_id, certificate_path FROM employee_training_records WHERE record_id IN (${recordIds.map(() => '?').join(', ')})`, recordIds)
+    : [];
+
+  // The attendee row goes first: it (and attendee_certificates, which cascade with it) references
+  // the training records, so they can't be deleted while it's still there.
+  await dbRun('DELETE FROM session_attendees WHERE attendee_id = ?', [attendeeId]);
+  for (const record of records) {
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun('DELETE FROM employee_training_records WHERE record_id = ?', [record.record_id]);
+  }
+
+  const files = new Set([attendee.certificate_path, ...extraCerts.map((c) => c.certificate_path), ...records.map((r) => r.certificate_path)].filter(Boolean));
+  for (const file of files) fs.unlink(file, () => {});
+  return attendee;
+}
+
+module.exports = { findOrCreateEmployee, processAttendee, processAttendeeAdditionalTraining, removeAttendee };

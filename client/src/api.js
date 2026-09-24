@@ -221,8 +221,11 @@ export const api = {
     request(`/training-sessions/${sessionId}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
   updateSessionAttendee: (sessionId, attendeeId, payload) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  // Works on a closed session too (Keeley's request, 2026-09-24) - also deletes the certificate and
+  // training record that sign-in produced, and rebuilds the rosters.
   deleteSessionAttendee: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'DELETE' }),
+  getSessionEditLink: (sessionId) => request(`/training-sessions/${sessionId}/edit-link`, { method: 'POST' }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
   advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),
@@ -242,6 +245,12 @@ export const api = {
   publicSearchAttendees: (token, q) => request(`/public/${token}/attendees/search?q=${encodeURIComponent(q)}`),
   publicCheckinAttendee: (token, attendeeId, payload) =>
     request(`/public/${token}/attendees/${attendeeId}/checkin`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Trainer's post-close edit page (no login, PIN-gated) - reached from the close-out email's
+  // link at /session-edit/:editToken.
+  sessionEditInfo: (editToken) => request(`/session-edit/${editToken}`),
+  sessionEditUnlock: (editToken, pin) => request(`/session-edit/${editToken}/unlock`, { method: 'POST', body: JSON.stringify({ pin }) }),
+  sessionEditSave: (editToken, payload) => request(`/session-edit/${editToken}/save`, { method: 'POST', body: JSON.stringify(payload) }),
 
   // Public post-training feedback (no auth) - reached only via a closed session's second QR
   // code at /feedback/:token.

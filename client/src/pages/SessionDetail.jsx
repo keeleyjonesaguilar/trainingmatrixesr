@@ -527,14 +527,47 @@ export default function SessionDetail() {
     }
   };
 
-  const removeAttendee = async (attendeeId) => {
-    if (!window.confirm('Remove this sign-in entry?')) return;
-    setRemovingId(attendeeId);
+  const removeAttendee = async (attendee) => {
+    const message = session.status === 'closed'
+      ? `Remove ${attendee.trainee_name} from this closed session?
+
+Their certificate and the training record it added to their employee file will be deleted, and the rosters will be rebuilt without them.`
+      : 'Remove this sign-in entry?';
+    if (!window.confirm(message)) return;
+    setRemovingId(attendee.attendee_id);
     try {
-      await api.deleteSessionAttendee(id, attendeeId);
+      await api.deleteSessionAttendee(id, attendee.attendee_id);
       load();
+    } catch (err) {
+      setError(err.message);
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  // The trainer's "Edit close-out details" page, same as the link in their close-out email - for
+  // sessions closed before that link existed, when the trainer can't find the email, or to see
+  // what the trainer sees. Built on this page's own site so it also works on localhost.
+  const trainerEditUrl = async () => `${window.location.origin}${(await api.getSessionEditLink(id)).path}`;
+
+  const copyTrainerEditLink = async () => {
+    try {
+      await navigator.clipboard.writeText(await trainerEditUrl());
+      setCopiedLink('trainer-edit');
+      setTimeout(() => setCopiedLink(''), 2000);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openTrainerEditPage = async () => {
+    // Opened before the request so the browser doesn't treat it as an unrequested pop-up.
+    const tab = window.open('', '_blank');
+    try {
+      tab.location = await trainerEditUrl();
+    } catch (err) {
+      tab?.close();
+      setError(err.message);
     }
   };
 
@@ -815,6 +848,16 @@ export default function SessionDetail() {
                 >
                   Export Roster (CSV)
                 </a>
+                {isAdmin && (
+                  <>
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={openTrainerEditPage}>
+                      Open Trainer Edit Page
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={copyTrainerEditLink}>
+                      {copiedLink === 'trainer-edit' ? 'Copied!' : 'Copy Trainer Edit Link'}
+                    </button>
+                  </>
+                )}
                 {/* One ZIP per training (Keeley's request, 2026-09-17) - a session covering just
                     one training (the normal case) gets a single button; 2+ trainings taught
                     together get one button each, since certificates are never mixed types in
@@ -987,22 +1030,27 @@ export default function SessionDetail() {
                           >
                             Edit
                           </button>{' '}
-                          <button className="btn btn-danger btn-sm" disabled={removingId === a.attendee_id} onClick={() => removeAttendee(a.attendee_id)}>
+                          <button className="btn btn-danger btn-sm" disabled={removingId === a.attendee_id} onClick={() => removeAttendee(a)}>
                             {removingId === a.attendee_id ? 'Removing…' : 'Remove'}
                           </button>
                         </td>
                       )}
                       {session.status === 'closed' && isAdmin && (
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           {(a.processing_status === 'failed' || a.processing_status === 'no_catalog_match') && (
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              disabled={retryingId === a.attendee_id}
-                              onClick={() => retryProcessing(a.attendee_id)}
-                            >
-                              {retryingId === a.attendee_id ? 'Retrying…' : 'Retry'}
-                            </button>
+                            <>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                disabled={retryingId === a.attendee_id}
+                                onClick={() => retryProcessing(a.attendee_id)}
+                              >
+                                {retryingId === a.attendee_id ? 'Retrying…' : 'Retry'}
+                              </button>{' '}
+                            </>
                           )}
+                          <button className="btn btn-danger btn-sm" disabled={removingId === a.attendee_id} onClick={() => removeAttendee(a)}>
+                            {removingId === a.attendee_id ? 'Removing…' : 'Remove'}
+                          </button>
                         </td>
                       )}
                     </>

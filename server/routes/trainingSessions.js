@@ -7,13 +7,13 @@ const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
-const { processAttendee } = require('../lib/sessionRecords');
+const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
+const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
 const { logActivity } = require('../lib/activityLog');
-const { generateCertificate, generateRosterPdf } = require('../lib/pdfGen');
-const { generateAhaRoster } = require('../lib/ahaRoster');
+const { generateCertificate } = require('../lib/pdfGen');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
@@ -22,9 +22,6 @@ const router = express.Router();
 
 const SESSION_LANGUAGES = ['english', 'spanish', 'both'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// The one training this special AHA-format roster applies to (Keeley's request, 2026-09-21) -
-// matches server/routes/publicSessions.js's AHA_ROSTER_TRAINING_ID.
-const AHA_ROSTER_TRAINING_ID = 'TRN-020';
 
 function tokenGen() {
   return uuidv4().replace(/-/g, '').slice(0, 16);
@@ -694,29 +691,10 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
     }
 
     // Regenerate the combined roster (and AHA roster, if applicable) so the new attendee shows
-    // up on both right away, same generation calls the close route itself uses.
+    // up on both right away, same generation the close route itself uses.
     const allAttendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
-    try {
-      const rosterPath = await generateRosterPdf(session, allAttendees);
-      await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`Roster PDF regeneration failed for session ${session.session_id}:`, err);
-    }
-    if (session.master_training_id === AHA_ROSTER_TRAINING_ID) {
-      try {
-        let trainerAhaInstructorId = null;
-        if (session.trainer_employee_id) {
-          const trainerEmployee = await dbGet('SELECT aha_instructor_id FROM employees WHERE employee_id = ?', [session.trainer_employee_id]);
-          trainerAhaInstructorId = trainerEmployee?.aha_instructor_id || null;
-        }
-        const ahaRosterPath = await generateAhaRoster({ ...session, trainer_aha_instructor_id: trainerAhaInstructorId }, allAttendees);
-        await dbRun('UPDATE training_sessions SET hs_roster_pdf_path = ? WHERE session_id = ?', [ahaRosterPath, session.session_id]);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(`AHA roster regeneration failed for session ${session.session_id}:`, err);
-      }
-    }
+    const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]);
+    await regenerateRosters(session, allAttendees, additionalTrainings);
   }
 
   logActivity({
@@ -741,15 +719,40 @@ router.patch('/:sessionId/attendees/:attendeeId', requireAdmin, async (req, res)
   res.json(await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee.attendee_id]));
 });
 
-// Remove a duplicate/mistaken sign-in - only while the session is still open (roster locks at close-out).
+// Remove a duplicate/mistaken sign-in. Allowed after close-out too (Keeley's request,
+// 2026-09-24) - removeAttendee also deletes the certificate and employee-file training record that
+// sign-in produced, and the rosters are rebuilt so it drops off them.
 router.delete('/:sessionId/attendees/:attendeeId', requireAdmin, async (req, res) => {
-  const session = await dbGet('SELECT status FROM training_sessions WHERE session_id = ?', [req.params.sessionId]);
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
+  const removed = await removeAttendee(session.session_id, req.params.attendeeId);
+  if (!removed) return res.status(404).json({ error: 'Attendee not found' });
   if (session.status === 'closed') {
-    return res.status(400).json({ error: 'Session is closed; roster is locked' });
+    const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+    const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]);
+    await regenerateRosters(session, attendees, additionalTrainings);
   }
-  await dbRun('DELETE FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [req.params.attendeeId, req.params.sessionId]);
+  logActivity({
+    actor: req.user, action: 'attendee_removed', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: removed.trainee_name, req,
+  });
   res.json({ ok: true });
+});
+
+// The trainer's "Edit close-out details" link (the same one emailed at close-out) - for an admin
+// to pass along, including for sessions closed before the link existed, which get one here.
+router.post('/:id/edit-link', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status !== 'closed') return res.status(400).json({ error: 'The edit link is only available after the session is closed.' });
+  const editToken = await ensureEditToken(session.session_id);
+  logActivity({
+    actor: req.user, action: 'session_link_copied', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'trainer edit', req,
+  });
+  // `path` lets the page build the link on whatever site it's open on (localhost while testing);
+  // `url` is the public one the close-out email uses.
+  res.json({ url: sessionEditUrl(editToken), path: `/session-edit/${editToken}` });
 });
 
 // Re-run the employee/training-record linkage for one attendee - useful if it failed, or if the
