@@ -220,11 +220,18 @@ router.get('/:id/full-detail', async (req, res) => {
     };
   }));
 
+  // Anyone who teaches gets the trainer sections (ratings, Trainings Taught) - not only a
+  // trainer-type profile. A trainer merged into their own employee profile keeps every session
+  // they taught, but the profile becomes a regular employee, so gating on employee_type alone
+  // hid all of it (Keeley's report, 2026-09-28).
+  const teaches = employee.employee_type === 'trainer'
+    || Boolean(await dbGet('SELECT 1 AS x FROM training_sessions WHERE trainer_employee_id = ? LIMIT 1', [employee.employee_id]));
+
   // Aggregate feedback rating for a trainer's own profile page (Keeley's request) - across
-  // every session they taught, not just their most recent one. Only meaningful for trainers,
-  // so it's skipped entirely for a regular trainee.
+  // every session they taught, not just their most recent one. Skipped for someone who's never
+  // taught.
   let trainerFeedbackSummary = null;
-  if (employee.employee_type === 'trainer') {
+  if (teaches) {
     const agg = await dbGet(
       `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
        FROM session_feedback sf
@@ -243,7 +250,7 @@ router.get('/:id/full-detail', async (req, res) => {
     };
   }
 
-  res.json({ employee, client, trainings, completedRecords, trainerFeedbackSummary });
+  res.json({ employee, client, trainings, completedRecords, trainerFeedbackSummary, teaches });
 });
 
 // Trainer profiles are created via the dedicated /api/trainers route, not here - this route

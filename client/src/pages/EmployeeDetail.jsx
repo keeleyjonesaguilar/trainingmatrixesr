@@ -18,8 +18,7 @@ function formatPhoneInput(value) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
-function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
-  const isTrainer = employee.employee_type === 'trainer';
+function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }) {
   const initialName = nameParts(employee);
   const [form, setForm] = useState({
     first_name: initialName.first,
@@ -85,13 +84,13 @@ function EmployeeProfileEditor({ employee, isAdmin, onSaved, onCancel }) {
         <div className="field-row">
           <label>Email</label>
           <input type="email" placeholder="name@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          {isTrainer && (
+          {teaches && (
             <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
               Session documents are emailed here when this trainer closes out a session.
             </p>
           )}
         </div>
-        {isAdmin && isTrainer && (
+        {isAdmin && teaches && (
           <div className="field-row">
             <label>AHA Instructor ID#</label>
             <input
@@ -366,7 +365,7 @@ export default function EmployeeDetail() {
   if (error) return <div className="error-banner">{error}</div>;
   if (!detail) return <div className="empty-state">Loading...</div>;
 
-  const { employee, client, trainings, completedRecords, trainerFeedbackSummary } = detail;
+  const { employee, client, trainings, completedRecords, trainerFeedbackSummary, teaches } = detail;
 
   // The stat tiles are compliance-style counts - "how many training TYPES is this person
   // currently current/expiring/expired on" - so they're based on the one-cell-per-type view
@@ -480,6 +479,7 @@ export default function EmployeeDetail() {
         <EmployeeProfileEditor
           employee={employee}
           isAdmin={isAdmin}
+          teaches={teaches}
           onSaved={() => { setEditingProfile(false); load(); }}
           onCancel={() => setEditingProfile(false)}
         />
@@ -514,7 +514,7 @@ export default function EmployeeDetail() {
           summary cards sit side by side up top, and the 9-column Completed Trainings table gets
           the full page width below instead of being squeezed into two-thirds of it. */}
       <div className="profile-row">
-        {isTrainer && <TrainerRatingSummary summary={trainerFeedbackSummary} />}
+        {teaches && <TrainerRatingSummary summary={trainerFeedbackSummary} />}
         <div className="card">
           <h2>Recent Completions</h2>
           <div className="activity-feed">
@@ -533,7 +533,8 @@ export default function EmployeeDetail() {
         <EmployeeDocumentsSection employeeId={employee.employee_id} isAdmin={isAdmin} trainingOptions={trainings} />
       </div>
 
-      {isTrainer && <TrainingsTaughtSection employeeId={employee.employee_id} />}
+      {/* Anyone who has taught, including a trainer merged into their employee profile. */}
+      {teaches && <TrainingsTaughtSection employeeId={employee.employee_id} />}
 
       <div className="profile-full">
           <EmployeeCompliancePanel

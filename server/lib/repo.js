@@ -437,7 +437,10 @@ async function findDuplicateEmployeeClusters({ clientId } = {}) {
 // side (Keeley's call): a blank field on the winner is filled in from a loser rather than
 // staying blank, before the loser's training records/sign-in links move over and the loser
 // row is removed. Nothing on the winner that's already set gets overwritten.
-const EMPLOYEE_MERGE_FIELDS = ['employee_number', 'job_title', 'department', 'notes'];
+// email and aha_instructor_id added 2026-09-28 (Keeley's report): merging a trainer profile into
+// their employee profile was dropping the trainer's email (where close-out documents go) and AHA
+// Instructor ID (printed on the CPR roster) whenever the kept profile had none.
+const EMPLOYEE_MERGE_FIELDS = ['employee_number', 'job_title', 'department', 'notes', 'email', 'aha_instructor_id'];
 async function mergeEmployees(winnerId, loserIds) {
   for (const loserId of loserIds) {
     if (loserId === winnerId) continue;
