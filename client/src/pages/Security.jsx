@@ -24,6 +24,8 @@ const ACCOUNT_ACTION_LABELS = {
 const ACTIVITY_ACTION_LABELS = {
   session_created: 'Training session created',
   session_updated: 'Training session updated',
+  session_day_advanced: 'Training session advanced a day',
+  session_day_reverted: 'Training session moved back a day',
   session_deleted: 'Training session deleted',
   session_link_copied: 'Session link copied',
   session_edited_by_trainer: 'Close-out details edited by trainer',

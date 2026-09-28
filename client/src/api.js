@@ -229,6 +229,7 @@ export const api = {
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
   advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),
+  previousSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/previous-day`, { method: 'POST' }),
   getTrainingSessionsSummaryByTraining: () => request('/training-sessions/summary-by-training'),
   getSessionsByTraining: (trainingId, params = {}) => {
     const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v));

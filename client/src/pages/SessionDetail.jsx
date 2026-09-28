@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { parseName } from '../lib/names.js';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatEasternDateTime, sequentialDates, formatShortDate } from '../lib/dates';
+import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 
@@ -585,9 +585,43 @@ Their certificate and the training record it added to their employee file will b
 
   const [advancingDay, setAdvancingDay] = useState(false);
   const advanceDay = async () => {
+    // Warn when the next day isn't scheduled yet (Keeley's request, 2026-09-28): a Day 1 session
+    // advanced that morning recorded all of Day 1's sign-ins as Day 2.
+    const nextDay = session.current_day + 1;
+    const nextDate = session.day_dates?.[session.current_day];
+    const today = easternToday();
+    if (nextDate && nextDate > today) {
+      const ok = window.confirm(
+        `Day ${nextDay} is scheduled for ${formatShortDate(nextDate)}, but today is ${formatShortDate(today)}.\n\n` +
+        `Open Day ${nextDay} now anyway? Everyone who signs in after this is recorded for Day ${nextDay}.`
+      );
+      if (!ok) return;
+    }
     setAdvancingDay(true);
     try {
       await api.advanceSessionDay(id);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdvancingDay(false);
+    }
+  };
+
+  // Undo an early/mistaken advance - sign-ins recorded for the current day move back with it.
+  const previousDay = async () => {
+    const fromDay = session.current_day;
+    const count = session.attendees.filter((a) => (a.days_attended || []).includes(fromDay)).length;
+    const ok = window.confirm(
+      `Go back to Day ${fromDay - 1}?\n\n` +
+      (count
+        ? `${count} sign-in${count === 1 ? '' : 's'} recorded for Day ${fromDay} will move back to Day ${fromDay - 1}.`
+        : `No one has signed in for Day ${fromDay} yet.`)
+    );
+    if (!ok) return;
+    setAdvancingDay(true);
+    try {
+      await api.previousSessionDay(id);
       load();
     } catch (err) {
       setError(err.message);
@@ -711,17 +745,24 @@ Their certificate and the training record it added to their employee file will b
               </p>
             </div>
             {isAdmin && session.status === 'open' && (
-              <button
-                className="btn btn-accent btn-sm"
-                disabled={advancingDay || session.current_day >= session.total_days}
-                onClick={advanceDay}
-              >
-                {advancingDay
-                  ? 'Opening…'
-                  : session.current_day >= session.total_days
-                    ? `On Final Day (${session.total_days})`
-                    : `Open Day ${session.current_day + 1} →`}
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {session.current_day > 1 && (
+                  <button className="btn btn-secondary btn-sm" disabled={advancingDay} onClick={previousDay}>
+                    ← Back to Day {session.current_day - 1}
+                  </button>
+                )}
+                <button
+                  className="btn btn-accent btn-sm"
+                  disabled={advancingDay || session.current_day >= session.total_days}
+                  onClick={advanceDay}
+                >
+                  {advancingDay
+                    ? 'Updating…'
+                    : session.current_day >= session.total_days
+                      ? `On Final Day (${session.total_days})`
+                      : `Open Day ${session.current_day + 1} →`}
+                </button>
+              </div>
             )}
           </div>
           {session.day_outlines?.length > 0 && (

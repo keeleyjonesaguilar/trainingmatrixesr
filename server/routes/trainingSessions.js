@@ -3,7 +3,7 @@
 // below additionally require requireAdmin, matching the rest of the app's convention.
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const { dbGet, dbAll, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun, withTransaction } = require('../db');
 const repo = require('../lib/repo');
 const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
@@ -429,6 +429,48 @@ router.post('/:id/advance-day', requireAdmin, async (req, res) => {
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `Day ${nextDay} of ${session.total_days}`, req,
   });
   res.json({ current_day: nextDay, total_days: session.total_days });
+});
+
+// Undo an advance done too early (Keeley's request, 2026-09-28: a session was moved to Day 2 on
+// the morning of Day 1, so that day's sign-ins were all recorded as Day 2). Steps back one day
+// and moves every sign-in recorded for the day being undone back to the earlier day - or drops it
+// when that person is already checked in for the earlier day, since it was only the same
+// attendance recorded twice.
+router.post('/:id/previous-day', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session.total_days) return res.status(400).json({ error: 'This is not a multi-day session.' });
+  if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
+  if (session.current_day <= 1) return res.status(400).json({ error: 'Already on Day 1.' });
+  const fromDay = session.current_day;
+  const toDay = fromDay - 1;
+  const { moved, dropped } = await withTransaction(async () => {
+    const rows = await dbAll('SELECT id, attendee_id FROM session_attendance_days WHERE session_id = ? AND day_number = ?', [session.session_id, fromDay]);
+    const alreadyOnEarlierDay = new Set((await dbAll(
+      'SELECT attendee_id FROM session_attendance_days WHERE session_id = ? AND day_number = ?', [session.session_id, toDay]
+    )).map((r) => r.attendee_id));
+    let movedCount = 0;
+    let droppedCount = 0;
+    for (const row of rows) {
+      if (alreadyOnEarlierDay.has(row.attendee_id)) {
+        // eslint-disable-next-line no-await-in-loop
+        await dbRun('DELETE FROM session_attendance_days WHERE id = ?', [row.id]);
+        droppedCount += 1;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        await dbRun('UPDATE session_attendance_days SET day_number = ? WHERE id = ?', [toDay, row.id]);
+        movedCount += 1;
+      }
+    }
+    await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ?', [toDay, session.session_id]);
+    return { moved: movedCount, dropped: droppedCount };
+  });
+  logActivity({
+    actor: req.user, action: 'session_day_reverted', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`,
+    details: `Back to Day ${toDay} of ${session.total_days}; ${moved} sign-in(s) moved from Day ${fromDay}${dropped ? `, ${dropped} duplicate(s) removed` : ''}`, req,
+  });
+  res.json({ current_day: toDay, total_days: session.total_days, moved, dropped });
 });
 
 // Delete a session created by accident (Keeley's request - lives under the session's own
