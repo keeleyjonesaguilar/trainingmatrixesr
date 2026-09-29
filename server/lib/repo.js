@@ -484,6 +484,9 @@ async function mergeEmployees(winnerId, loserIds) {
     // employee one - two trainer profiles merging today has the exact same bug.
     await dbRun('UPDATE training_sessions SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
     await dbRun('UPDATE employee_training_records SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
+    // Same for a multi-day session's per-day trainer assignments and sign-offs (migration 064).
+    await dbRun('UPDATE session_days SET assigned_trainer_employee_id = ? WHERE assigned_trainer_employee_id = ?', [winnerId, loserId]);
+    await dbRun('UPDATE session_days SET signed_trainer_employee_id = ? WHERE signed_trainer_employee_id = ?', [winnerId, loserId]);
     await dbRun('DELETE FROM employees WHERE employee_id = ?', [loserId]);
   }
 
