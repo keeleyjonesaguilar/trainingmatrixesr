@@ -255,7 +255,7 @@ router.get('/:id/full-detail', async (req, res) => {
   // A day of a multi-day session counts too (server/lib/sessionDays.js).
   const TAUGHT_SESSIONS_SQL = `SELECT session_id FROM training_sessions WHERE trainer_employee_id = $1
      UNION SELECT session_id FROM session_days WHERE assigned_trainer_employee_id = $1 OR signed_trainer_employee_id = $1`;
-  const teaches = employee.employee_type === 'trainer'
+  const teaches = employee.employee_type === 'trainer' || Boolean(employee.is_trainer)
     || Boolean(await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SESSIONS_SQL}) t LIMIT 1`, [employee.employee_id]));
 
   // Aggregate feedback rating for a trainer's own profile page (Keeley's request) - across

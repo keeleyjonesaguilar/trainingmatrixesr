@@ -18,8 +18,9 @@ function CrossMatchRow({ match, onMerged, onIgnored }) {
 
   const merge = async () => {
     if (!window.confirm(
-      `Merge trainer profile "${trainer.full_name}" into employee "${employee.full_name}" (${employee.client_name})?\n\n` +
-      `${employee.full_name} will keep their own client and completed trainings, and will also show every session ${trainer.full_name} has taught. This cannot be undone.`
+      `Combine "${trainer.full_name}" into one profile?\n\n` +
+      `They stay a TRAINER - on the Trainers page and trainer lists, with their ratings and every session they've taught - ` +
+      `and stay an EMPLOYEE of ${employee.client_name}, with their own completed trainings. This cannot be undone.`
     )) return;
     setMerging(true);
     setError('');
@@ -69,7 +70,7 @@ function CrossMatchRow({ match, onMerged, onIgnored }) {
           </tr>
         </tbody>
       </table>
-      <button type="button" disabled={merging || ignoring} onClick={merge}>{merging ? 'Merging...' : 'Merge Into Employee'}</button>{' '}
+      <button type="button" disabled={merging || ignoring} onClick={merge}>{merging ? 'Combining...' : 'Combine Into One Profile'}</button>{' '}
       <button type="button" className="secondary" disabled={merging || ignoring} onClick={ignore}>{ignoring ? 'Ignoring...' : 'Not the Same Person'}</button>
     </div>
   );
@@ -92,8 +93,9 @@ export default function TrainerEmployeeMatchesPanel({ onMerged }) {
     <div style={{ marginBottom: 16 }}>
       <h2>Trainers Who May Also Be Employees ({matches.length})</h2>
       <p className="page-subtitle">
-        Same name or phone number found on both a trainer profile and a real employee elsewhere in the system.
-        Merging keeps the employee's own client and training history, and folds in everything the trainer has taught.
+        Same name or phone number found on both a trainer profile and an employee profile. Combining them makes one
+        profile that is both: still a trainer (ratings, sessions taught, trainer lists) and still an employee of their
+        client (their own completed trainings).
       </p>
       {matches.map((m) => (
         <CrossMatchRow key={`${m.trainer.employee_id}-${m.employee.employee_id}`} match={m} onMerged={handleMerged} onIgnored={load} />

@@ -14,6 +14,7 @@ async function listTrainerProfiles() {
   return dbAll(
     `SELECT * FROM employees
      WHERE (client_id = ? AND employee_type = 'trainer')
+        OR is_trainer = 1
         OR employee_id IN (SELECT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
         OR employee_id IN (SELECT assigned_trainer_employee_id FROM session_days WHERE assigned_trainer_employee_id IS NOT NULL)
         OR employee_id IN (SELECT signed_trainer_employee_id FROM session_days WHERE signed_trainer_employee_id IS NOT NULL)`,

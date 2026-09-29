@@ -58,6 +58,7 @@ router.get('/', async (req, res) => {
   const rows = await dbAll(
     `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id
      WHERE (e.client_id = ? AND e.employee_type = 'trainer')
+        OR e.is_trainer = 1
         OR e.employee_id IN (SELECT DISTINCT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
         OR e.employee_id IN (SELECT assigned_trainer_employee_id FROM session_days WHERE assigned_trainer_employee_id IS NOT NULL)
         OR e.employee_id IN (SELECT signed_trainer_employee_id FROM session_days WHERE signed_trainer_employee_id IS NOT NULL)
@@ -89,8 +90,8 @@ router.post('/', async (req, res) => {
   }
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, job_title, employee_number, email, active, employee_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'trainer')`,
+    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, job_title, employee_number, email, active, employee_type, is_trainer)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'trainer', 1)`,
     [employee_id, INTERNAL_CLIENT_ID, names.full_name, names.first_name || null, names.last_name || null, job_title, formatPhoneNumber(employee_number), email]
   );
   logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: names.full_name, req });

@@ -319,9 +319,12 @@ async function generateNextTrainingId() {
   return `TRN-${padded}`;
 }
 
-// Trainers are tracked as employees, but always under the one internal pseudo-client and
-// always employee_type = 'trainer' - matching is scoped to both so this can never accidentally
-// collide with a same-named trainee at a real client. Matched by EMPLOYEE ID (Keeley's call:
+// Trainers are tracked as employees: a standalone trainer profile under the one internal
+// pseudo-client, or - once merged with their own employee profile - a real employee flagged
+// is_trainer (migration 065). Matching only ever looks at those, so it can never collide with a
+// same-named trainee who isn't a trainer. A merged profile is preferred over a standalone one
+// with the same name (Keeley's report, 2026-09-29: a new session for Bob Lathan kept creating a
+// fresh trainer profile, splitting his sessions and ratings). Matched by EMPLOYEE ID (Keeley's call:
 // more reliable than name, since two trainers could share a name but not an ID), falling
 // back to creating a new profile on first use so trainers don't need to be added ahead of time
 // to be linked to their sessions. If an ID match is found under a different name (a typo
@@ -334,7 +337,9 @@ async function findOrCreateTrainerEmployee(trainerName, trainerId) {
   const normalizedId = String(trainerId || '').trim().toLowerCase();
   if (!trimmedName && !normalizedId) return null;
 
-  const candidates = await dbAll(`SELECT * FROM employees WHERE client_id = ? AND employee_type = 'trainer'`, [INTERNAL_CLIENT_ID]);
+  const candidates = (await dbAll(
+    `SELECT * FROM employees WHERE (client_id = ? AND employee_type = 'trainer') OR is_trainer = 1`, [INTERNAL_CLIENT_ID]
+  )).sort((a, b) => (a.employee_type === 'trainer') - (b.employee_type === 'trainer'));
 
   if (normalizedId) {
     const match = candidates.find((e) => (e.employee_number || '').trim().toLowerCase() === normalizedId);
@@ -357,8 +362,8 @@ async function findOrCreateTrainerEmployee(trainerName, trainerId) {
 
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, employee_number, employee_type, active, notes)
-     VALUES (?, ?, ?, ?, ?, ?, 'trainer', 1, ?)`,
+    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, employee_number, employee_type, is_trainer, active, notes)
+     VALUES (?, ?, ?, ?, ?, ?, 'trainer', 1, 1, ?)`,
     [
       employee_id,
       INTERNAL_CLIENT_ID,
@@ -461,6 +466,9 @@ async function mergeEmployees(winnerId, loserIds) {
       const flag = `Possible duplicate phone number found during merge: ${loser.employee_number} (kept ${winner.employee_number})`;
       fills.notes = winner.notes ? `${winner.notes}\n${flag}` : flag;
     }
+    // Merging a trainer into their employee profile keeps them a trainer (Keeley's request,
+    // 2026-09-29: one profile that's both, with their ratings and sessions taught).
+    if (loser.employee_type === 'trainer' || loser.is_trainer) fills.is_trainer = 1;
     if (Object.keys(fills).length) {
       const setClause = Object.keys(fills).map((f) => `${f} = ?`).join(', ');
       await dbRun(`UPDATE employees SET ${setClause} WHERE employee_id = ?`, [...Object.values(fills), winnerId]);
