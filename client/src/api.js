@@ -226,6 +226,7 @@ export const api = {
   deleteSessionAttendee: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'DELETE' }),
   getSessionEditLink: (sessionId) => request(`/training-sessions/${sessionId}/edit-link`, { method: 'POST' }),
+  rebuildSessionRosters: (sessionId) => request(`/training-sessions/${sessionId}/rebuild-rosters`, { method: 'POST' }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
   advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),

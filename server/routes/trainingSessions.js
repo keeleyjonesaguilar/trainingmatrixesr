@@ -806,6 +806,28 @@ router.delete('/:sessionId/attendees/:attendeeId', requireAdmin, async (req, res
   res.json({ ok: true });
 });
 
+// Rebuild a closed session's roster PDFs from what's on file now (Keeley's request, 2026-09-29:
+// e.g. a trainer's name corrected after close-out). Runs on the server that stores the files -
+// no email, nothing else regenerated.
+router.post('/:id/rebuild-rosters', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status !== 'closed') return res.status(400).json({ error: 'Rosters are only built once the session is closed.' });
+  // A local copy of the app shares the live database but not the live server's files - building
+  // here would point the live session at a file only this computer has.
+  if (process.env.RENDER !== 'true' && process.env.ALLOW_LOCAL_ROSTER_REBUILD !== 'on') {
+    return res.status(400).json({ error: 'Rebuild rosters from the live site (esr-training.com) - this copy of the app stores files on this computer only.' });
+  }
+  const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+  const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]);
+  const { rosterPath, ahaRosterPath } = await regenerateRosters(session, attendees, additionalTrainings);
+  logActivity({
+    actor: req.user, action: 'rosters_rebuilt', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
+  });
+  res.json({ ok: Boolean(rosterPath), aha_roster: Boolean(ahaRosterPath) });
+});
+
 // The trainer's "Edit close-out details" link (the same one emailed at close-out) - for an admin
 // to pass along, including for sessions closed before the link existed, which get one here.
 router.post('/:id/edit-link', requireAdmin, async (req, res) => {

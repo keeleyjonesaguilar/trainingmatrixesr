@@ -4,7 +4,6 @@
 // section is one controlled `value` object; ahaFieldsPayload() turns it into the hs_* request
 // fields the server stores (server/lib/sessionCloseOut.js).
 import { AHA_COURSE_OPTIONS, AHA_COURSE_GROUPS } from '../lib/ahaCourseOptions';
-import { AHA_OPTIONAL_TOPICS } from '../lib/ahaOptionalTopics';
 
 // The one training this section applies to - matches server/lib/sessionCloseOut.js.
 export const AHA_ROSTER_TRAINING_ID = 'TRN-020';
@@ -119,11 +118,6 @@ export default function AhaRosterFields({ value, onChange }) {
     }
   };
 
-  const toggleTopic = (key) => {
-    const current = value.hs_optional_topics;
-    set({ hs_optional_topics: current.includes(key) ? current.filter((k) => k !== key) : [...current, key] });
-  };
-
   const instructors = value.additional_instructors;
   const updateInstructor = (index, field, text) => {
     set({ additional_instructors: instructors.map((row, i) => (i === index ? { ...row, [field]: text } : row)) });
@@ -221,23 +215,6 @@ export default function AhaRosterFields({ value, onChange }) {
         </div>
       )}
 
-      <div className="field">
-        <label>Optional Topics Checklist</label>
-        <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '0 0 8px' }}>
-          Only relevant for course paths with optional topics (Office/Educator/Babysitter/Water Safety, etc.) - leave unchecked if none applied.
-        </p>
-        {[...new Set(AHA_OPTIONAL_TOPICS.map((t) => t.section))].map((section) => (
-          <div key={section} style={{ marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{section}</div>
-            {AHA_OPTIONAL_TOPICS.filter((t) => t.section === section).map((topic) => (
-              <label key={topic.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, fontSize: 13, marginBottom: 2 }}>
-                <input type="checkbox" checked={value.hs_optional_topics.includes(topic.key)} onChange={() => toggleTopic(topic.key)} />
-                {topic.label}
-              </label>
-            ))}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

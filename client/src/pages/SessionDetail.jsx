@@ -586,6 +586,20 @@ Their certificate and the training record it added to their employee file will b
     }
   };
 
+  const [rebuilding, setRebuilding] = useState(false);
+  const rebuildRosters = async () => {
+    if (!window.confirm('Rebuild the roster PDF(s) from what is on file now? Nothing is emailed.')) return;
+    setRebuilding(true);
+    try {
+      await api.rebuildSessionRosters(id);
+      window.alert('Roster rebuilt. Download it again to see the update.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   const openTrainerEditPage = async () => {
     // Opened before the request so the browser doesn't treat it as an unrequested pop-up.
     const tab = window.open('', '_blank');
@@ -952,6 +966,9 @@ Their certificate and the training record it added to their employee file will b
                     </button>
                     <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={copyTrainerEditLink}>
                       {copiedLink === 'trainer-edit' ? 'Copied!' : 'Copy Trainer Edit Link'}
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} disabled={rebuilding} onClick={rebuildRosters}>
+                      {rebuilding ? 'Rebuilding…' : 'Rebuild Roster'}
                     </button>
                   </>
                 )}

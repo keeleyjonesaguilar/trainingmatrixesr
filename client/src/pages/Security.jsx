@@ -32,6 +32,7 @@ const ACTIVITY_ACTION_LABELS = {
   attendee_removed: 'Attendee removed from session',
   qr_code_downloaded: 'QR code downloaded',
   roster_downloaded: 'Roster downloaded',
+  rosters_rebuilt: 'Roster rebuilt',
   aha_roster_downloaded: 'AHA roster downloaded',
   certificate_downloaded: 'Certificate downloaded',
   certificates_zip_downloaded: 'Certificates ZIP downloaded',

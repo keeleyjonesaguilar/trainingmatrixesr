@@ -8,8 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const { PNG } = require('pngjs');
+const { EASTERN_TZ, parseTimestamp } = require('./dates');
 const { AHA_COURSE_OPTIONS } = require('./ahaCourseOptions');
-const { AHA_OPTIONAL_TOPICS } = require('./ahaOptionalTopics');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'aha-heartsaver-course-roster.pdf');
@@ -21,30 +21,46 @@ const TEMPLATE_PATH = path.join(__dirname, '..', 'assets', 'aha-heartsaver-cours
 const MAX_ROSTER_ROWS = 10;
 
 // x/y (PDF points, origin bottom-left) of each of the 10 row slots on the Course Participants
-// page, read directly off the template's own "Name N"/"Email N"/"Telephone N"/"Complete-
-// Incomplete N" field rectangles - reused here only for the hand-drawn overflow page(s), since
-// the real fields already place row 1-10 correctly on the base page.
-const ROW_POSITIONS = [
-  { name: { x: 51, y: 437 }, email: { x: 51, y: 417 }, phone: { x: 325, y: 417 }, complete: { x: 589, y: 428 } },
-  { name: { x: 51, y: 396 }, email: { x: 51, y: 376 }, phone: { x: 325, y: 376 }, complete: { x: 589, y: 386 } },
-  { name: { x: 51, y: 352 }, email: { x: 51, y: 332 }, phone: { x: 325, y: 332 }, complete: { x: 589, y: 343 } },
-  { name: { x: 51, y: 311 }, email: { x: 51, y: 291 }, phone: { x: 325, y: 291 }, complete: { x: 589, y: 302 } },
-  { name: { x: 51, y: 270 }, email: { x: 51, y: 250 }, phone: { x: 325, y: 250 }, complete: { x: 589, y: 260 } },
-  { name: { x: 51, y: 228 }, email: { x: 51, y: 208 }, phone: { x: 325, y: 208 }, complete: { x: 589, y: 219 } },
-  { name: { x: 51, y: 185 }, email: { x: 51, y: 165 }, phone: { x: 325, y: 165 }, complete: { x: 589, y: 176 } },
-  { name: { x: 51, y: 144 }, email: { x: 51, y: 124 }, phone: { x: 325, y: 124 }, complete: { x: 589, y: 134 } },
-  { name: { x: 51, y: 102 }, email: { x: 51, y: 82 }, phone: { x: 325, y: 82 }, complete: { x: 589, y: 92 } },
-  { name: { x: 51, y: 60 }, email: { x: 51, y: 40 }, phone: { x: 325, y: 40 }, complete: { x: 589, y: 51 } },
-];
+// page, read directly off the template's own field rectangles (text sits 3pt above a box's
+// bottom, 2pt in) - reused here only for the hand-drawn overflow page(s), since the real fields
+// already place rows 1-10 correctly on the base page. Printed row N is field number N + 1 on
+// this form version ("Name 2" is row 1 ... "Name 11" is row 10) - see participantFieldNumber().
+const ROW_POSITIONS = [440, 399, 355, 314, 273, 231, 188, 147, 105, 63].map((nameBottom, i) => {
+  const emailBottom = [420, 379, 335, 294, 253, 211, 168, 127, 84, 43][i];
+  const completeBottom = [431, 389, 346, 305, 263, 222, 179, 137, 95, 54][i];
+  return {
+    name: { x: 51, y: nameBottom + 3 },
+    email: { x: 51, y: emailBottom + 3 },
+    phone: { x: 345, y: emailBottom + 3 },
+    complete: { x: 604, y: completeBottom + 3 },
+  };
+});
 // Position of the repeated "Date / Course / Lead Instructor / Lead Instr. ID#" header row atop
-// the Course Participants page - same header the real page 2 shows via its own shared fields.
-const HEADER_POSITIONS = { date: { x: 58, y: 511 }, course: { x: 216, y: 511 }, instructor: { x: 424, y: 511 }, instructorId: { x: 674, y: 511 } };
+// the Course Participants page - the same values the real page 2 gets in its own header fields.
+const HEADER_POSITIONS = { date: { x: 61, y: 520 }, course: { x: 219, y: 520 }, instructor: { x: 428, y: 520 }, instructorId: { x: 676, y: 520 } };
+
+// Printed participant row (1-10) -> the number in that row's field names on this form.
+function participantFieldNumber(row) {
+  return row + 1;
+}
 
 // The "Signature of Lead Instructor" line's own rectangle on page 1 (read directly off the
 // template's "Lead Instructor Signature" field) - the trainer's actual captured signature image
 // is drawn here instead of setting the field's text (Keeley's call, 2026-09-21: this should be
 // the real signature captured at close-out, not their typed name standing in for it).
-const SIGNATURE_RECT = { x: 43.2, y: 65.34, width: 319.68, height: 13.5 };
+const SIGNATURE_RECT = { x: 43.2, y: 51.3, width: 319.7, height: 13.5 };
+
+// "YYYY-MM-DD" (or a stored timestamp) -> "MM/DD/YYYY", the way the paper form is filled in.
+function formDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+  return match ? `${match[2]}/${match[3]}/${match[1]}` : value || '';
+}
+
+// A stored timestamp -> its calendar date in Eastern time, "YYYY-MM-DD".
+function easternDate(timestamp) {
+  const dt = parseTimestamp(timestamp);
+  return Number.isNaN(dt.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ }).format(dt);
+}
 
 function isPngDataUrl(value) {
   return typeof value === 'string' && value.startsWith('data:image/png;base64,');
@@ -143,15 +159,20 @@ function checkSafely(form, fieldName) {
 // rather than a byte copy. Every value on this page is then just drawn as plain text at the same
 // coordinates the real fields use.
 function addOverflowPage(doc, font, embeddedPage, pageSize, headerValues, attendeesBatch) {
-  const page = doc.insertPage(doc.getPageCount() - 1, pageSize);
+  // After the Course Participants page (the last page on this form version), in order.
+  const page = doc.addPage(pageSize);
   page.drawPage(embeddedPage, { x: 0, y: 0, width: pageSize[0], height: pageSize[1] });
 
-  const drawAt = (pos, value) => {
+  // maxWidth shrinks the text to fit a short box (the header's Course field is only ~118pt wide).
+  const drawAt = (pos, value, maxWidth = null) => {
     if (!value) return;
-    page.drawText(String(value), { x: pos.x, y: pos.y, size: 9, font, color: rgb(0, 0, 0) });
+    const text = String(value);
+    let size = 9;
+    while (maxWidth && size > 5 && font.widthOfTextAtSize(text, size) > maxWidth) size -= 0.5;
+    page.drawText(text, { x: pos.x, y: pos.y, size, font, color: rgb(0, 0, 0) });
   };
   drawAt(HEADER_POSITIONS.date, headerValues.date);
-  drawAt(HEADER_POSITIONS.course, headerValues.course);
+  drawAt(HEADER_POSITIONS.course, headerValues.course, 116);
   drawAt(HEADER_POSITIONS.instructor, headerValues.instructor);
   drawAt(HEADER_POSITIONS.instructorId, headerValues.instructorId);
 
@@ -178,11 +199,6 @@ async function generateAhaRoster(session, attendees, outputPath) {
     if (selectedOptions.has(opt.key)) checkSafely(form, opt.field);
   }
 
-  const selectedTopics = new Set(JSON.parse(session.hs_optional_topics || '[]'));
-  for (const topic of AHA_OPTIONAL_TOPICS) {
-    if (selectedTopics.has(topic.key)) checkSafely(form, topic.field);
-  }
-
   const additionalInstructors = JSON.parse(session.hs_additional_instructors || '[]');
   additionalInstructors.slice(0, 8).forEach((instructor, i) => {
     const n = i + 1;
@@ -191,8 +207,13 @@ async function generateAhaRoster(session, attendees, outputPath) {
   });
 
   const leadInstructorName = session.trainer_signed_name || session.trainer_name;
-  setTextSafely(form, 'Date', session.session_date);
-  setTextSafely(form, 'Course', session.training_type_label);
+  // Page 2 has its own copy of the course header on this form version (it used to share page 1's
+  // fields); page 1's "Date" is the date beside the lead instructor's signature.
+  setTextSafely(form, 'Date 2', formDate(session.session_date));
+  setTextAutoSize(form, 'Course 2', session.training_type_label);
+  setTextSafely(form, 'Lead Instructor 2', leadInstructorName);
+  setTextSafely(form, 'Lead Instructor ID# 2', session.trainer_aha_instructor_id);
+  setTextSafely(form, 'Date', formDate(easternDate(session.trainer_signed_at || session.closed_at) || session.session_date));
   setTextSafely(form, 'Lead Instructor', leadInstructorName);
   setTextSafely(form, 'Lead Instructor ID#', session.trainer_aha_instructor_id);
   setTextSafely(form, 'Card Expriation Date', session.hs_card_expiration_date);
@@ -205,14 +226,14 @@ async function generateAhaRoster(session, attendees, outputPath) {
   setTextAutoSize(form, 'Course Start', session.hs_course_start);
   setTextAutoSize(form, 'Course End', session.hs_course_end);
   setTextSafely(form, 'Total Hours', session.hs_total_hours);
-  setTextSafely(form, 'No of Cards Issued', session.hs_no_of_cards_issued);
+  setTextSafely(form, 'No of Cards', session.hs_no_of_cards_issued);
   setTextSafely(form, 'Student-Manikin Ratio', session.hs_student_manikin_ratio);
-  setTextSafely(form, 'Issue Date of Cards', session.hs_issue_date_of_cards);
+  setTextSafely(form, 'Issue Date', session.hs_issue_date_of_cards);
   await drawSignatureImage(doc, doc.getPages()[0], SIGNATURE_RECT, session.trainer_signature);
 
   const firstBatch = attendees.slice(0, MAX_ROSTER_ROWS);
   firstBatch.forEach((a, i) => {
-    const n = i + 1;
+    const n = participantFieldNumber(i + 1);
     setTextSafely(form, `Name ${n}`, a.trainee_name);
     setTextSafely(form, `Email ${n}`, a.trainee_email);
     setTextSafely(form, `Telephone ${n}`, a.trainee_phone);
@@ -230,7 +251,7 @@ async function generateAhaRoster(session, attendees, outputPath) {
     const [embeddedPage] = await doc.embedPages([templateParticipantsPage]);
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const headerValues = {
-      date: session.session_date,
+      date: formDate(session.session_date),
       course: session.training_type_label,
       instructor: leadInstructorName,
       instructorId: session.trainer_aha_instructor_id,
