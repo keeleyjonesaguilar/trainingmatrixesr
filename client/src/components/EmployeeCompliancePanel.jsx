@@ -1,9 +1,33 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import { formatEasternDateTime, formatShortDate } from '../lib/dates';
 import Modal from './Modal.jsx';
 import StatusBadge from './StatusBadge.jsx';
 
 const ADD_NEW_TRAINER = '__add_new__';
+
+// Day-by-day history of a training completed over several days (Keeley's request, 2026-09-29):
+// who taught each day, when this employee signed in, and when that day's trainer signed it off.
+function MultiDayEvents({ days }) {
+  return (
+    <table style={{ margin: '4px 0 8px', background: 'var(--color-bg)' }}>
+      <thead>
+        <tr><th>Day</th><th>Date</th><th>Trainer</th><th>Employee signed in</th><th>Trainer signed off</th></tr>
+      </thead>
+      <tbody>
+        {days.map((d) => (
+          <tr key={d.day_number}>
+            <td>Day {d.day_number}</td>
+            <td>{d.date ? formatShortDate(d.date) : '—'}</td>
+            <td>{d.trainer_name || '—'}</td>
+            <td>{d.employee_signed_in_at ? formatEasternDateTime(d.employee_signed_in_at) : <span style={{ color: 'var(--status-expired-text)' }}>Not signed in</span>}</td>
+            <td>{d.trainer_signed_off_at ? formatEasternDateTime(d.trainer_signed_off_at) : '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 // Quick-add popup for a trainer that isn't in the list yet (Keeley's request: don't leave the
 // page to add one). Only the name is required here - phone/job title can be filled in later
@@ -184,6 +208,7 @@ export default function EmployeeCompliancePanel({
   isAdmin, onReload, collapsible = false, defaultExpanded = true, heading = 'Completed Trainings',
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [openDaysFor, setOpenDaysFor] = useState(null);
   const [editingRecordId, setEditingRecordId] = useState('');
   const [busyRecordId, setBusyRecordId] = useState('');
   const [addingRecord, setAddingRecord] = useState(false);
@@ -329,9 +354,24 @@ export default function EmployeeCompliancePanel({
                 </thead>
                 <tbody>
                   {completedRecords.map((t) => (
-                    <tr key={t.record_id}>
+                    <Fragment key={t.record_id}>
+                    <tr>
                       <td>{t.training_id}</td>
-                      <td>{t.training_name}</td>
+                      <td>
+                        {t.training_name}
+                        {t.days?.length > 0 && (
+                          <div>
+                            <button
+                              type="button"
+                              className="link-button"
+                              style={{ background: 'none', border: 'none', padding: 0, color: 'var(--esr-green)', cursor: 'pointer', fontSize: 12 }}
+                              onClick={() => setOpenDaysFor(openDaysFor === t.record_id ? null : t.record_id)}
+                            >
+                              {openDaysFor === t.record_id ? '▾ Hide' : '▸ View'} {t.days.length} days
+                            </button>
+                          </div>
+                        )}
+                      </td>
                       <td>{client?.client_name || '—'}</td>
                       <td><StatusBadge status={t.status} /></td>
                       <td>{t.completion_date || '—'}</td>
@@ -354,6 +394,14 @@ export default function EmployeeCompliancePanel({
                         </td>
                       )}
                     </tr>
+                    {openDaysFor === t.record_id && t.days?.length > 0 && (
+                      <tr>
+                        <td colSpan={isAdmin ? 9 : 8} style={{ paddingTop: 0 }}>
+                          <MultiDayEvents days={t.days} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                   {completedRecords.length === 0 && (
                     <tr><td colSpan={isAdmin ? 9 : 8} className="empty-state">No trainings completed yet.</td></tr>

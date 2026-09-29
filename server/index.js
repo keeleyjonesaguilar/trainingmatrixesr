@@ -43,6 +43,10 @@ async function start() {
   // request, 2026-09-17) - see server/lib/logRetentionScheduler.js for the specific windows.
   require('./lib/logRetentionScheduler').start();
 
+  // Morning reminder to trainers whose session is still open after its scheduled day (Keeley's
+  // request, 2026-09-29) - live site only; see server/lib/sessionReminderScheduler.js.
+  require('./lib/sessionReminderScheduler').start();
+
   const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 
   const app = express();

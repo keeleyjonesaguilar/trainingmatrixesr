@@ -50,7 +50,10 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
   const trainingNames = trainingLabels.map(stripTrainingIdPrefix);
   const title = trainingNames.join(' + ');
   const trainerName = session.trainer_signed_name || session.trainer_name || 'the trainer';
-  const firstName = trainerName.split(' ')[0];
+  // A multi-day session can have a different trainer each day (lib/sessionDays.js) - every one of
+  // them gets this email, so the greeting only names someone when there's a single trainer.
+  const allTrainers = session.all_trainer_names || trainerName;
+  const greeting = allTrainers.includes(',') ? 'Hi' : `Hi ${esc(trainerName.split(' ')[0])}`;
   const certified = attendees.filter((a) => attendeeResult(a).text === 'Certified').length;
   const notCertified = attendees.length - certified;
 
@@ -59,11 +62,11 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
   let intro;
   if (isUpdate) {
     intro = recipientIsTrainer
-      ? `Hi ${esc(firstName)}, your changes to this session were saved. The updated paperwork is attached and replaces what was sent before.`
+      ? `${greeting}, your changes to this session were saved. The updated paperwork is attached and replaces what was sent before.`
       : `${esc(trainerName)} updated the close-out details for this session. The updated paperwork is attached and replaces what was sent before.`;
   } else {
     intro = recipientIsTrainer
-      ? `Hi ${esc(firstName)}, thank you for leading this session. Your completed paperwork is attached to this email for your records.`
+      ? `${greeting}, thank you for leading this session. Your completed paperwork is attached to this email for your records.`
       : `${esc(trainerName)} just closed out this session. The completed paperwork is attached to this email.`;
   }
 
@@ -85,7 +88,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
     ['Training', esc(title)],
     ['Client', esc(session.client_name)],
     ['Date', esc(sessionDates(session))],
-    ['Trainer', esc(trainerName)],
+    [allTrainers.includes(',') ? 'Trainers' : 'Trainer', esc(allTrainers)],
     ...(session.location ? [['Location', esc(session.location)]] : []),
     ['Attendees', `${attendees.length} total &nbsp;·&nbsp; <span style="color:#146c3a;font-weight:600;">${certified} certified</span>${notCertified ? ` &nbsp;·&nbsp; <span style="color:#a15c00;font-weight:600;">${notCertified} not certified</span>` : ''}`],
   ].map(([k, v]) => `

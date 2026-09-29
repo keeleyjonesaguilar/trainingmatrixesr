@@ -12,6 +12,7 @@ const { buildRosterFilename, stripTrainingIdPrefix } = require('./certificateFil
 const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('./certificateZip');
 const { buildSessionCompleteEmail } = require('./sessionCompleteEmail');
 const { sendEmail } = require('./email');
+const { withDayTrainers } = require('./sessionDays');
 
 // The one training that also gets the official AHA Heartsaver Course Roster (Keeley's request,
 // 2026-09-21) - every other training uses the in-house roster/certificate only.
@@ -68,7 +69,9 @@ function sessionEditUrl(editToken) {
 // Rebuilds the sign-in roster (listing every training the session covered) and, for First
 // Aid/CPR/AED, the AHA roster, saving their paths on the session. Each is best-effort so one
 // failing never blocks the other; a failed one comes back null.
-async function regenerateRosters(session, attendees, additionalTrainings) {
+async function regenerateRosters(sessionRow, attendees, additionalTrainings) {
+  // Multi-day: every day's trainer and sign-off prints on the roster (lib/sessionDays.js).
+  const session = await withDayTrainers(sessionRow);
   let rosterPath = null;
   let ahaRosterPath = null;
   try {
@@ -105,7 +108,8 @@ async function regenerateRosters(session, attendees, additionalTrainings) {
 // One email per address so recipients never see each other's; each send has its own catch so one
 // bad address (or email not being configured - see ./email.js) never blocks the rest. Only the
 // trainer's copy carries the edit link. `isUpdate` marks the resend after a post-close edit.
-async function sendCompletedFormsEmail({ session, additionalTrainings, attendees, rosterPath, ahaRosterPath, trainerProfileEmail, isUpdate = false }) {
+async function sendCompletedFormsEmail({ session: sessionRow, additionalTrainings, attendees, rosterPath, ahaRosterPath, trainerProfileEmail, isUpdate = false }) {
+  const session = await withDayTrainers(sessionRow);
   const formAttachments = [];
   for (const training of [null, ...additionalTrainings]) {
     try {
@@ -143,7 +147,16 @@ async function sendCompletedFormsEmail({ session, additionalTrainings, attendees
   if (!formAttachments.length) return;
 
   const normalize = (e) => (e ? e.trim().toLowerCase() : null);
-  const trainerRecipients = new Set([session.trainer_email, trainerProfileEmail].map(normalize).filter(Boolean));
+  // A multi-day session's other day trainers get the completed forms too - by the email they
+  // signed off with, or their trainer profile's.
+  const dayTrainerEmails = [];
+  for (const d of session.session_days || []) {
+    dayTrainerEmails.push(d.signed_trainer_email);
+    const profileId = d.signed_trainer_employee_id || d.assigned_trainer_employee_id;
+    // eslint-disable-next-line no-await-in-loop
+    if (profileId) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email);
+  }
+  const trainerRecipients = new Set([session.trainer_email, trainerProfileEmail, ...dayTrainerEmails].map(normalize).filter(Boolean));
   const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL', []);
   const recipients = [...new Set([...trainerRecipients, ...appUsers.map((u) => normalize(u.email))].filter(Boolean))];
 

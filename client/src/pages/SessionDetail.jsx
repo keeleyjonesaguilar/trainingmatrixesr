@@ -195,6 +195,12 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   // Per-day outline text (Keeley's request, 2026-09-22: "Day 1 has its own outline, day 2 and
   // so on").
   const [dayOutlines, setDayOutlines] = useState(session.day_outlines || []);
+  // Who teaches each day (Keeley's request, 2026-09-29) - '' means the session's main trainer.
+  const [dayTrainers, setDayTrainers] = useState(
+    (session.days || []).map((d) => (d.assigned_trainer_employee_id && d.assigned_trainer_employee_id !== session.trainer_employee_id ? d.assigned_trainer_employee_id : ''))
+  );
+  const [trainerOptions, setTrainerOptions] = useState([]);
+  useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -218,6 +224,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
         day_dates: form.total_days ? dayDates : null,
         day_outlines: form.total_days ? dayOutlines : null,
+        day_trainers: form.total_days ? dayTrainers : null,
       });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
@@ -320,6 +327,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   ? prev.slice(0, count)
                   : [...prev, ...Array.from({ length: count - prev.length }, () => form.outline)]
               ));
+              setDayTrainers((prev) => (
+                count <= prev.length ? prev.slice(0, count) : [...prev, ...Array.from({ length: count - prev.length }, () => '')]
+              ));
             }}
             placeholder="Leave blank for single-day"
           />
@@ -327,11 +337,11 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       </div>
       {form.total_days && dayDates.length > 0 && (
         <div className="field">
-          <label>Scheduled Dates</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          <label>Scheduled Dates &amp; Trainers</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dayDates.map((d, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Day {i + 1}</span>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-muted)', width: 40 }}>Day {i + 1}</span>
                 <input
                   type="date"
                   value={d}
@@ -339,6 +349,22 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   style={{ maxWidth: 150 }}
                   required
                 />
+                <select
+                  value={dayTrainers[i] || ''}
+                  onChange={(e) => setDayTrainers((prev) => {
+                    const next = [...prev];
+                    next[i] = e.target.value;
+                    return next;
+                  })}
+                  aria-label={`Day ${i + 1} trainer`}
+                  style={{ maxWidth: 240 }}
+                >
+                  <option value="">Main trainer ({`${form.trainer_first_name} ${form.trainer_last_name}`.trim() || 'not set'})</option>
+                  {trainerOptions.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                </select>
+                {session.days?.[i]?.signed_at && (
+                  <span style={{ fontSize: 12, color: 'var(--status-current-text)' }}>Signed off by {session.days[i].signed_trainer_name}</span>
+                )}
               </div>
             ))}
           </div>
@@ -765,15 +791,45 @@ Their certificate and the training record it added to their employee file will b
               </div>
             )}
           </div>
-          {session.day_outlines?.length > 0 && (
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {session.day_outlines.map((o, i) => (
-                <div key={i} style={{ fontSize: 13 }}>
-                  <strong>Day {i + 1}{session.day_dates?.[i] ? ` (${formatShortDate(session.day_dates[i])})` : ''}:</strong>{' '}
-                  <span style={{ color: 'var(--color-text-muted)' }}>{o}</span>
-                </div>
-              ))}
-            </div>
+          {/* Each day's trainer and sign-off (Keeley's request, 2026-09-29). */}
+          {session.days?.length > 0 && (
+            <table style={{ marginTop: 12 }}>
+              <thead>
+                <tr><th>Day</th><th>Trainer</th><th>Sign-Off</th><th>Outline</th></tr>
+              </thead>
+              <tbody>
+                {session.days.map((d) => {
+                  const substitute = d.signed_trainer_name && d.assigned_trainer_name
+                    && d.signed_trainer_name.toLowerCase() !== d.assigned_trainer_name.toLowerCase();
+                  return (
+                    <tr key={d.day_number}>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <strong>Day {d.day_number}</strong>
+                        {d.date && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{formatShortDate(d.date)}</div>}
+                      </td>
+                      <td>
+                        {d.signed_trainer_name || d.assigned_trainer_name || '—'}
+                        {substitute && (
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Filled in for {d.assigned_trainer_name}</div>
+                        )}
+                      </td>
+                      <td>
+                        {d.signed_at ? (
+                          <span className="badge badge-current">Signed {formatEasternDateTime(d.signed_at)}</span>
+                        ) : d.day_number === session.current_day && session.status === 'open' ? (
+                          <span className="badge badge-expiringsoon">In progress</span>
+                        ) : d.day_number < session.current_day ? (
+                          <span className="badge badge-expired">Not signed off</span>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{session.day_outlines?.[d.day_number - 1] || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
           <table style={{ marginTop: 12 }}>
             <thead>

@@ -15,6 +15,8 @@ const { nameColumns } = require('../lib/names');
 // Same pattern as server/routes/auth.js's and publicSessions.js's EMAIL_PATTERN.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const { getSessionDays } = require('../lib/sessionDays');
+
 const router = express.Router();
 
 // General employee documents (Keeley's request, 2026-09-22): an existing OSHA/CPR card, a
@@ -144,6 +146,31 @@ router.get('/:id', async (req, res) => {
 
 // Employee Detail Page (spec section 9): all 52 (or however many active) Master Trainings
 // with this employee's corresponding record, status, and original client wording.
+// The day-by-day history behind a training record that came from a multi-day session (Keeley's
+// request, 2026-09-29): each day's date, trainer, when this employee signed in, and when the
+// trainer signed the day off. Null for anything else (single-day sessions, manual entries).
+async function multiDayEvents(recordId) {
+  const link = await dbGet(
+    `SELECT sa.attendee_id, sa.session_id FROM session_attendees sa WHERE sa.training_record_id = ?
+     UNION SELECT ac.attendee_id, sa.session_id FROM attendee_certificates ac
+       JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id WHERE ac.training_record_id = ?
+     LIMIT 1`,
+    [recordId, recordId]
+  );
+  if (!link) return null;
+  const session = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [link.session_id]);
+  if (!session?.total_days) return null;
+  const attended = await dbAll('SELECT day_number, signed_at FROM session_attendance_days WHERE attendee_id = ?', [link.attendee_id]);
+  const signedIn = new Map(attended.map((a) => [a.day_number, a.signed_at]));
+  return (await getSessionDays(session)).map((d) => ({
+    day_number: d.day_number,
+    date: d.date,
+    trainer_name: d.signed_trainer_name || d.assigned_trainer_name,
+    employee_signed_in_at: signedIn.get(d.day_number) || null,
+    trainer_signed_off_at: d.signed_at,
+  }));
+}
+
 router.get('/:id/full-detail', async (req, res) => {
   const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -217,6 +244,7 @@ router.get('/:id/full-detail', async (req, res) => {
       certificate_filename: r.certificate_filename,
       trainer_employee_id: r.trainer_employee_id,
       signature: (await dbGet('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1', [r.record_id]))?.signature || null,
+      days: await multiDayEvents(r.record_id),
     };
   }));
 
@@ -224,8 +252,11 @@ router.get('/:id/full-detail', async (req, res) => {
   // trainer-type profile. A trainer merged into their own employee profile keeps every session
   // they taught, but the profile becomes a regular employee, so gating on employee_type alone
   // hid all of it (Keeley's report, 2026-09-28).
+  // A day of a multi-day session counts too (server/lib/sessionDays.js).
+  const TAUGHT_SESSIONS_SQL = `SELECT session_id FROM training_sessions WHERE trainer_employee_id = $1
+     UNION SELECT session_id FROM session_days WHERE assigned_trainer_employee_id = $1 OR signed_trainer_employee_id = $1`;
   const teaches = employee.employee_type === 'trainer'
-    || Boolean(await dbGet('SELECT 1 AS x FROM training_sessions WHERE trainer_employee_id = ? LIMIT 1', [employee.employee_id]));
+    || Boolean(await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SESSIONS_SQL}) t LIMIT 1`, [employee.employee_id]));
 
   // Aggregate feedback rating for a trainer's own profile page (Keeley's request) - across
   // every session they taught, not just their most recent one. Skipped for someone who's never
@@ -235,8 +266,7 @@ router.get('/:id/full-detail', async (req, res) => {
     const agg = await dbGet(
       `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
        FROM session_feedback sf
-       JOIN training_sessions ts ON ts.session_id = sf.session_id
-       WHERE ts.trainer_employee_id = ?`,
+       WHERE sf.session_id IN (${TAUGHT_SESSIONS_SQL})`,
       [employee.employee_id]
     );
     // AVG() on an integer column returns Postgres NUMERIC, which the pg driver hands back as a

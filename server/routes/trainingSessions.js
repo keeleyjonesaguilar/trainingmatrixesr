@@ -9,6 +9,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
 const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
+const { saveDayTrainers, getSessionDays, clearDaySignoff, withDayTrainers } = require('../lib/sessionDays');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
@@ -112,7 +113,12 @@ router.get('/', async (req, res) => {
   if (master_training_id) { clauses.push('ts.master_training_id = ?'); params.push(master_training_id); }
   if (status) { clauses.push('ts.status = ?'); params.push(status); }
   // Feeds a Trainer's own "Trainings Taught" section on their profile.
-  if (trainer_employee_id) { clauses.push('ts.trainer_employee_id = ?'); params.push(trainer_employee_id); }
+  // A multi-day session counts for every trainer who was assigned or signed off one of its days.
+  if (trainer_employee_id) {
+    clauses.push(`(ts.trainer_employee_id = ? OR EXISTS (SELECT 1 FROM session_days sd WHERE sd.session_id = ts.session_id
+                   AND (sd.assigned_trainer_employee_id = ? OR sd.signed_trainer_employee_id = ?)))`);
+    params.push(trainer_employee_id, trainer_employee_id, trainer_employee_id);
+  }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = await dbAll(`${SESSION_WITH_CLIENT_SQL} ${where} ORDER BY ts.session_date DESC, ts.created_at DESC`, params);
   res.json(await Promise.all(rows.map(async (r) => ({ ...r, attendee_count: await attendeeCount(r.session_id) }))));
@@ -185,6 +191,7 @@ router.get('/:id', async (req, res) => {
     attendees: attendeesWithCerts,
     feedback,
     additional_trainings: additionalTrainings,
+    days: await getSessionDays(session),
   });
 });
 
@@ -200,7 +207,7 @@ router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
-    total_days = null, day_dates = null, day_outlines = null,
+    total_days = null, day_dates = null, day_outlines = null, day_trainers = null,
   } = req.body || {};
   if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
     return res.status(400).json({
@@ -275,6 +282,11 @@ router.post('/', async (req, res) => {
        VALUES (?, ?, ?, ?, ?)`,
       [uuidv4(), session_id, t.master_training_id || null, t.training_type_label, i]
     );
+  }
+
+  // Each day's trainer (lib/sessionDays.js) - a blank entry means the session's own trainer.
+  if (totalDays) {
+    await saveDayTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), day_trainers);
   }
 
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
@@ -378,6 +390,17 @@ router.put('/:id', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
+  // Per-day trainers: rewritten from the form when sent, otherwise kept as they were (still
+  // re-saved, so a change to the number of days adds/drops day rows).
+  const savedSession = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  if (Object.prototype.hasOwnProperty.call(req.body, 'day_trainers')) {
+    await saveDayTrainers(savedSession, req.body.day_trainers);
+  } else if (savedSession.total_days) {
+    const current = await getSessionDays(existing);
+    await saveDayTrainers(savedSession, current.map((d) => d.assigned_trainer_employee_id));
+  } else {
+    await saveDayTrainers(savedSession, null);
+  }
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   logActivity({
     actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
@@ -463,6 +486,8 @@ router.post('/:id/previous-day', requireAdmin, async (req, res) => {
       }
     }
     await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ?', [toDay, session.session_id]);
+    // The day being reopened is no longer finished - its trainer signs it off again.
+    await clearDaySignoff(session.session_id, toDay);
     return { moved: movedCount, dropped: droppedCount };
   });
   logActivity({
@@ -724,7 +749,7 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
     } else {
       let certPath = null;
       try {
-        certPath = await generateCertificate(session, attendee);
+        certPath = await generateCertificate(await withDayTrainers(session), attendee);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(`Certificate generation failed for manually-added attendee ${attendee_id}:`, err);

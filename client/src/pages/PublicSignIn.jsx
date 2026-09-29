@@ -20,6 +20,18 @@ function formatDate(d) {
 const STRINGS = {
   signing_in_tab: { en: "I'm signing in", es: 'Estoy firmando' },
   trainer_tab: { en: "I'm the trainer — close session", es: 'Soy el instructor — cerrar sesión' },
+  // A multi-day course's trainer signs off each day before the last (Keeley's request, 2026-09-29).
+  trainer_tab_signoff: { en: "I'm the trainer — sign off Day {day}", es: 'Soy el instructor — firmar el Día {day}' },
+  signoff_note: {
+    en: "Sign off at the end of today's class. This records your sign-off for Day {day} and opens Day {next} for sign-ins - certificates are only created when the final day is closed out.",
+    es: 'Firme al final de la clase de hoy. Esto registra su firma del Día {day} y abre el Día {next} para registros - los certificados solo se crean al cerrar el último día.',
+  },
+  signoff_button: { en: 'Sign Off Day {day}', es: 'Firmar el Día {day}' },
+  signing_off_ellipsis: { en: 'Signing off…', es: 'Firmando…' },
+  signed_off_banner: {
+    en: 'Day {day} is signed off. Thank you! Day {next} is now open for sign-ins.',
+    es: '¡El Día {day} está firmado. Gracias! El Día {next} ya está abierto para registros.',
+  },
   signed_in_banner: { en: "You're signed in!", es: '¡Ya está registrado!' },
   first_name: { en: 'First name', es: 'Nombre' },
   last_name: { en: 'Last name', es: 'Apellido' },
@@ -267,6 +279,8 @@ export default function PublicSignIn() {
   const [formError, setFormError] = useState('');
   const [justSigned, setJustSigned] = useState(false);
   const [closedNow, setClosedNow] = useState(false);
+  // The day this trainer just signed off (multi-day), for the confirmation banner.
+  const [signedOffDay, setSignedOffDay] = useState(null);
   const sigRef = useRef(null);
 
   // Multi-day session (Keeley's request, 2026-09-21/22): before showing the sign-in form, an
@@ -346,6 +360,27 @@ export default function PublicSignIn() {
     if (sigRef.current?.isEmpty()) return setFormError(t('err_trainer_signature'));
     setSubmitting(true);
     try {
+      // Before a multi-day course's last day, the trainer signs off their day instead of closing.
+      if (Number(info.total_days) > 1 && info.current_day < info.total_days) {
+        const day = info.current_day;
+        await api.publicSignOffDay(token, day, {
+          trainer_signed_name: trainerName.trim(),
+          trainer_email: trainerEmail.trim(),
+          trainer_phone: trainerPhone.trim(),
+          pin: pin.trim(),
+          signature: sigRef.current.toDataURL(),
+        });
+        setSignedOffDay(day);
+        setPin('');
+        // The next day may have a different trainer - let their details pre-fill instead.
+        setTrainerName('');
+        setTrainerEmail('');
+        setTrainerPhone('');
+        sigRef.current?.clear();
+        setMode('trainee');
+        load();
+        return;
+      }
       const isAhaSession = info?.master_training_id === AHA_ROSTER_TRAINING_ID;
       await api.publicCloseSession(token, {
         trainer_signed_name: trainerName.trim(),
@@ -392,6 +427,10 @@ export default function PublicSignIn() {
   // current day. English-only for now (no per-day machine translation), unlike the blanket
   // outline below.
   const dayOutlineText = info.day_outlines?.[info.current_day - 1];
+  // Before a multi-day course's final day, the trainer tab signs off just today's day.
+  const isSignoffDay = isMultiDay && info.current_day < info.total_days;
+  const fill = (key) => t(key).replaceAll('{day}', info.current_day).replaceAll('{next}', info.current_day + 1);
+  const todaysTrainer = info.days?.[info.current_day - 1]?.assigned_trainer_name;
 
   return (
     <div className="public-shell">
@@ -408,7 +447,7 @@ export default function PublicSignIn() {
             {info.client_name} · {formatDate(info.session_date)}
           </div>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
-            {t('trainer_label')} {info.trainer_name}
+            {t('trainer_label')} {todaysTrainer || info.trainer_name}
           </div>
         </div>
 
@@ -460,11 +499,16 @@ export default function PublicSignIn() {
                   setFormError('');
                 }}
               >
-                {t('trainer_tab')}
+                {isSignoffDay ? fill('trainer_tab_signoff') : t('trainer_tab')}
               </button>
             </div>
 
             {formError && <p className="error-banner">{formError}</p>}
+            {signedOffDay && mode === 'trainee' && (
+              <p className="success-banner">
+                {t('signed_off_banner').replaceAll('{day}', signedOffDay).replaceAll('{next}', signedOffDay + 1)}
+              </p>
+            )}
 
             {justSigned && mode === 'trainee' && signInStep === 'new' && (
               <p className="success-banner">{t('signed_in_banner')}</p>
@@ -632,7 +676,7 @@ export default function PublicSignIn() {
               </>
             ) : (
               <form onSubmit={handleTrainerClose}>
-                <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{t('close_note')}</p>
+                <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{isSignoffDay ? fill('signoff_note') : t('close_note')}</p>
                 <div className="field">
                   <label>{t('trainer_name')}</label>
                   <input
@@ -668,15 +712,17 @@ export default function PublicSignIn() {
                     autoComplete="off"
                   />
                 </div>
-                {info.master_training_id === AHA_ROSTER_TRAINING_ID && (
+                {info.master_training_id === AHA_ROSTER_TRAINING_ID && !isSignoffDay && (
                   <AhaRosterFields value={ahaFields} onChange={setAhaFields} />
                 )}
                 <div className="field">
                   <label>{t('trainer_signature')}</label>
                   <SignaturePad ref={sigRef} />
                 </div>
-                <button className="btn btn-danger" type="submit" disabled={submitting} style={{ width: '100%' }}>
-                  {submitting ? t('closing_ellipsis') : `${t('close_session_label')} (${info.attendee_count} ${t('signed_in_label')})`}
+                <button className={isSignoffDay ? 'btn btn-accent' : 'btn btn-danger'} type="submit" disabled={submitting} style={{ width: '100%' }}>
+                  {isSignoffDay
+                    ? (submitting ? t('signing_off_ellipsis') : fill('signoff_button'))
+                    : (submitting ? t('closing_ellipsis') : `${t('close_session_label')} (${info.attendee_count} ${t('signed_in_label')})`)}
                 </button>
               </form>
             )}

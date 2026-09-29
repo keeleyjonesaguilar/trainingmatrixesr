@@ -59,6 +59,8 @@ router.get('/', async (req, res) => {
     `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id
      WHERE (e.client_id = ? AND e.employee_type = 'trainer')
         OR e.employee_id IN (SELECT DISTINCT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
+        OR e.employee_id IN (SELECT assigned_trainer_employee_id FROM session_days WHERE assigned_trainer_employee_id IS NOT NULL)
+        OR e.employee_id IN (SELECT signed_trainer_employee_id FROM session_days WHERE signed_trainer_employee_id IS NOT NULL)
      ORDER BY e.full_name ASC`,
     [INTERNAL_CLIENT_ID]
   );

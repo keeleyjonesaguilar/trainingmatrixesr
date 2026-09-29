@@ -13,6 +13,8 @@ const path = require('path');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
 const { ahaColumnsFromBody, ensureEditToken, regenerateRosters, sendCompletedFormsEmail } = require('../lib/sessionCloseOut');
+const { getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers } = require('../lib/sessionDays');
+const { nameKey } = require('../lib/names');
 const { parseName, firstLast } = require('../lib/names');
 
 // An attendee's name as first/last parts plus the "First Last" trainee_name printed on their
@@ -51,10 +53,16 @@ router.get('/:token', async (req, res) => {
   // Lets the trainer close-out form pre-fill phone/email for a trainer already on file, instead
   // of retyping it every session (Keeley's request, 2026-09-17) - trainer_employee_id is set at
   // session creation time (repo.findOrCreateTrainerEmployee), so it's almost always available.
-  let trainerPhone = session.trainer_phone || '';
-  let trainerEmail = session.trainer_email || '';
-  if (session.trainer_employee_id) {
-    const trainerEmployee = await dbGet('SELECT employee_number, email FROM employees WHERE employee_id = ?', [session.trainer_employee_id]);
+  // A multi-day session pre-fills today's assigned trainer instead (lib/sessionDays.js) - they're
+  // the one signing off this day.
+  const days = await getSessionDays(session);
+  const today = days[session.current_day - 1];
+  const prefillTrainerName = today?.assigned_trainer_name || session.trainer_name;
+  const prefillTrainerId = today ? today.assigned_trainer_employee_id : session.trainer_employee_id;
+  let trainerPhone = today ? '' : session.trainer_phone || '';
+  let trainerEmail = today ? '' : session.trainer_email || '';
+  if (prefillTrainerId) {
+    const trainerEmployee = await dbGet('SELECT employee_number, email FROM employees WHERE employee_id = ?', [prefillTrainerId]);
     if (trainerEmployee) {
       // employee_number is overloaded (a trainer added via the Trainers page stores their
       // Employee ID there instead of a phone - see server/routes/trainers.js) - only prefill
@@ -75,7 +83,7 @@ router.get('/:token', async (req, res) => {
     training_type_label: session.training_type_label,
     training_type_label_es: session.training_type_label_es,
     additional_training_labels: additionalTrainings.map((t) => t.training_type_label),
-    trainer_name: session.trainer_name,
+    trainer_name: prefillTrainerName,
     trainer_phone: trainerPhone,
     trainer_email: trainerEmail,
     session_date: session.session_date,
@@ -88,7 +96,75 @@ router.get('/:token', async (req, res) => {
     current_day: session.current_day,
     day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
     day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
+    // Who teaches / signed off each day - no signatures or contact details on this public page.
+    days: days.map((d) => ({
+      day_number: d.day_number, date: d.date, assigned_trainer_name: d.assigned_trainer_name,
+      signed_trainer_name: d.signed_trainer_name, signed_at: d.signed_at,
+    })),
   });
+});
+
+// Shared by a day's sign-off and the final close-out: the trainer's typed details, checked.
+async function validateTrainerSignoff(body) {
+  const { trainer_signed_name, trainer_email, trainer_phone, signature, pin } = body || {};
+  if (!trainer_signed_name || !trainer_signed_name.trim()) return 'Trainer name is required.';
+  if (!trainer_email || !trainer_email.trim()) return 'Trainer email is required.';
+  if (!EMAIL_PATTERN.test(trainer_email.trim())) return 'Please enter a valid email address.';
+  if (!trainer_phone || !trainer_phone.trim()) return 'Trainer phone number is required.';
+  if (!isValidPhoneNumber(trainer_phone)) return 'Please enter a standard 10-digit phone number.';
+  if (!isValidSignature(signature)) return 'A trainer signature is required.';
+  const pinSetting = await dbGet('SELECT pin FROM trainer_close_pin_settings WHERE id = ?', ['default']);
+  if (String(pin || '').trim().toUpperCase() !== String(pinSetting?.pin || '').trim().toUpperCase()) return 'Incorrect PIN.';
+  return null;
+}
+
+// The trainer profile a day's sign-off belongs to: the day's assigned trainer when the name
+// matches, otherwise whoever actually signed (a substitute - Keeley's call, 2026-09-29: allowed,
+// and recorded as who really taught the day).
+async function signoffTrainerId(day, signedName, phone) {
+  if (day?.assigned_trainer_employee_id && nameKey(day.assigned_trainer_name) === nameKey(signedName)) {
+    return day.assigned_trainer_employee_id;
+  }
+  return resolveTrainerByName(signedName, phone);
+}
+
+// Fills in a trainer profile's phone/email only where blank (never overwrites) - same rule the
+// close-out has always used.
+async function fillTrainerProfile(employeeId, phone, email) {
+  if (!employeeId) return;
+  await dbRun(
+    "UPDATE employees SET employee_number = COALESCE(NULLIF(employee_number, ''), ?), email = COALESCE(NULLIF(email, ''), ?) WHERE employee_id = ?",
+    [phone, email, employeeId]
+  );
+}
+
+// A multi-day session's trainer signs off their day (Keeley's request, 2026-09-29) - no
+// certificates or emails; that only happens at the final day's close-out below. Signing off also
+// opens the next day for sign-ins, so nobody has to remember to advance it.
+router.post('/:token/days/:day/signoff', async (req, res) => {
+  const session = await getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
+  if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
+  if (!session.total_days) return res.status(400).json({ error: 'This is a single-day session - use Close Session instead.' });
+  const dayNumber = Number(req.params.day);
+  if (dayNumber !== session.current_day) {
+    return res.status(400).json({ error: `This session is on Day ${session.current_day}, so only Day ${session.current_day} can be signed off right now.` });
+  }
+  if (dayNumber >= session.total_days) {
+    return res.status(400).json({ error: `Day ${dayNumber} is the final day - use Close Session to sign it off and generate certificates.` });
+  }
+  const problem = await validateTrainerSignoff(req.body);
+  if (problem) return res.status(400).json({ error: problem });
+
+  const { trainer_signed_name, trainer_email, trainer_phone, signature } = req.body;
+  const days = await getSessionDays(session);
+  const phone = formatPhoneNumber(trainer_phone);
+  const email = trainer_email.trim().toLowerCase();
+  const employeeId = await signoffTrainerId(days[dayNumber - 1], trainer_signed_name.trim(), phone);
+  await recordDaySignoff(session, dayNumber, { name: trainer_signed_name.trim(), employeeId, email, phone, signature });
+  await fillTrainerProfile(employeeId, phone, email);
+  await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ? AND current_day = ?', [dayNumber + 1, session.session_id, dayNumber]);
+  res.json({ ok: true, signed_off_day: dayNumber, current_day: dayNumber + 1, total_days: session.total_days });
 });
 
 // A trainee signs in.
@@ -228,38 +304,16 @@ router.post('/:token/close', async (req, res) => {
   // early would judge attendance against a course that hasn't finished yet.
   if (session.total_days && session.current_day < session.total_days) {
     return res.status(400).json({
-      error: `This is a ${session.total_days}-day session, currently on Day ${session.current_day}. Advance to Day ${session.total_days} before closing.`,
+      error: `This is a ${session.total_days}-day session, currently on Day ${session.current_day}. Sign off Day ${session.current_day} first - the session closes on Day ${session.total_days}.`,
     });
   }
   // The AHA Heartsaver Course Roster fields (hs_*, Keeley's request, 2026-09-21) are read by
   // ahaColumnsFromBody below - they only print for First Aid/CPR/AED sessions.
-  const { trainer_signed_name, trainer_email, trainer_phone, signature, pin } = req.body || {};
-  if (!trainer_signed_name || !trainer_signed_name.trim()) {
-    return res.status(400).json({ error: 'Trainer name is required to close the session.' });
-  }
-  if (!trainer_email || !trainer_email.trim()) {
-    return res.status(400).json({ error: 'Trainer email is required to close the session.' });
-  }
-  if (!EMAIL_PATTERN.test(trainer_email.trim())) {
-    return res.status(400).json({ error: 'Please enter a valid email address.' });
-  }
-  if (!trainer_phone || !trainer_phone.trim()) {
-    return res.status(400).json({ error: 'Trainer phone number is required to close the session.' });
-  }
-  if (!isValidPhoneNumber(trainer_phone)) {
-    return res.status(400).json({ error: 'Please enter a standard 10-digit phone number.' });
-  }
-  if (!isValidSignature(signature)) {
-    return res.status(400).json({ error: 'A trainer signature is required to close the session.' });
-  }
-  // Only the trainer should be able to close the session (Keeley's request: trainees
-  // shouldn't be able to trigger it by accident) - an admin-editable, case-insensitive PIN
-  // (trainer_close_pin_settings, defaults to "2026"), checked server-side since the client-side
-  // field is only a UX convenience, not the real boundary.
-  const pinSetting = await dbGet('SELECT pin FROM trainer_close_pin_settings WHERE id = ?', ['default']);
-  if (String(pin || '').trim().toUpperCase() !== String(pinSetting?.pin || '').trim().toUpperCase()) {
-    return res.status(400).json({ error: 'Incorrect PIN.' });
-  }
+  // Name/email/phone/signature/PIN are all checked in validateTrainerSignoff (the PIN keeps a
+  // trainee from closing the session by accident - checked server-side, not just in the form).
+  const { trainer_signed_name, trainer_email, trainer_phone, signature } = req.body || {};
+  const signoffProblem = await validateTrainerSignoff(req.body);
+  if (signoffProblem) return res.status(400).json({ error: signoffProblem });
 
   const formattedTrainerPhone = formatPhoneNumber(trainer_phone);
   const ahaColumns = ahaColumnsFromBody(req.body || {});
@@ -287,7 +341,15 @@ router.post('/:token/close', async (req, res) => {
   // a stray duplicate instead of updating the real one. Only fall back to finding/creating a new
   // link for the rare session that somehow has none yet.
   let trainerEmployeeId = session.trainer_employee_id;
-  if (!trainerEmployeeId) {
+  if (session.total_days) {
+    // Multi-day: whoever closes is signing off the final day, possibly a different trainer from
+    // the session's main one - record that day's sign-off, and fill in *their* profile instead.
+    const finalDay = (await getSessionDays(session))[session.total_days - 1];
+    trainerEmployeeId = await signoffTrainerId(finalDay, trainer_signed_name.trim(), formattedTrainerPhone);
+    await recordDaySignoff(session, session.total_days, {
+      name: trainer_signed_name.trim(), employeeId: trainerEmployeeId, email: trainer_email.trim().toLowerCase(), phone: formattedTrainerPhone, signature,
+    });
+  } else if (!trainerEmployeeId) {
     trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_signed_name.trim(), formattedTrainerPhone);
     if (trainerEmployeeId) {
       await dbRun('UPDATE training_sessions SET trainer_employee_id = ? WHERE session_id = ?', [trainerEmployeeId, session.session_id]);
@@ -311,6 +373,9 @@ router.post('/:token/close', async (req, res) => {
     `SELECT ts.*, c.client_name FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id WHERE ts.session_id = ?`,
     [session.session_id]
   );
+  // Certificates for a multi-day session print the trainer who taught the most days (ties go to
+  // the final day's) - see lib/sessionDays.js. A single-day session is unchanged.
+  const certificateSession = await withDayTrainers(updatedSession);
   const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql) -
   // empty for the overwhelming majority of (single-training) sessions.
@@ -350,7 +415,7 @@ router.post('/:token/close', async (req, res) => {
     let certPath = null;
     try {
       // eslint-disable-next-line no-await-in-loop
-      certPath = await generateCertificate(updatedSession, attendee);
+      certPath = await generateCertificate(certificateSession, attendee);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Certificate generation failed for attendee ${attendee.attendee_id}:`, err);
@@ -361,7 +426,7 @@ router.post('/:token/close', async (req, res) => {
     for (const additionalTraining of additionalTrainings) {
       // A shallow clone with the swapped label is all generateCertificate/buildCertificateFilename
       // read differently per training - date/client/trainer stay the session's own.
-      const trainingSession = { ...updatedSession, training_type_label: additionalTraining.training_type_label };
+      const trainingSession = { ...certificateSession, training_type_label: additionalTraining.training_type_label };
       const outputPath = path.join(
         DATA_DIR, 'certificates', 'sign-in-sessions', session.session_id, `${attendee.attendee_id}-${additionalTraining.id}.pdf`
       );

@@ -93,6 +93,9 @@ export default function Sessions() {
   // so on") - seeded from the main Outline field's current value each time a new day slot opens
   // up, purely as a convenient starting point; edited independently per day from there.
   const [dayOutlines, setDayOutlines] = useState([]);
+  // Who teaches each day (Keeley's request, 2026-09-29) - a trainer's employee_id, or '' for the
+  // session's main trainer, so a one-trainer course needs nothing extra here.
+  const [dayTrainers, setDayTrainers] = useState([]);
   const [creating, setCreating] = useState(false);
   // Upcoming-count badge (Keeley's request, 2026-09-22): open sessions dated today or later,
   // same definition Dashboard.jsx's "Upcoming Trainings Scheduled" box already uses. Fetched on
@@ -181,6 +184,7 @@ export default function Sessions() {
         total_days: isMultiDay ? Number(form.total_days) : null,
         day_dates: isMultiDay ? dayDates : null,
         day_outlines: isMultiDay ? dayOutlines : null,
+        day_trainers: isMultiDay ? dayTrainers : null,
       });
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
@@ -437,7 +441,7 @@ export default function Sessions() {
                       checked={isMultiDay}
                       onChange={(e) => {
                         setIsMultiDay(e.target.checked);
-                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); setDayOutlines([]); }
+                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); setDayOutlines([]); setDayTrainers([]); }
                       }}
                     />
                     Multi-day training (one QR code, used every day)
@@ -461,13 +465,16 @@ export default function Sessions() {
                               ? prev.slice(0, count)
                               : [...prev, ...Array.from({ length: count - prev.length }, () => form.outline)]
                           ));
+                          setDayTrainers((prev) => (
+                            count <= prev.length ? prev.slice(0, count) : [...prev, ...Array.from({ length: count - prev.length }, () => '')]
+                          ));
                         }}
                         placeholder="Number of days (e.g. 4)"
                         style={{ marginTop: 8, maxWidth: 160 }}
                         required
                       />
                       <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
-                        Attendees must sign in every day for it to count. Advance the day and track attendance from the session's own page after it's created.
+                        Attendees must sign in every day for it to count. Pick who teaches each day below - each day's trainer signs off their own day from the sign-in page, which opens the next day. Certificates are created when the final day is closed out.
                       </p>
                       {dayDates.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
@@ -483,6 +490,15 @@ export default function Sessions() {
                                 style={{ maxWidth: 160 }}
                                 required
                               />
+                              <select
+                                value={dayTrainers[i] || ''}
+                                onChange={(e) => setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                aria-label={`Day ${i + 1} trainer`}
+                                style={{ maxWidth: 240 }}
+                              >
+                                <option value="">{form.trainer_name ? `Main trainer (${form.trainer_name})` : 'Main trainer'}</option>
+                                {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                              </select>
                             </div>
                           ))}
                         </div>

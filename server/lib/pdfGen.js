@@ -189,7 +189,7 @@ function generateCertificate(session, attendee, outputPath) {
     .fillColor(ESR_GREEN)
     .font('Helvetica')
     .fontSize(13)
-    .text(session.trainer_signed_name || session.trainer_name || '', pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
+    .text(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || '', pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
 
   doc.end();
   return new Promise((resolve, reject) => {
@@ -213,7 +213,7 @@ function generateRosterPdf(session, attendees) {
   doc.fontSize(11).font('Helvetica');
   doc.text(`Client: ${session.client_name}`);
   doc.text(`Training: ${session.training_type_label}`);
-  doc.text(`Trainer: ${session.trainer_signed_name || session.trainer_name}`);
+  doc.text(`Trainer${session.session_days?.length ? '(s)' : ''}: ${session.all_trainer_names || session.trainer_signed_name || session.trainer_name}`);
   doc.text(`Date: ${formatDate(session.session_date)}`);
   if (session.outline) {
     doc.moveDown(0.3);
@@ -252,10 +252,39 @@ function generateRosterPdf(session, attendees) {
     doc.y = bottom + 14;
   });
 
+  // Multi-day session: each day's trainer and sign-off (server/lib/sessionDays.js), before the
+  // final close-out sign-off below.
+  if (session.session_days?.length) {
+    if (doc.y > doc.page.height - 180) doc.addPage();
+    doc.moveDown(0.5);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text('Daily Trainer Sign-Offs');
+    session.session_days.forEach((d) => {
+      if (doc.y > doc.page.height - 110) doc.addPage();
+      const left = doc.x;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#111111')
+        .text(`Day ${d.day_number}${d.date ? ` - ${formatDate(d.date)}` : ''}: ${d.signed_trainer_name || d.assigned_trainer_name || '—'}`);
+      doc.font('Helvetica').fontSize(10).fillColor('#333333')
+        .text(d.signed_at ? `Signed off: ${formatDateTime(d.signed_at)}` : 'Not signed off');
+      const top = doc.y + 2;
+      const sig = b64ToBuffer(d.signature);
+      let bottom = top;
+      if (sig) {
+        try {
+          doc.image(sig, left, top, { width: 160, height: 36, fit: [160, 36] });
+          bottom = top + 36;
+        } catch {
+          /* ignore */
+        }
+      }
+      doc.x = left;
+      doc.y = bottom + 8;
+    });
+  }
+
   // Trainer sign-off
   if (doc.y > doc.page.height - 180) doc.addPage();
   doc.moveDown(0.5);
-  doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text('Trainer Sign-Off');
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(session.session_days?.length ? 'Final Close-Out' : 'Trainer Sign-Off');
   doc.font('Helvetica').fontSize(10).fillColor('#333333');
   doc.text(`Trainer: ${session.trainer_signed_name || session.trainer_name}`);
   doc.text(`Trainer Email: ${session.trainer_email || '—'}`);
