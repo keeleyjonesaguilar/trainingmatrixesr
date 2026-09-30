@@ -21,12 +21,18 @@ const STRINGS = {
   signing_in_tab: { en: "I'm signing in", es: 'Estoy firmando' },
   trainer_tab: { en: "I'm the trainer — close session", es: 'Soy el instructor — cerrar sesión' },
   // A multi-day course's trainer signs off each day before the last (Keeley's request, 2026-09-29).
-  trainer_tab_signoff: { en: "I'm the trainer — sign off Day {day}", es: 'Soy el instructor — firmar el Día {day}' },
-  signoff_note: {
-    en: "Sign off at the end of today's class. This records your sign-off for Day {day} and opens Day {next} for sign-ins - certificates are only created when the final day is closed out.",
-    es: 'Firme al final de la clase de hoy. Esto registra su firma del Día {day} y abre el Día {next} para registros - los certificados solo se crean al cerrar el último día.',
+  trainer_tab_signoff: { en: "I'm the trainer — end of Day {day} sign-off", es: 'Soy el instructor — firma al final del Día {day}' },
+  // Asked right before a day's sign-off goes through (Keeley's request, 2026-09-30: a trainer
+  // signed off Day 2 at the start of class, so the rest of the day's sign-ins went to Day 3).
+  signoff_confirm: {
+    en: "Sign off Day {day} now?\n\nOnly do this at the END of today's class, after everyone has signed in. Anyone who signs in after this is recorded for Day {next}.",
+    es: '¿Firmar el Día {day} ahora?\n\nHágalo solo al FINAL de la clase de hoy, cuando todos se hayan registrado. Quien se registre después quedará en el Día {next}.',
   },
-  signoff_button: { en: 'Sign Off Day {day}', es: 'Firmar el Día {day}' },
+  signoff_note: {
+    en: "Do this at the END of today's class, after everyone has signed in. It closes Day {day} and opens Day {next} - anyone who signs in after this is recorded for Day {next}. Certificates are only created when the final day is closed out.",
+    es: 'Hágalo al FINAL de la clase de hoy, cuando todos se hayan registrado. Cierra el Día {day} y abre el Día {next} - quien se registre después quedará en el Día {next}. Los certificados solo se crean al cerrar el último día.',
+  },
+  signoff_button: { en: 'Sign Off End of Day {day}', es: 'Firmar el final del Día {day}' },
   signing_off_ellipsis: { en: 'Signing off…', es: 'Firmando…' },
   signed_off_banner: {
     en: 'Day {day} is signed off. Thank you! Day {next} is now open for sign-ins.',
@@ -92,13 +98,19 @@ const STRINGS = {
     en: 'You must sign in every day of this course for it to count toward your certificate.',
     es: 'Debe registrarse todos los días de este curso para que cuente para su certificado.',
   },
-  choice_first_time_title: { en: 'First time on this course', es: 'Primera vez en este curso' },
+  // Worded around "have you been here before" (Keeley's report, 2026-09-30: returning attendees on
+  // Day 2 picked "first time" and ended up with a second entry missing Day 1).
+  choice_first_time_title: { en: 'This is my first day of this course', es: 'Este es mi primer día de este curso' },
   choice_first_time_sub: {
-    en: "This is my Day 1, or I haven't signed in yet",
-    es: 'Es mi Día 1, o aún no me he registrado',
+    en: 'I did NOT sign in on any earlier day',
+    es: 'NO me registré en ningún día anterior',
   },
-  choice_returning_title: { en: 'I already signed in before', es: 'Ya me registré antes' },
-  choice_returning_sub: { en: 'Find my name and check in for today', es: 'Buscar mi nombre y registrarme hoy' },
+  choice_returning_title: { en: 'I was here on an earlier day', es: 'Estuve aquí en un día anterior' },
+  choice_returning_sub: { en: 'Find my name and sign in for Day {day}', es: 'Buscar mi nombre y registrarme para el Día {day}' },
+  choice_hint_later_day: {
+    en: 'Were you here on an earlier day of this course? Choose "I was here on an earlier day" - do not sign up again.',
+    es: '¿Estuvo aquí en un día anterior de este curso? Elija "Estuve aquí en un día anterior" - no se registre de nuevo.',
+  },
   find_name_title: { en: 'Find your name', es: 'Busque su nombre' },
   find_name_placeholder: { en: 'Start typing your name…', es: 'Empiece a escribir su nombre…' },
   find_name_no_results: { en: "Can't find your name?", es: '¿No encuentra su nombre?' },
@@ -363,6 +375,10 @@ export default function PublicSignIn() {
       // Before a multi-day course's last day, the trainer signs off their day instead of closing.
       if (Number(info.total_days) > 1 && info.current_day < info.total_days) {
         const day = info.current_day;
+        if (!window.confirm(t('signoff_confirm').replaceAll('{day}', day).replaceAll('{next}', day + 1))) {
+          setSubmitting(false);
+          return;
+        }
         await api.publicSignOffDay(token, day, {
           trainer_signed_name: trainerName.trim(),
           trainer_email: trainerEmail.trim(),
@@ -562,6 +578,9 @@ export default function PublicSignIn() {
 
                 {isMultiDay && signInStep === 'choice' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {info.current_day > 1 && (
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0, order: -2 }}>{t('choice_hint_later_day')}</p>
+                    )}
                     <button
                       type="button"
                       className="btn btn-secondary"
@@ -589,7 +608,11 @@ export default function PublicSignIn() {
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      style={{ textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto' }}
+                      style={{
+                        textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto',
+                        // From Day 2 on, most people are returning - put this option first and outline it.
+                        ...(info.current_day > 1 ? { order: -1, border: '2px solid var(--status-current-text)' } : {}),
+                      }}
                       onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('returning'); }}
                     >
                       <span style={{
@@ -604,7 +627,7 @@ export default function PublicSignIn() {
                       <span>
                         <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_returning_title')}</span>
                         <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                          {t('choice_returning_sub')}
+                          {t('choice_returning_sub').replaceAll('{day}', info.current_day)}
                         </span>
                       </span>
                     </button>
