@@ -208,7 +208,7 @@ function generateRosterPdf(session, attendees) {
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  doc.fontSize(18).font('Helvetica-Bold').text('Training Sign-In Roster');
+  doc.fontSize(18).font('Helvetica-Bold').text(session.session_kind === 'toolbox_talk' ? 'Toolbox Talk Sign-In Roster' : 'Training Sign-In Roster');
   doc.moveDown(0.3);
   doc.fontSize(11).font('Helvetica');
   doc.text(`Client: ${session.client_name}`);

@@ -55,7 +55,9 @@ export default function Sessions() {
   // changes, so a fresh selection always starts from that type's own default and has to be
   // overridden again on purpose - it never carries a previous type's override forward.
   const [durationOverride, setDurationOverride] = useState(false);
-  const [filters, setFilters] = useState({ client_name: '', status: '' });
+  // Client is picked from a list (Keeley's report, 2026-09-30: the free-text filter missed on
+  // capitalization/spelling); a ?client_id= link from a client's page pre-selects it.
+  const [filters, setFilters] = useState({ client_id: clientIdFilter, status: '' });
   // Auto-opens the create form when linked here from the Dashboard's "Create New Training
   // Session" button (?new=1).
   const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
@@ -67,6 +69,11 @@ export default function Sessions() {
   // per attendee per training. Kept out of `form` since it's a list of ids, not a form field the
   // submit-validation loop needs to touch.
   const [additionalTrainingIds, setAdditionalTrainingIds] = useState([]);
+  // 'training' or 'toolbox_talk' (Keeley's request, 2026-09-30) - a toolbox talk has a Topic
+  // instead of a catalog training, no certificates, and is never multi-day.
+  const [sessionKind, setSessionKind] = useState('training');
+  const [toolboxTopic, setToolboxTopic] = useState('');
+  const isToolbox = sessionKind === 'toolbox_talk';
 
   const [form, setForm] = useState({
     client_name: '',
@@ -107,14 +114,14 @@ export default function Sessions() {
   const load = () => {
     setSessionsLoading(true);
     api
-      .listTrainingSessions({ ...filters, client_id: clientIdFilter })
+      .listTrainingSessions({ status: filters.status, client_id: filters.client_id })
       .then(setSessions)
       .catch((err) => setError(err.message))
       .finally(() => setSessionsLoading(false));
   };
 
   const loadUpcomingCount = () => {
-    api.listTrainingSessions({ status: 'open', client_id: clientIdFilter }).then((rows) => {
+    api.listTrainingSessions({ status: 'open', client_id: filters.client_id }).then((rows) => {
       const today = easternToday();
       setUpcomingCount(rows.filter((s) => s.session_date >= today).length);
     }).catch(() => {});
@@ -127,13 +134,49 @@ export default function Sessions() {
   }, []);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only the primitive filter values matter, not object identity
-  useEffect(load, [filters.client_name, filters.status, clientIdFilter]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only clientIdFilter matters here
-  useEffect(loadUpcomingCount, [clientIdFilter]);
+  useEffect(load, [filters.client_id, filters.status]);
+  // Following a link from a client's page while this page is already open.
+  useEffect(() => { setFilters((f) => ({ ...f, client_id: clientIdFilter })); }, [clientIdFilter]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only the client filter matters here
+  useEffect(loadUpcomingCount, [filters.client_id]);
+
+  const submitToolbox = async () => {
+    if (!form.client_name || !form.trainer_name || !form.session_date || !form.location || !toolboxTopic.trim()) {
+      setError('Client, topic, trainer, date, and location are required for a toolbox talk.');
+      return;
+    }
+    setCreating(true);
+    try {
+      const session = await api.createTrainingSession({
+        session_kind: 'toolbox_talk',
+        toolbox_topic: toolboxTopic.trim(),
+        client_name: form.client_name,
+        trainer_name: form.trainer_name.trim(),
+        trainer_phone: form.trainer_phone,
+        session_date: form.session_date,
+        location: form.location,
+        duration: form.duration,
+        outline: form.outline,
+        language: form.language,
+      });
+      if (session.translation_warning) {
+        window.alert(`Toolbox talk created, but the Spanish translation couldn't be generated: ${session.translation_warning}`);
+      }
+      navigate(`/sessions/${session.session_id}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setError('');
+    if (isToolbox) {
+      await submitToolbox();
+      return;
+    }
     // Trainer Employee ID is the one field skipped when adding a brand-new trainer inline
     // (Keeley's call) - there's nothing to auto-fill for someone who isn't in the system yet,
     // so that session is flagged for review instead of blocking creation on a field they can't
@@ -216,11 +259,23 @@ export default function Sessions() {
 
       <div className="card" style={{ marginBottom: 20 }}>
         {!showForm ? (
-            <button className="btn btn-accent" onClick={() => setShowForm(true)}>
-              + New Session
-            </button>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button className="btn btn-accent" onClick={() => { setSessionKind('training'); setShowForm(true); }}>
+                + New Session
+              </button>
+              <button className="btn btn-secondary" onClick={() => { setSessionKind('toolbox_talk'); setIsMultiDay(false); setShowForm(true); }}>
+                + New Toolbox Talk
+              </button>
+            </div>
           ) : (
             <form onSubmit={submit}>
+              <h2 style={{ marginTop: 0 }}>{isToolbox ? 'New Toolbox Talk' : 'New Training Session'}</h2>
+              {isToolbox && (
+                <p className="page-subtitle" style={{ marginTop: -6 }}>
+                  Same QR sign-in and trainer close-out as a training session. No certificates - each attendee gets a
+                  Toolbox Talk entry with the topic on their profile, and the signed roster is emailed.
+                </p>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div className="field">
                   <label>Client</label>
@@ -260,6 +315,12 @@ export default function Sessions() {
                     </>
                   )}
                 </div>
+                {isToolbox ? (
+                  <div className="field">
+                    <label>Topic</label>
+                    <input value={toolboxTopic} onChange={(e) => setToolboxTopic(e.target.value)} placeholder="e.g. Ladder Safety, Heat Stress" required />
+                  </div>
+                ) : (
                 <div className="field">
                   <label>Training Type</label>
                   <TrainingSearchSelect
@@ -292,6 +353,8 @@ export default function Sessions() {
                     }}
                   />
                 </div>
+                )}
+                {!isToolbox && (
                 <div className="field">
                   <label>Additional Trainings (optional)</label>
                   <TrainingMultiSearchSelect
@@ -304,6 +367,7 @@ export default function Sessions() {
                     Everyone signs in once, but gets a separate certificate for each training selected here plus the one above.
                   </p>
                 </div>
+                )}
                 <div className="field">
                   <label>Trainer</label>
                   {trainerMode === 'select' ? (
@@ -397,6 +461,11 @@ export default function Sessions() {
                   <label>Duration</label>
                   {(() => {
                     const selectedTraining = trainings.find((t) => t.training_id === form.master_training_id);
+                    if (isToolbox) {
+                      return (
+                        <input value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="15 minutes (default)" />
+                      );
+                    }
                     if (selectedTraining?.default_duration && !durationOverride) {
                       return (
                         <>
@@ -434,6 +503,7 @@ export default function Sessions() {
                     </p>
                   )}
                 </div>
+                {!isToolbox && (
                 <div className="field">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
                     <input
@@ -527,23 +597,26 @@ export default function Sessions() {
                     </>
                   )}
                 </div>
+                )}
               </div>
               <div className="field">
-                <label>Outline / Topics Covered</label>
+                <label>{isToolbox ? 'Talking Points (optional)' : 'Outline / Topics Covered'}</label>
                 <textarea
                   rows={3}
                   value={form.outline}
                   onChange={(e) => { setOutlineTouched(true); setForm({ ...form, outline: e.target.value }); }}
-                  placeholder="What will this session cover?"
-                  required
+                  placeholder={isToolbox ? 'Key points to cover (shown on the sign-in page)' : 'What will this session cover?'}
+                  required={!isToolbox}
                 />
-                <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
-                  Auto-filled from the training's catalog outline when you pick a Training Type above - edit freely, it only affects this session.
-                </p>
+                {!isToolbox && (
+                  <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                    Auto-filled from the training's catalog outline when you pick a Training Type above - edit freely, it only affects this session.
+                  </p>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
                 <button className="btn btn-accent" type="submit" disabled={creating}>
-                  {creating ? 'Creating…' : 'Create Session & Generate QR Code'}
+                  {creating ? 'Creating…' : isToolbox ? 'Create Toolbox Talk & Generate QR Code' : 'Create Session & Generate QR Code'}
                 </button>
                 <button className="btn btn-secondary" type="button" onClick={() => setShowForm(false)}>
                   Cancel
@@ -554,12 +627,15 @@ export default function Sessions() {
       </div>
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 10 }}>
-        <input
-          placeholder="Filter by client…"
-          value={filters.client_name}
-          onChange={(e) => setFilters({ ...filters, client_name: e.target.value })}
+        <select
+          value={filters.client_id}
+          onChange={(e) => setFilters({ ...filters, client_id: e.target.value })}
           style={{ maxWidth: 260 }}
-        />
+          aria-label="Filter by client"
+        >
+          <option value="">All clients</option>
+          {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+        </select>
         <select
           value={filters.status}
           onChange={(e) => setFilters({ ...filters, status: e.target.value })}

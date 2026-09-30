@@ -58,6 +58,15 @@ const STRINGS = {
     es: 'Cierre la sesión solo cuando todos hayan firmado — la lista se bloquea de inmediato y los certificados se generan automáticamente.',
   },
   close_session_label: { en: 'Close Session', es: 'Cerrar sesión' },
+  // Toolbox talks have no certificates (Keeley's request, 2026-09-30).
+  close_note_toolbox: {
+    en: "Only close the toolbox talk once everyone has signed in — the roster locks immediately and attendance is recorded on each person's profile.",
+    es: 'Cierre la charla solo cuando todos se hayan registrado — la lista se bloquea de inmediato y la asistencia queda registrada en el perfil de cada persona.',
+  },
+  closed_now_banner_toolbox: {
+    en: 'Toolbox talk closed. Thank you — the roster has been generated.',
+    es: 'Charla cerrada. Gracias — la lista se ha generado.',
+  },
   signed_in_label: { en: 'signed in', es: 'registrados' },
   closing_ellipsis: { en: 'Closing…', es: 'Cerrando…' },
   closed_now_banner: {
@@ -491,7 +500,7 @@ export default function PublicSignIn() {
         {isClosed ? (
           <div className="card">
             <p className="success-banner" style={{ margin: 0 }}>
-              {closedNow ? t('closed_now_banner') : t('closed_already_banner')}
+              {closedNow ? t(info.session_kind === 'toolbox_talk' ? 'closed_now_banner_toolbox' : 'closed_now_banner') : t('closed_already_banner')}
             </p>
           </div>
         ) : (
@@ -583,7 +592,7 @@ export default function PublicSignIn() {
                     )}
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-secondary choice-button"
                       style={{ textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto' }}
                       onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('new'); }}
                     >
@@ -607,7 +616,7 @@ export default function PublicSignIn() {
                     </button>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-secondary choice-button"
                       style={{
                         textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto',
                         // From Day 2 on, most people are returning - put this option first and outline it.
@@ -699,7 +708,7 @@ export default function PublicSignIn() {
               </>
             ) : (
               <form onSubmit={handleTrainerClose}>
-                <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{isSignoffDay ? fill('signoff_note') : t('close_note')}</p>
+                <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{isSignoffDay ? fill('signoff_note') : info.session_kind === 'toolbox_talk' ? t('close_note_toolbox') : t('close_note')}</p>
                 <div className="field">
                   <label>{t('trainer_name')}</label>
                   <input

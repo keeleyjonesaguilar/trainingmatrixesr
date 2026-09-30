@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import esrMark from '../assets/brand/esr-mark.png';
+import esrLogo from '../assets/brand/esr-logo-full.png';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -32,7 +32,7 @@ export default function Sidebar({ role }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <img src={esrMark} alt="ESR" className="sidebar-brand-mark" />
+        <img src={esrLogo} alt="Evolution Safety Resources" className="sidebar-brand-mark" />
         <span className="sidebar-brand-name">Safety Training Matrix</span>
       </div>
       <nav className="sidebar-nav">

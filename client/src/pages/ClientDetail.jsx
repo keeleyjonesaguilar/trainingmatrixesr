@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
@@ -281,6 +281,75 @@ function DangerZone({ client, onDeactivated }) {
 
 // Per-client requirements/settings page (split out of the old single-page ClientSettings.jsx,
 // 2026-08-18, per Keeley's request) - reached by clicking a client on the Clients directory.
+
+// The client's own logo (Keeley's request, 2026-09-30) - shown beside their name, and kept for
+// their portal later. PNG/JPG/WebP up to 2 MB (checked again on the server).
+function ClientLogo({ client, isAdmin, onChanged }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const pick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return setError('Choose a PNG, JPG, or WebP image.');
+    if (file.size > 2 * 1024 * 1024) return setError('The logo must be 2 MB or smaller.');
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setBusy(true);
+      setError('');
+      try {
+        await api.uploadClientLogo(client.client_id, reader.result);
+        onChanged();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setBusy(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const remove = async () => {
+    if (!window.confirm(`Remove ${client.client_name}'s logo?`)) return;
+    setBusy(true);
+    try {
+      await api.removeClientLogo(client.client_id);
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!client.logo_url && !isAdmin) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, flexShrink: 0 }}>
+      {client.logo_url ? (
+        <img src={client.logo_url} alt={`${client.client_name} logo`} style={{ maxHeight: 64, maxWidth: 180, objectFit: 'contain' }} />
+      ) : (
+        <div style={{ width: 64, height: 64, borderRadius: 10, border: '1px dashed var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--color-text-muted)' }}>
+          No logo
+        </div>
+      )}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" className="secondary" disabled={busy} onClick={() => inputRef.current?.click()} style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }}>
+            {busy ? 'Saving…' : client.logo_url ? 'Change Logo' : 'Upload Logo'}
+          </button>
+          {client.logo_url && (
+            <button type="button" className="secondary" disabled={busy} onClick={remove} style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }}>Remove</button>
+          )}
+          <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={pick} style={{ display: 'none' }} />
+        </div>
+      )}
+      {error && <span style={{ fontSize: 12, color: 'var(--status-expired-text)' }}>{error}</span>}
+    </div>
+  );
+}
+
 export default function ClientDetail() {
   const { clientId } = useParams();
   const navigate = useNavigate();
@@ -301,9 +370,12 @@ export default function ClientDetail() {
   return (
     <div>
       <div className="page-header">
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <ClientLogo client={client} isAdmin={isAdmin} onChanged={loadClient} />
+          <div>
           <h1>{client.client_name}</h1>
           <p className="page-subtitle">Per-client training requirements and expiration overrides. Overrides never affect the Master Catalog or other clients.</p>
+          </div>
         </div>
         <div className="page-header-actions">
           <button className="secondary" onClick={() => navigate(`/sessions?client_id=${clientId}`)}>Training Sessions</button>

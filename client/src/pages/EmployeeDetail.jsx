@@ -6,7 +6,7 @@ import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
 import { easternToday, formatEasternDate } from '../lib/dates.js';
-import { nameParts } from '../lib/names.js';
+import { displayFirstLast, nameParts } from '../lib/names.js';
 
 // Live-formats a phone number as (xxx) xxx-xxxx while typing. This is the standard US format
 // Keeley wants - Employee Phone Number is now how employees are tracked/identified.
@@ -221,6 +221,138 @@ function TrainingsTaughtSection({ employeeId }) {
 // General supporting documents on an employee's own record (Keeley's request, 2026-09-22) - an
 // existing OSHA/CPR card, a medical eval, etc., not tied to one specific training completion the
 // way a certificate-of-completion upload is (see the Completed Trainings table below instead).
+// The employee's own QR code (Keeley's request, 2026-09-30) - scanning it opens a read-only page
+// of their current trainings (pages/PublicRecord.jsx), e.g. printed on a badge or hard-hat sticker.
+// Sits in the profile header (her follow-up: the standalone card sat awkwardly mid-page); Reset is
+// a small link that only goes through once "reset" is typed, so it can't happen by accident.
+function RecordQrBadge({ employeeId, employeeName, isAdmin }) {
+  const [version, setVersion] = useState(0);
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const src = `/api/employees/${employeeId}/record-qr.png?v=${version}`;
+
+  const open = async () => {
+    const tab = window.open('', '_blank');
+    try {
+      const { path } = await api.getEmployeeRecordLink(employeeId);
+      tab.location = `${window.location.origin}${path}`;
+    } catch (e) {
+      tab?.close();
+      setError(e.message);
+    }
+  };
+
+  const reset = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.resetEmployeeRecordToken(employeeId);
+      setVersion((v) => v + 1);
+      setConfirming(false);
+      setTyped('');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const linkStyle = { background: 'none', border: 'none', padding: 0, color: 'var(--esr-green)', cursor: 'pointer', fontSize: 12, textAlign: 'left' };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <button type="button" className="qr-thumb-button" onClick={open} title="Open their training record page" style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}>
+        <img src={src} alt={`QR code for ${employeeName}`} style={{ width: 72, height: 72, borderRadius: 6, border: '1px solid var(--color-border)' }} />
+      </button>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
+        <span className="detail-meta-label">Training Record QR</span>
+        <a href={src} download={`${employeeName} QR Code.png`} style={{ fontSize: 12, color: 'var(--esr-green)' }}>Download</a>
+        <button type="button" className="link-button" onClick={open} style={linkStyle}>Open record page</button>
+        {isAdmin && !confirming && (
+          <button type="button" className="link-button" onClick={() => setConfirming(true)} style={{ ...linkStyle, fontSize: 11, color: 'var(--color-text-muted)', textAlign: 'left' }}>
+            Reset code…
+          </button>
+        )}
+        {isAdmin && confirming && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2, maxWidth: 220 }}>
+            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+              The current code (e.g. on a printed badge) stops working. Type <strong>reset</strong> to confirm.
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                aria-label="Type reset to confirm"
+                style={{ width: 90, padding: '2px 6px', fontSize: 12 }}
+                autoFocus
+              />
+              <button type="button" className="secondary" disabled={busy || typed.trim().toLowerCase() !== 'reset'} onClick={reset} style={{ padding: '2px 8px', fontSize: 12 }}>
+                {busy ? '…' : 'Reset'}
+              </button>
+              <button type="button" className="link-button" onClick={() => { setConfirming(false); setTyped(''); }} style={{ ...linkStyle, fontSize: 11, color: 'var(--color-text-muted)' }}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {error && <span style={{ fontSize: 11, color: 'var(--status-expired-text)' }}>{error}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ESR Training Portal access (Keeley's request, 2026-09-30: invite-only). Inviting emails them a
+// link; they sign in with this profile's email and a one-time code (pages/Portal.jsx).
+function PortalAccess({ employee, isAdmin, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [message, setMessage] = useState('');
+  const invited = Boolean(employee.portal_invited_at);
+
+  const invite = async () => {
+    setBusy(true); setMessage('');
+    try {
+      await api.invitePortal(employee.employee_id);
+      setMessage(invited ? 'Invite sent again.' : 'Invite sent.');
+      onChanged();
+    } catch (e) { setMessage(e.message); } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true); setMessage('');
+    try {
+      await api.removePortal(employee.employee_id);
+      setConfirmRemove(false);
+      onChanged();
+    } catch (e) { setMessage(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="detail-meta-item" style={{ textAlign: 'left' }}>
+      <div className="detail-meta-label">Training Portal</div>
+      <div className="detail-meta-value">
+        {invited
+          ? `Invited ${formatEasternDate(employee.portal_invited_at)}${employee.portal_last_login_at ? ` · last sign-in ${formatEasternDate(employee.portal_last_login_at)}` : ' · not signed in yet'}`
+          : 'Not invited'}
+      </div>
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+          <button type="button" className="link-button" disabled={busy || !employee.email} onClick={invite} title={employee.email ? '' : 'Add an email to this profile first'}>
+            {invited ? 'Resend invite' : 'Invite to portal'}
+          </button>
+          {invited && !confirmRemove && <button type="button" className="link-button" onClick={() => setConfirmRemove(true)}>Remove access</button>}
+          {invited && confirmRemove && (
+            <>
+              <button type="button" className="link-button" disabled={busy} onClick={remove} style={{ color: 'var(--status-expired-text)' }}>Yes, remove</button>
+              <button type="button" className="link-button" onClick={() => setConfirmRemove(false)}>Cancel</button>
+            </>
+          )}
+        </div>
+      )}
+      {!employee.email && isAdmin && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Needs an email on the profile.</div>}
+      {message && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{message}</div>}
+    </div>
+  );
+}
+
 function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] }) {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -229,6 +361,8 @@ function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] })
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState('');
+  // The chosen file waits here until Submit (Keeley's request, 2026-09-30: not the moment it's picked).
+  const [pendingFile, setPendingFile] = useState(null);
   const inputRef = useRef(null);
 
   const load = () => {
@@ -236,20 +370,22 @@ function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] })
   };
   useEffect(load, [employeeId]);
 
-  const handleFile = async (e) => {
+  const handleFile = (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
-    if (!label.trim()) {
-      setError('Enter a label for this document first (e.g. "OSHA 10 Card").');
-      return;
-    }
+    if (file) { setPendingFile(file); setError(''); }
+  };
+
+  const submit = async () => {
+    if (!pendingFile) return setError('Choose a file first.');
+    if (!label.trim()) return setError('Enter a label for this document (e.g. "OSHA 10 Card").');
     setUploading(true);
     setError('');
     try {
-      await api.uploadEmployeeDocument(employeeId, file, label.trim(), trainingId);
+      await api.uploadEmployeeDocument(employeeId, pendingFile, label.trim(), trainingId);
       setLabel('');
       setTrainingId('');
+      setPendingFile(null);
       load();
     } catch (err) {
       setError(err.message);
@@ -322,15 +458,27 @@ function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] })
                   onChange={(e) => setLabel(e.target.value)}
                   style={{ flexGrow: 1 }}
                 />
-                <button type="button" className="secondary" disabled={uploading} onClick={() => inputRef.current?.click()}>
-                  {uploading ? 'Uploading...' : 'Choose File'}
+                <button type="button" className="secondary" disabled={uploading} onClick={() => inputRef.current?.click()} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {pendingFile ? 'Change File' : 'Choose File'}
                 </button>
               </div>
-              {/* Optional (Keeley's request, 2026-09-22) - e.g. a CPR card to First Aid/CPR/AED. */}
+              {/* Optional (Keeley's request, 2026-09-22) - e.g. a CPR card to First Aid/CPR/AED. Only
+                  trainings already on this employee's profile are offered (2026-09-30). */}
               <select value={trainingId} onChange={(e) => setTrainingId(e.target.value)} style={{ marginTop: 8 }}>
-                <option value="">Attach to a training (optional)</option>
+                <option value="">{trainingOptions.length ? 'Attach to one of their trainings (optional)' : 'No trainings on their profile yet'}</option>
                 {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
               </select>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--color-text-muted)', flexGrow: 1, overflowWrap: 'anywhere' }}>
+                  {pendingFile ? `Selected: ${pendingFile.name}` : 'No file selected'}
+                </span>
+                {pendingFile && (
+                  <button type="button" className="secondary" disabled={uploading} onClick={() => setPendingFile(null)}>Cancel</button>
+                )}
+                <button type="button" disabled={uploading || !pendingFile} onClick={submit}>
+                  {uploading ? 'Uploading...' : 'Submit'}
+                </button>
+              </div>
               <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={handleFile} />
             </div>
           )}
@@ -505,7 +653,9 @@ export default function EmployeeDetail() {
               <div className="detail-meta-label">Status</div>
               <div className="detail-meta-value">{employee.active ? 'Active' : 'Inactive'}</div>
             </div>
+            <PortalAccess employee={employee} isAdmin={isAdmin} onChanged={load} />
           </div>
+          <RecordQrBadge employeeId={employee.employee_id} employeeName={displayFirstLast(employee)} isAdmin={isAdmin} />
           <button className="secondary" onClick={() => setEditingProfile(true)}>Edit Profile</button>
         </div>
       )}
@@ -530,7 +680,12 @@ export default function EmployeeDetail() {
             {history.length === 0 && <p className="page-subtitle" style={{ margin: 0 }}>No completion history yet.</p>}
           </div>
         </div>
-        <EmployeeDocumentsSection employeeId={employee.employee_id} isAdmin={isAdmin} trainingOptions={trainings} />
+        <EmployeeDocumentsSection
+          employeeId={employee.employee_id}
+          isAdmin={isAdmin}
+          trainingOptions={[...new Map(completedRecords.map((r) => [r.training_id, { training_id: r.training_id, training_name: r.master_training_name || r.training_name }])).values()]
+            .sort((a, b) => a.training_id.localeCompare(b.training_id))}
+        />
       </div>
 
       {/* Anyone who has taught, including a trainer merged into their employee profile. */}

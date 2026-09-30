@@ -80,6 +80,7 @@ router.get('/:token', async (req, res) => {
   res.json({
     client_name: session.client_name,
     master_training_id: session.master_training_id,
+    session_kind: session.session_kind,
     training_type_label: session.training_type_label,
     training_type_label_es: session.training_type_label_es,
     additional_training_labels: additionalTrainings.map((t) => t.training_type_label),
@@ -414,8 +415,9 @@ router.post('/:token/close', async (req, res) => {
     }
     let certPath = null;
     try {
+      // A toolbox talk has no certificate - attendance is still recorded on their profile below.
       // eslint-disable-next-line no-await-in-loop
-      certPath = await generateCertificate(certificateSession, attendee);
+      if (updatedSession.session_kind !== 'toolbox_talk') certPath = await generateCertificate(certificateSession, attendee);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Certificate generation failed for attendee ${attendee.attendee_id}:`, err);

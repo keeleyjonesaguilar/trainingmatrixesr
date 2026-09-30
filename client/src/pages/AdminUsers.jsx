@@ -31,6 +31,18 @@ export default function AdminUsers({ currentUsername }) {
   const [fullNameInput, setFullNameInput] = useState('');
 
   const load = () => api.listUsers().then(setUsers).catch((e) => setError(e.message));
+  const [togglingEmailId, setTogglingEmailId] = useState(null);
+  const toggleSessionEmails = async (u) => {
+    setTogglingEmailId(u.user_id);
+    try {
+      await api.setUserSessionEmails(u.user_id, !u.gets_session_emails);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTogglingEmailId(null);
+    }
+  };
   // Loading only gates the very first fetch - a later refresh (after adding/removing someone)
   // updates the table in place rather than hiding it again, since it's no longer really "loading."
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -183,6 +195,7 @@ export default function AdminUsers({ currentUsername }) {
               <th>Full Name</th>
               <th>Username</th>
               <th>Email</th>
+              <th title="Gets the email with certificates and rosters when a session is closed out">Training Emails</th>
               <th>Role</th>
               <th>2FA</th>
               <th>Added</th>
@@ -214,6 +227,20 @@ export default function AdminUsers({ currentUsername }) {
                       {' '}
                       <button className="link-button" onClick={() => { setEmailTarget(u); setEmailInput(u.email || ''); }}>
                         {u.email ? 'Change' : 'Add'}
+                      </button>
+                    </>
+                  )}
+                </td>
+                <td>
+                  {/* Completed-training emails on/off per user (Keeley's request, 2026-09-30). */}
+                  <span className={`badge ${u.gets_session_emails && u.email ? 'badge-current' : 'badge-notapplicable'}`}>
+                    {!u.email ? 'No email' : u.gets_session_emails ? 'On' : 'Off'}
+                  </span>
+                  {isAdmin && u.email && (
+                    <>
+                      {' '}
+                      <button className="link-button" disabled={togglingEmailId === u.user_id} onClick={() => toggleSessionEmails(u)}>
+                        {u.gets_session_emails ? 'Turn off' : 'Turn on'}
                       </button>
                     </>
                   )}

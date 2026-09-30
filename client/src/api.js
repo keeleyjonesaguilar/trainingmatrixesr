@@ -6,7 +6,8 @@ async function request(path, options = {}) {
     credentials: 'include',
     ...options,
   });
-  if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/public/')) {
+  // The employee/trainer portal has its own sign-in and handles its own 401s (pages/Portal.jsx).
+  if (res.status === 401 && !path.startsWith('/auth/') && !path.startsWith('/public/') && !path.startsWith('/portal/')) {
     // Session expired/invalid - reload so the app re-checks auth and falls back to the login screen.
     window.location.reload();
     throw new Error('Your session expired. Reloading...');
@@ -80,6 +81,8 @@ export const api = {
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) => request('/clients', { method: 'POST', body: JSON.stringify(data) }),
   updateClient: (id, data) => request(`/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  uploadClientLogo: (id, dataUrl) => request(`/clients/${id}/logo`, { method: 'PUT', body: JSON.stringify({ data_url: dataUrl }) }),
+  removeClientLogo: (id) => request(`/clients/${id}/logo`, { method: 'DELETE' }),
   deleteClient: (id) => request(`/clients/${id}`, { method: 'DELETE' }),
   getPossibleDuplicateClients: () => request('/clients/duplicates'),
   mergeClients: (winnerId, loserIds) => request('/clients/merge', { method: 'POST', body: JSON.stringify({ winner_id: winnerId, loser_ids: loserIds }) }),
@@ -240,6 +243,21 @@ export const api = {
 
   // Public sign-in (no auth) - reached only via a session's QR code at /s/:token.
   publicSessionInfo: (token) => request(`/public/${token}`),
+  // Employee/trainer portal (its own email + code sign-in) - /portal.
+  portalRequestCode: (email) => request('/portal/request-code', { method: 'POST', body: JSON.stringify({ email }) }),
+  portalVerify: (email, code) => request('/portal/verify', { method: 'POST', body: JSON.stringify({ email, code }) }),
+  portalMe: () => request('/portal/me'),
+  portalLogout: () => request('/portal/logout', { method: 'POST' }),
+  portalUpdatePhone: (employeeId, phone) => request(`/portal/profiles/${employeeId}/phone`, { method: 'PUT', body: JSON.stringify({ phone }) }),
+  portalRequestEmailChange: (newEmail) => request('/portal/email-change', { method: 'POST', body: JSON.stringify({ new_email: newEmail }) }),
+  portalConfirmEmailChange: (code) => request('/portal/email-change/confirm', { method: 'POST', body: JSON.stringify({ code }) }),
+  // Office side: invite someone to the portal, or remove their access.
+  invitePortal: (employeeId) => request(`/employees/${employeeId}/portal-invite`, { method: 'POST' }),
+  removePortal: (employeeId) => request(`/employees/${employeeId}/portal-invite`, { method: 'DELETE' }),
+  // An employee's QR-code training record (no login) - /r/:token.
+  publicRecord: (token) => request(`/public-record/${token}`),
+  getEmployeeRecordLink: (employeeId) => request(`/employees/${employeeId}/record-link`),
+  resetEmployeeRecordToken: (employeeId) => request(`/employees/${employeeId}/record-token/reset`, { method: 'POST' }),
   publicSignIn: (token, payload) => request(`/public/${token}/attendees`, { method: 'POST', body: JSON.stringify(payload) }),
   publicCloseSession: (token, payload) => request(`/public/${token}/close`, { method: 'POST', body: JSON.stringify(payload) }),
   // A multi-day session's trainer signs off their day (no certificates until the final day closes).
@@ -265,6 +283,7 @@ export const api = {
   getFeedbackSettings: () => request('/feedback-settings'),
   updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
   getTrainerClosePinSettings: () => request('/trainer-close-pin-settings'),
+  setUserSessionEmails: (userId, enabled) => request(`/users/${userId}/session-emails`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
   updateTrainerClosePinSettings: (data) => request('/trainer-close-pin-settings', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Notification bell (top bar) - broadcast to every account, e.g. when a training session closes.

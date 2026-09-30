@@ -6,7 +6,12 @@ const { dbGet, dbAll, dbRun } = require('../db');
 
 const router = express.Router();
 
+// A notification is cleared 24 hours after it's read; unread ones stay until read (Keeley's
+// request, 2026-09-30). read_at is UTC text, so it compares directly against this cutoff.
+const READ_CUTOFF_SQL = "to_char((now() AT TIME ZONE 'utc') - interval '24 hours', 'YYYY-MM-DD HH24:MI:SS')";
+
 router.get('/', async (req, res) => {
+  await dbRun(`DELETE FROM notifications WHERE user_id = ? AND read_at IS NOT NULL AND read_at < ${READ_CUTOFF_SQL}`, [req.user.user_id]);
   const notifications = await dbAll(
     'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
     [req.user.user_id]
@@ -35,3 +40,4 @@ router.post('/mark-all-read', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.READ_CUTOFF_SQL = READ_CUTOFF_SQL;

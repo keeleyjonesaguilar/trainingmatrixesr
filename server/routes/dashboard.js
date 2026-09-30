@@ -226,6 +226,9 @@ router.get('/', async (req, res) => {
   if (client_id) {
     const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id]);
     if (!client) return res.status(404).json({ error: 'Client not found' });
+    // The client's logo (migration 069) beside their name on this, their main profile view.
+    const logo = await dbGet('SELECT updated_at FROM client_logos WHERE client_id = ?', [client_id]);
+    client.logo_url = logo ? `/api/clients/${client_id}/logo?v=${encodeURIComponent(logo.updated_at)}` : null;
     const employees = await dbAll('SELECT * FROM employees WHERE client_id = ? AND active = 1', [client_id]);
     const { n: recordCount } = await dbGet('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0', [client_id]);
     const { counts, popularity } = await bulkComputeForEmployees(employees, masterTrainings, { collectPopularity: true });

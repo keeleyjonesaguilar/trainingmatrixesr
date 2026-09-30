@@ -1,6 +1,6 @@
-// Morning reminder to trainers who haven't finished a session (Keeley's request, 2026-09-29):
-// at 7:00 AM Eastern, any session still open after its scheduled day gets one email to its
-// trainer - "close out your session" for a single-day (or final-day) session, "sign off Day N"
+// Reminders to trainers who haven't finished a session (Keeley's requests, 2026-09-29/30): at
+// 9:00 PM Eastern on the day of training, and again at 7:00 AM the next morning if it's still
+// open - one email each to its trainer - "close out your session" for a single-day (or final-day) session, "sign off Day N"
 // for a day of a multi-day course (lib/sessionDays.js), sent to that day's trainer. Each session/
 // day is reminded once, and only for the last few days, so old sessions never left open don't
 // all get emailed at once.
@@ -86,9 +86,19 @@ async function remind({ session, to, trainerName, action, dayLabel, date }) {
   console.log(`[${new Date().toISOString()}] Session reminder sent to ${to}: ${label} (${dayLabel})`);
 }
 
-async function runReminders() {
+// 'evening' (9 PM): sessions scheduled for today that still aren't finished. 'morning' (7 AM): ones
+// from the last few days still left open. Each mode has its own once-only marker, so the 9 PM
+// email never stops the next morning's (Keeley's request, 2026-09-30: both).
+const MARKERS = {
+  evening: { session: 'evening_reminder_sent_at', day: 'evening_reminder_sent_at' },
+  morning: { session: 'close_reminder_sent_at', day: 'reminder_sent_at' },
+};
+
+async function runReminders(mode = 'morning') {
   const today = easternToday();
   const oldest = addDays(today, -REMINDER_WINDOW_DAYS);
+  const inWindow = (date) => (mode === 'evening' ? date === today : date < today && date >= oldest);
+  const marker = MARKERS[mode];
   const sessions = await dbAll(
     `SELECT ts.*, c.client_name FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id WHERE ts.status = 'open'`,
     []
@@ -96,10 +106,10 @@ async function runReminders() {
   for (const session of sessions) {
     try {
       if (!session.total_days) {
-        if (!(session.session_date < today && session.session_date >= oldest)) continue; // eslint-disable-line no-continue
+        if (!inWindow(session.session_date)) continue; // eslint-disable-line no-continue
         // eslint-disable-next-line no-await-in-loop
         const claimed = await dbRun(
-          'UPDATE training_sessions SET close_reminder_sent_at = now_utc_text() WHERE session_id = ? AND close_reminder_sent_at IS NULL AND status = ?',
+          `UPDATE training_sessions SET ${marker.session} = now_utc_text() WHERE session_id = ? AND ${marker.session} IS NULL AND status = ?`,
           [session.session_id, 'open']
         );
         if (!claimed.changes) continue; // eslint-disable-line no-continue
@@ -114,7 +124,7 @@ async function runReminders() {
       // Multi-day: the day currently open is the one still waiting on its trainer.
       // eslint-disable-next-line no-await-in-loop
       const day = (await getSessionDays(session))[session.current_day - 1];
-      if (!day || day.signed_at || !day.date || !(day.date < today && day.date >= oldest)) continue; // eslint-disable-line no-continue
+      if (!day || day.signed_at || !day.date || !inWindow(day.date)) continue; // eslint-disable-line no-continue
       // eslint-disable-next-line no-await-in-loop
       await dbRun(
         `INSERT INTO session_days (id, session_id, day_number, assigned_trainer_name, assigned_trainer_employee_id)
@@ -123,7 +133,7 @@ async function runReminders() {
       );
       // eslint-disable-next-line no-await-in-loop
       const claimed = await dbRun(
-        'UPDATE session_days SET reminder_sent_at = now_utc_text() WHERE session_id = ? AND day_number = ? AND reminder_sent_at IS NULL AND signed_at IS NULL',
+        `UPDATE session_days SET ${marker.day} = now_utc_text() WHERE session_id = ? AND day_number = ? AND ${marker.day} IS NULL AND signed_at IS NULL`,
         [session.session_id, day.day_number]
       );
       if (!claimed.changes) continue; // eslint-disable-line no-continue
@@ -152,11 +162,16 @@ function start() {
     console.log('Session reminder emails are off on this server (they only run on the live site).');
     return;
   }
-  cron.schedule('0 7 * * *', () => { runReminders().catch((err) => console.error(`Session reminders FAILED: ${err.message}`)); }, { timezone: EASTERN_TZ });
-  // Catch up if the server (re)started after 7 AM - already-sent reminders are skipped.
+  const run = (mode) => runReminders(mode).catch((err) => console.error(`Session reminders (${mode}) FAILED: ${err.message}`));
+  cron.schedule('0 7 * * *', () => run('morning'), { timezone: EASTERN_TZ });
+  cron.schedule('0 21 * * *', () => run('evening'), { timezone: EASTERN_TZ });
+  // Catch up if the server (re)started after 7 AM / 9 PM - already-sent reminders are skipped.
   const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: EASTERN_TZ, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
-  if (hour >= 7) setTimeout(() => runReminders().catch((err) => console.error(`Session reminders FAILED: ${err.message}`)), 60 * 1000);
-  console.log(`Session reminder scheduler started - daily at 7:00 AM (${EASTERN_TZ}).`);
+  setTimeout(() => {
+    if (hour >= 7) run('morning');
+    if (hour >= 21) run('evening');
+  }, 60 * 1000);
+  console.log(`Session reminder scheduler started - 9:00 PM day-of and 7:00 AM next morning (${EASTERN_TZ}).`);
 }
 
 module.exports = { start, runReminders, buildReminderEmail };

@@ -9,6 +9,17 @@ const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 
+// A client's logo lives in its own table (migration 069) and is only ever served by
+// GET /:id/logo - client JSON just says whether there is one and where to load it.
+async function withLogoInfo(row) {
+  if (!row) return row;
+  const logo = await dbGet('SELECT updated_at FROM client_logos WHERE client_id = ?', [row.client_id]);
+  return { ...row, has_logo: Boolean(logo), logo_url: logo ? `/api/clients/${row.client_id}/logo?v=${encodeURIComponent(logo.updated_at)}` : null };
+}
+
+const LOGO_PATTERN = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/;
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+
 // Client directory (Keeley's request, 2026-08-18): the main Clients page now shows a running
 // list of clients first, so this includes a quick employee_count per client for that list -
 // clicking into a client is what shows/edits their training requirement settings. The internal
@@ -19,7 +30,12 @@ router.get('/', async (req, res) => {
     `SELECT c.*, (SELECT COUNT(*) FROM employees e WHERE e.client_id = c.client_id AND e.active = 1) AS employee_count
      FROM clients c WHERE c.is_internal = 0 ORDER BY c.client_name ASC`
   );
-  res.json(rows);
+  const logos = new Map((await dbAll('SELECT client_id, updated_at FROM client_logos', [])).map((l) => [l.client_id, l.updated_at]));
+  res.json(rows.map((r) => ({
+    ...r,
+    has_logo: logos.has(r.client_id),
+    logo_url: logos.has(r.client_id) ? `/api/clients/${r.client_id}/logo?v=${encodeURIComponent(logos.get(r.client_id))}` : null,
+  })));
 });
 
 // Registered before /:id so the literal path "duplicates"/"merge" doesn't get swallowed by
@@ -48,7 +64,7 @@ router.post('/merge', requireAdmin, async (req, res) => {
     actor: req.user, action: 'clients_merged', entityType: 'client', entityId: winner_id,
     entityLabel: winner.client_name, details: `merged ${loser_ids.length} duplicate(s)`, req,
   });
-  res.json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [winner_id]));
+  res.json(await withLogoInfo(await dbGet('SELECT * FROM clients WHERE client_id = ?', [winner_id])));
 });
 
 // Dismiss a possible-duplicate grouping without merging (Keeley's request) - e.g. two clients
@@ -66,7 +82,41 @@ router.post('/duplicates/ignore', requireAdmin, async (req, res) => {
 router.get('/:id', async (req, res) => {
   const row = await dbGet('SELECT * FROM clients WHERE client_id = ?', [req.params.id]);
   if (!row) return res.status(404).json({ error: 'Client not found' });
-  res.json(row);
+  res.json(await withLogoInfo(row));
+});
+
+router.get('/:id/logo', async (req, res) => {
+  const row = await dbGet('SELECT logo_data FROM client_logos WHERE client_id = ?', [req.params.id]);
+  const match = LOGO_PATTERN.exec(row?.logo_data || '');
+  if (!match) return res.status(404).json({ error: 'No logo' });
+  res.set('Content-Type', match[1]);
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.send(Buffer.from(match[2], 'base64'));
+});
+
+// Keeley's request, 2026-09-30 - PNG/JPG/WebP only (an SVG can carry script), up to 2 MB.
+router.put('/:id/logo', requireAdmin, async (req, res) => {
+  const client = await dbGet('SELECT client_id, client_name FROM clients WHERE client_id = ?', [req.params.id]);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const dataUrl = String(req.body?.data_url || '');
+  const match = LOGO_PATTERN.exec(dataUrl);
+  if (!match) return res.status(400).json({ error: 'The logo must be a PNG, JPG, or WebP image.' });
+  if (Buffer.from(match[2], 'base64').length > MAX_LOGO_BYTES) return res.status(400).json({ error: 'The logo must be 2 MB or smaller.' });
+  await dbRun(
+    `INSERT INTO client_logos (client_id, logo_data, updated_at) VALUES (?, ?, now_utc_text())
+     ON CONFLICT (client_id) DO UPDATE SET logo_data = EXCLUDED.logo_data, updated_at = EXCLUDED.updated_at`,
+    [client.client_id, dataUrl]
+  );
+  logActivity({ actor: req.user, action: 'client_logo_updated', entityType: 'client', entityId: client.client_id, entityLabel: client.client_name, req });
+  res.json(await withLogoInfo(await dbGet('SELECT * FROM clients WHERE client_id = ?', [client.client_id])));
+});
+
+router.delete('/:id/logo', requireAdmin, async (req, res) => {
+  const client = await dbGet('SELECT client_id, client_name FROM clients WHERE client_id = ?', [req.params.id]);
+  if (!client) return res.status(404).json({ error: 'Client not found' });
+  await dbRun('DELETE FROM client_logos WHERE client_id = ?', [client.client_id]);
+  logActivity({ actor: req.user, action: 'client_logo_removed', entityType: 'client', entityId: client.client_id, entityLabel: client.client_name, req });
+  res.json(await withLogoInfo(await dbGet('SELECT * FROM clients WHERE client_id = ?', [client.client_id])));
 });
 
 // Creating a client (but not editing, deleting, or merging one) is open to the plain 'user'
@@ -84,7 +134,7 @@ router.post('/', async (req, res) => {
     notes,
   ]);
   logActivity({ actor: req.user, action: 'client_created', entityType: 'client', entityId: client_id, entityLabel: client_name.trim(), req });
-  res.status(201).json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id]));
+  res.status(201).json(await withLogoInfo(await dbGet('SELECT * FROM clients WHERE client_id = ?', [client_id])));
 });
 
 router.put('/:id', requireAdmin, async (req, res) => {
@@ -100,7 +150,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     req.params.id,
   ]);
   logActivity({ actor: req.user, action: 'client_updated', entityType: 'client', entityId: req.params.id, entityLabel: client_name, req });
-  res.json(await dbGet('SELECT * FROM clients WHERE client_id = ?', [req.params.id]));
+  res.json(await withLogoInfo(await dbGet('SELECT * FROM clients WHERE client_id = ?', [req.params.id])));
 });
 
 // Permanently deletes a client and everything under it (employees, training records,

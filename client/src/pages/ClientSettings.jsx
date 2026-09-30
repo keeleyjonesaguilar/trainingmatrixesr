@@ -168,7 +168,7 @@ export default function ClientSettings() {
                         drilldown, 2026-08-19 per Keeley's request) - "Settings" (renamed from
                         "View Settings") is the only link that goes to the requirements/overrides
                         page instead. */}
-                    <td><Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
+                    <td>{c.logo_url && <img src={c.logo_url} alt="" style={{ height: 20, maxWidth: 48, objectFit: 'contain', verticalAlign: 'middle', marginRight: 8 }} />}<Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
                     <td>{c.employee_count ?? 0}</td>
                     <td>
                       {compliance ? (
@@ -216,7 +216,7 @@ export default function ClientSettings() {
               <tbody>
                 {inactiveClients.map((c) => (
                   <tr key={c.client_id}>
-                    <td><Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
+                    <td>{c.logo_url && <img src={c.logo_url} alt="" style={{ height: 20, maxWidth: 48, objectFit: 'contain', verticalAlign: 'middle', marginRight: 8 }} />}<Link to={`/?client_id=${c.client_id}`}>{c.client_name}</Link></td>
                     <td>{c.employee_count ?? 0}</td>
                     <td><span className="badge badge-notapplicable">Inactive</span></td>
                     <td><Link to={`/clients/${c.client_id}`}>Settings &rarr;</Link></td>

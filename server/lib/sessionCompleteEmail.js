@@ -30,7 +30,8 @@ function sessionDates(session) {
   return longDate(session.session_date);
 }
 
-function attendeeResult(a) {
+function attendeeResult(a, isToolbox = false) {
+  if (isToolbox) return { text: 'Attended', color: '#146c3a', bg: '#e3f6ea' };
   if (a.processing_status === 'incomplete_attendance') return { text: 'Incomplete – missed a day', color: '#a15c00', bg: '#fff2df' };
   if (a.certificate_path) return { text: 'Certified', color: '#146c3a', bg: '#e3f6ea' };
   return { text: 'No certificate', color: '#b3261e', bg: '#fde8e8' };
@@ -54,10 +55,12 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
   // them gets this email, so the greeting only names someone when there's a single trainer.
   const allTrainers = session.all_trainer_names || trainerName;
   const greeting = allTrainers.includes(',') ? 'Hi' : `Hi ${esc(trainerName.split(' ')[0])}`;
-  const certified = attendees.filter((a) => attendeeResult(a).text === 'Certified').length;
+  const isToolbox = session.session_kind === 'toolbox_talk';
+  const certified = attendees.filter((a) => ['Certified', 'Attended'].includes(attendeeResult(a, isToolbox).text)).length;
   const notCertified = attendees.length - certified;
 
-  const subject = `${isUpdate ? 'Training Updated' : 'Training Completed'}: ${title} – ${session.client_name} – ${longDate(session.session_date)}`;
+  const kindWord = isToolbox ? 'Toolbox Talk' : 'Training';
+  const subject = `${kindWord} ${isUpdate ? 'Updated' : 'Completed'}: ${title} – ${session.client_name} – ${longDate(session.session_date)}`;
 
   let intro;
   if (isUpdate) {
@@ -90,7 +93,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
     ['Date', esc(sessionDates(session))],
     [allTrainers.includes(',') ? 'Trainers' : 'Trainer', esc(allTrainers)],
     ...(session.location ? [['Location', esc(session.location)]] : []),
-    ['Attendees', `${attendees.length} total &nbsp;·&nbsp; <span style="color:#146c3a;font-weight:600;">${certified} certified</span>${notCertified ? ` &nbsp;·&nbsp; <span style="color:#a15c00;font-weight:600;">${notCertified} not certified</span>` : ''}`],
+    ['Attendees', `${attendees.length} total &nbsp;·&nbsp; <span style="color:#146c3a;font-weight:600;">${certified} ${isToolbox ? 'attended' : 'certified'}</span>${notCertified ? ` &nbsp;·&nbsp; <span style="color:#a15c00;font-weight:600;">${notCertified} not certified</span>` : ''}`],
   ].map(([k, v]) => `
               <tr>
                 <td style="${FONT}font-size:12px;color:${MUTED};text-transform:uppercase;letter-spacing:.04em;padding:6px 0;width:110px;vertical-align:top;">${k}</td>
@@ -106,7 +109,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
               </tr>`).join('');
 
   const rosterRows = attendees.map((a, i) => {
-    const r = attendeeResult(a);
+    const r = attendeeResult(a, isToolbox);
     return `
               <tr style="background:${i % 2 ? '#fafbfc' : '#ffffff'};">
                 <td style="${FONT}font-size:13px;color:${MUTED};padding:9px 10px;border-top:1px solid ${BORDER};">${i + 1}</td>
@@ -129,7 +132,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
         </td></tr>
 
         <tr><td style="background:${GREEN};padding:24px 28px;">
-          <div style="${FONT}font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${GOLD};">${isUpdate ? 'Training Session Updated' : 'Training Session Completed'}</div>
+          <div style="${FONT}font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:${GOLD};">${isToolbox ? 'Toolbox Talk' : 'Training Session'} ${isUpdate ? 'Updated' : 'Completed'}</div>
           <div style="${FONT}font-size:24px;font-weight:700;color:#ffffff;margin-top:6px;line-height:1.25;">${esc(title)}</div>
           <div style="${FONT}font-size:14px;color:#cfe5df;margin-top:6px;">${esc(session.client_name)} &nbsp;·&nbsp; ${esc(sessionDates(session))}</div>
         </td></tr>

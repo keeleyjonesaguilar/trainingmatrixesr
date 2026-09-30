@@ -329,9 +329,14 @@ export default function Dashboard() {
     return (
       <div>
         <div className="page-header">
-          <div>
-            <h1>{data.client.client_name}</h1>
-            <p className="page-subtitle">Client compliance overview.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {data.client.logo_url && (
+              <img src={data.client.logo_url} alt={`${data.client.client_name} logo`} style={{ maxHeight: 56, maxWidth: 160, objectFit: 'contain' }} />
+            )}
+            <div>
+              <h1>{data.client.client_name}</h1>
+              <p className="page-subtitle">Client compliance overview.</p>
+            </div>
           </div>
           <div className="page-header-actions">
             <button className="secondary" onClick={() => setSearchParams({})}>Back to All Clients</button>

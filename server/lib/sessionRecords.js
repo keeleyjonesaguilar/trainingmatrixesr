@@ -90,13 +90,18 @@ async function processAttendee(session, attendee, certificatePath) {
       return;
     }
 
+    const isToolbox = session.session_kind === 'toolbox_talk';
     const record = await repo.saveTrainingRecord({
       client_id: session.client_id,
       employee_id: employeeId,
       training_id: session.master_training_id,
       completion_date: session.session_date,
-      source: 'Training Sign-In',
-      notes: `Trainer: ${session.trainer_signed_name || session.trainer_name}. Session ID: ${session.session_id}.`,
+      source: isToolbox ? 'Toolbox Talk Sign-In' : 'Training Sign-In',
+      // A toolbox talk's topic is kept on the record itself (Keeley's request, 2026-09-30).
+      original_client_training_name: isToolbox ? session.training_type_label : null,
+      notes: isToolbox
+        ? `Toolbox talk topic: ${session.toolbox_topic}. Trainer: ${session.trainer_signed_name || session.trainer_name}. Session ID: ${session.session_id}.`
+        : `Trainer: ${session.trainer_signed_name || session.trainer_name}. Session ID: ${session.session_id}.`,
     });
 
     if (certificatePath) {

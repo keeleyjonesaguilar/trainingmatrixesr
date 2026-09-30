@@ -109,7 +109,8 @@ router.get('/', async (req, res) => {
   const clauses = [];
   const params = [];
   if (client_id) { clauses.push('ts.client_id = ?'); params.push(client_id); }
-  if (client_name) { clauses.push('c.client_name LIKE ?'); params.push(`%${client_name}%`); }
+  // Case-insensitive (Keeley's report, 2026-09-30: "brady" found nothing - Postgres LIKE is case-sensitive).
+  if (client_name) { clauses.push('c.client_name ILIKE ?'); params.push(`%${client_name}%`); }
   if (master_training_id) { clauses.push('ts.master_training_id = ?'); params.push(master_training_id); }
   if (status) { clauses.push('ts.status = ?'); params.push(status); }
   // Feeds a Trainer's own "Trainings Taught" section on their profile.
@@ -208,11 +209,34 @@ router.post('/', async (req, res) => {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
     total_days = null, day_dates = null, day_outlines = null, day_trainers = null,
+    session_kind = 'training', toolbox_topic = null,
   } = req.body || {};
-  if (!client_name || !training_type_label || !trainer_name || !session_date || !location || !duration || !outline) {
+  // A toolbox talk (Keeley's request, 2026-09-30): a Topic instead of a catalog training, filed
+  // under the catalog's "Toolbox Talk" entry; outline/duration optional; never multi-day.
+  const isToolbox = session_kind === 'toolbox_talk';
+  let toolboxTrainingId = null;
+  if (isToolbox) {
+    if (!String(toolbox_topic || '').trim()) return res.status(400).json({ error: 'A topic is required for a toolbox talk.' });
+    const toolbox = await dbGet("SELECT training_id FROM master_trainings WHERE LOWER(training_name) = 'toolbox talk' ORDER BY training_id LIMIT 1", []);
+    if (!toolbox) return res.status(400).json({ error: 'The catalog has no "Toolbox Talk" training to file these under.' });
+    toolboxTrainingId = toolbox.training_id;
+  }
+  const topic = isToolbox ? String(toolbox_topic).trim() : null;
+  const effective = isToolbox
+    ? {
+      master_training_id: toolboxTrainingId,
+      training_type_label: `Toolbox Talk: ${topic}`,
+      outline: String(outline || '').trim() || topic,
+      duration: String(duration || '').trim() || '15 minutes',
+    }
+    : { master_training_id, training_type_label, outline, duration };
+  if (!client_name || !effective.training_type_label || !trainer_name || !session_date || !location || !effective.duration || !effective.outline) {
     return res.status(400).json({
       error: 'client_name, training_type_label, trainer_name, session_date, location, duration, and outline are all required',
     });
+  }
+  if (isToolbox && (total_days || (Array.isArray(additional_trainings) && additional_trainings.length))) {
+    return res.status(400).json({ error: 'A toolbox talk is a single session - no extra days or additional trainings.' });
   }
   if (!Array.isArray(additional_trainings) || additional_trainings.some((t) => !t?.training_type_label)) {
     return res.status(400).json({ error: 'additional_trainings must be a list of {master_training_id, training_type_label}' });
@@ -242,26 +266,26 @@ router.post('/', async (req, res) => {
   // trainer_phone are kept as-typed on the session too, a frozen display fallback (matches
   // how client_name works above).
   const trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_name, trainer_phone);
-  const { training_type_label_es, outline_es, warning } = await translateSessionFields(training_type_label, outline, language);
+  const { training_type_label_es, outline_es, warning } = await translateSessionFields(effective.training_type_label, effective.outline, language);
   const session_id = uuidv4();
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates, day_outlines)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates, day_outlines, session_kind, toolbox_topic)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
       clientId,
-      master_training_id || null,
-      training_type_label,
+      effective.master_training_id || null,
+      effective.training_type_label,
       trainer_name,
       trainer_phone ? trainer_phone.trim() : null,
       trainerEmployeeId,
       session_date,
-      outline,
+      effective.outline,
       location,
-      duration,
+      effective.duration,
       req.user.username,
       language,
       training_type_label_es,
@@ -269,6 +293,8 @@ router.post('/', async (req, res) => {
       totalDays,
       dayDatesJson,
       dayOutlinesJson,
+      isToolbox ? 'toolbox_talk' : 'training',
+      topic,
     ]
   );
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
@@ -292,7 +318,7 @@ router.post('/', async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
   logActivity({
     actor: req.user, action: 'session_created', entityType: 'training_session', entityId: session_id,
-    entityLabel: `${training_type_label} · ${client_name}`,
+    entityLabel: `${effective.training_type_label} · ${client_name}`,
     details: additional_trainings.length ? `+${additional_trainings.length} additional training(s)` : undefined,
     req,
   });
@@ -307,6 +333,15 @@ router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Session not found' });
   const merged = { ...existing, ...req.body };
+  if (existing.session_kind === 'toolbox_talk') {
+    const topic = String(merged.toolbox_topic || existing.toolbox_topic || '').trim();
+    if (!topic) return res.status(400).json({ error: 'A topic is required for a toolbox talk.' });
+    merged.toolbox_topic = topic;
+    merged.training_type_label = `Toolbox Talk: ${topic}`;
+    merged.master_training_id = existing.master_training_id;
+    merged.outline = String(merged.outline || '').trim() || topic;
+    merged.duration = String(merged.duration || '').trim() || '15 minutes';
+  }
 
   if (!merged.client_name && !existing.client_id) {
     return res.status(400).json({ error: 'client_name is required' });
@@ -368,7 +403,8 @@ router.put('/:id', requireAdmin, async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET client_id=?, master_training_id=?, training_type_label=?, trainer_name=?, trainer_phone=?, trainer_employee_id=?,
-         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?, day_dates=?, day_outlines=?
+         session_date=?, outline=?, location=?, duration=?, language=?, training_type_label_es=?, outline_es=?, total_days=?, day_dates=?, day_outlines=?,
+         toolbox_topic=?
      WHERE session_id=?`,
     [
       clientId,
@@ -387,6 +423,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       totalDays,
       dayDatesJson,
       dayOutlinesJson,
+      merged.toolbox_topic || null,
       req.params.id,
     ]
   );
@@ -749,7 +786,8 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
     } else {
       let certPath = null;
       try {
-        certPath = await generateCertificate(await withDayTrainers(session), attendee);
+        // A toolbox talk has no certificate - the record below still logs their attendance.
+        if (session.session_kind !== 'toolbox_talk') certPath = await generateCertificate(await withDayTrainers(session), attendee);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(`Certificate generation failed for manually-added attendee ${attendee_id}:`, err);

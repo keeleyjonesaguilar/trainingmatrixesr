@@ -684,6 +684,11 @@ async function mergeClients(winnerId, loserIds) {
       }
     }
 
+    // Keep the other client's logo (migration 069) when the kept client doesn't have one.
+    await dbRun(
+      'UPDATE client_logos SET client_id = ? WHERE client_id = ? AND NOT EXISTS (SELECT 1 FROM client_logos WHERE client_id = ?)',
+      [winnerId, loserId, winnerId]
+    );
     await dbRun('DELETE FROM clients WHERE client_id = ?', [loserId]);
   }
 

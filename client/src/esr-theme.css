@@ -1,0 +1,170 @@
+/* ESR look for the whole app (Keeley's request, 2026-09-30: "make it more ESR on the backend -
+   don't change how things flow or where they are, just make it look like an ESR site, similar to
+   how we did the portal"). Same brand as the ESR Employee Portal (esr-portal.com): ESR green with
+   a gold accent, navy headings, Montserrat headings over Open Sans text, squared-off corners.
+   Loaded after index.css and sessions.css and only restyles - it never moves anything. */
+
+:root {
+  --esr-green: #026754;
+  --esr-green-dark: #014d3f;
+  --esr-gold: #c49b0d;
+  --esr-gold-ink: #8a6c05;
+  --esr-navy: #1f3a53;
+  --esr-tint: #eaf2ef;
+
+  --color-bg: #f5f7f6;
+  --color-surface: #ffffff;
+  --color-border: #d9e0dd;
+  --color-text: #2d3330;
+  --color-text-muted: #5f6b67;
+  --color-primary: var(--esr-green);
+  --color-primary-hover: var(--esr-green-dark);
+
+  --font-head: 'Montserrat', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-body: 'Open Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  font-family: var(--font-body);
+}
+
+body { font-family: var(--font-body); font-size: 14.5px; }
+:focus-visible { outline: 3px solid var(--esr-gold); outline-offset: 2px; }
+
+h1, h2, h3 { font-family: var(--font-head); font-weight: 600; color: var(--esr-navy); letter-spacing: 0.005em; }
+h1 { font-weight: 700; }
+a { color: var(--esr-green); }
+
+/* ---- Sidebar: white brand strip over ESR green, gold marker on the current page ---- */
+.sidebar { background: var(--esr-green); border-right: none; padding: 0 0 18px; }
+/* The logo strip and the top bar share one height, so their gold underlines join into a
+   single line across the page (Keeley's note, 2026-09-30). */
+:root { --header-height: 76px; }
+.sidebar-brand {
+  background: var(--color-surface);
+  border-bottom: 3px solid var(--esr-gold);
+  margin: 0 0 12px;
+  padding: 0 16px;
+  height: var(--header-height);
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 5px;
+}
+.sidebar-brand-mark { width: auto; height: 34px; }
+.sidebar-brand-name {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--esr-gold-ink);
+  white-space: normal;
+}
+.sidebar-nav { padding: 0 10px; }
+.sidebar-nav a {
+  color: rgb(255 255 255 / 88%);
+  font-family: var(--font-head);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 2px;
+}
+.sidebar-nav a:hover { background: rgb(255 255 255 / 12%); color: #fff; }
+.sidebar-nav a.active { background: var(--esr-green-dark); color: #fff; box-shadow: inset 3px 0 0 var(--esr-gold); }
+
+/* ---- Top bar ---- */
+.topbar { border-bottom: 3px solid var(--esr-gold); height: var(--header-height); box-sizing: border-box; padding-top: 0; padding-bottom: 0; }
+.topbar-user-name { font-family: var(--font-head); }
+
+/* ---- Cards, tiles, tables ---- */
+.card, .stat-tile, .modal-card { border-radius: 4px; }
+.stat-tile .stat-label { font-family: var(--font-head); font-weight: 600; letter-spacing: 0.08em; }
+.stat-tile .value { font-family: var(--font-head); color: var(--esr-navy); }
+.stat-tile .caption { border-radius: 2px; }
+.table-scroll, .matrix-scroll { border-radius: 4px; }
+th, .matrix-scroll th:first-child { background: var(--esr-tint); color: var(--esr-navy); font-family: var(--font-head); font-weight: 600; letter-spacing: 0.06em; }
+.page-subtitle { color: var(--color-text-muted); }
+.detail-name { font-family: var(--font-head); color: var(--esr-navy); }
+
+/* ---- Buttons: ESR green, uppercase Montserrat, squared ---- */
+button:not([class]), button.secondary, button.danger, .btn, .file-picker-button {
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+button.secondary, .btn-secondary, .file-picker-button {
+  background: var(--color-surface);
+  color: var(--esr-green);
+  border-color: var(--esr-green);
+}
+button.secondary:hover, .btn-secondary:hover, .file-picker-button:hover { background: var(--esr-tint); }
+.btn-accent { background: var(--esr-green); border-color: var(--esr-green); }
+.btn-accent:hover { background: var(--esr-green-dark); border-color: var(--esr-green-dark); }
+.btn-sm { font-size: 11px; }
+.tab-row button { font-family: var(--font-head); font-weight: 600; border-radius: 2px; }
+.link-button { color: var(--esr-green); }
+
+/* ---- Form fields ---- */
+select, input[type="text"], input[type="date"], input[type="search"], input[type="password"], input[type="email"],
+input[type="number"], input[type="tel"], input[type="datetime-local"], input:not([type]), textarea,
+.training-search-select input {
+  border-radius: 3px;
+  border-color: var(--color-border);
+  font-family: var(--font-body);
+}
+.field label, .field-row label { font-family: var(--font-head); font-weight: 600; letter-spacing: 0.02em; }
+
+/* ---- Status chips ---- */
+.badge {
+  font-family: var(--font-head);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+.error-banner, .success-banner { border-radius: 2px; border-left: 4px solid currentColor; }
+
+/* ---- Pop-ups ---- */
+.notification-dropdown, .training-search-dropdown { border-radius: 4px; }
+.notification-dropdown-header { font-family: var(--font-head); }
+
+/* Big two-line choice cards (sign-in page "first day / earlier day") keep normal text. */
+.btn.choice-button { font-family: var(--font-body); font-size: 14px; font-weight: 500; text-transform: none; letter-spacing: normal; color: var(--color-text); border-color: var(--color-border); border-radius: 4px; }
+.btn.choice-button:hover { background: var(--esr-tint); }
+
+/* index.css only styles some input types - email/number/phone/date-time and type-less inputs
+   picked up the browser default (just an underline in places). Same field look everywhere. */
+input[type="email"], input[type="number"], input[type="tel"], input[type="datetime-local"], input:not([type]) {
+  border: 1px solid var(--color-border);
+  padding: 7px 10px;
+  font-size: 14px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* One height for every single-line field and regular button (Keeley's note, 2026-09-30: blocks
+   "all a little misaligned"). Text boxes were 35px, drop-downs 37px and buttons 31px, so any
+   row mixing them - filter bars, label-over-field rows, field + button pairs - sat a few pixels
+   off. Small buttons and fields (.btn-sm, or ones sized inline) keep their own size. */
+:root { --control-height: 36px; }
+:is(select, input[type="text"], input[type="date"], input[type="search"], input[type="password"], input[type="email"],
+input[type="number"], input[type="tel"], input[type="datetime-local"], input:not([type])):not([style*="padding"]) {
+  height: var(--control-height);
+  box-sizing: border-box;
+}
+select[multiple], select[size] { height: auto; }
+button:not([class]):not([style*="padding"]), button.secondary:not([style*="padding"]), button.danger:not([style*="padding"]),
+.btn:not(.btn-sm):not(.choice-button):not([style*="padding"]), .file-picker-button {
+  min-height: var(--control-height);
+  box-sizing: border-box;
+}
+/* Uppercase button text runs wider - page-header buttons stay on one line ("+ ADD CLIENT" was
+   breaking in two) and wrap as whole buttons instead. */
+.page-header-actions > button, .page-header-actions > .btn, .page-header-actions > a { white-space: nowrap; }
+/* Employee/trainer profile cards that share a row are the same height, so the row reads as one
+   even band instead of ragged bottoms (Keeley's note, 2026-09-30). */
+.profile-row { align-items: stretch; }

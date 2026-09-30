@@ -186,6 +186,27 @@ async function start() {
     message: { error: 'Too many attempts from this network. Please try again later.' },
   });
   app.use('/api/session-edit', sessionEditRateLimiter, require('./routes/sessionEdit'));
+  // Each employee's QR-code training record - public and read-only (routes/publicRecord.js).
+  const publicRecordRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests from this network. Please try again later.' },
+  });
+  app.use('/api/public-record', publicRecordRateLimiter, require('./routes/publicRecord'));
+  // Employee/trainer portal (routes/portal.js) - its own sign-in, not the office login. The code
+  // routes get a tight limit so codes can't be guessed or spammed.
+  const portalCodeRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many sign-in attempts from this network. Please try again in a few minutes.' },
+  });
+  app.use(['/api/portal/request-code', '/api/portal/verify', '/api/portal/email-change'], portalCodeRateLimiter);
+  const portalRateLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+  app.use('/api/portal', portalRateLimiter, require('./routes/portal'));
 
   // Serve the built React frontend in production (client/dist), so the whole app is one process.
   const clientDist = path.join(__dirname, '..', 'client', 'dist');

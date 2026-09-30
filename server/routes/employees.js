@@ -16,6 +16,8 @@ const { nameColumns } = require('../lib/names');
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const { getSessionDays } = require('../lib/sessionDays');
+const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require('../lib/employeeRecordCard');
+const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
 
 const router = express.Router();
 
@@ -171,6 +173,53 @@ async function multiDayEvents(recordId) {
   }));
 }
 
+// Each employee's scannable training record (Keeley's request, 2026-09-30) - see
+// lib/employeeRecordCard.js. `path` lets the page open it on whichever site it's on.
+router.get('/:id/record-qr.png', async (req, res) => {
+  const png = await recordQrPng(req.params.id);
+  if (!png) return res.status(404).json({ error: 'Employee not found' });
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-store');
+  res.send(png);
+});
+
+router.get('/:id/record-link', async (req, res) => {
+  const token = await ensureRecordToken(req.params.id);
+  if (!token) return res.status(404).json({ error: 'Employee not found' });
+  res.json({ path: recordPath(token) });
+});
+
+// ESR Training Portal access (Keeley's request, 2026-09-30: invite-only) - lib/portal.js. The
+// invite emails them a link; they then sign in with this email and a one-time code.
+router.post('/:id/portal-invite', requireAdmin, async (req, res) => {
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  try {
+    await sendPortalInvite(employee);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  logActivity({ actor: req.user, action: 'portal_invite_sent', entityType: 'employee', entityId: employee.employee_id, entityLabel: employee.full_name, req });
+  res.json(await dbGet('SELECT portal_invited_at, portal_last_login_at FROM employees WHERE employee_id = ?', [employee.employee_id]));
+});
+
+router.delete('/:id/portal-invite', requireAdmin, async (req, res) => {
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  await revokePortalInvite(employee);
+  logActivity({ actor: req.user, action: 'portal_access_removed', entityType: 'employee', entityId: employee.employee_id, entityLabel: employee.full_name, req });
+  res.json({ ok: true });
+});
+
+// A lost badge: the old QR code stops working, a new one is issued.
+router.post('/:id/record-token/reset', requireAdmin, async (req, res) => {
+  const token = await resetRecordToken(req.params.id);
+  if (!token) return res.status(404).json({ error: 'Employee not found' });
+  const employee = await dbGet('SELECT full_name FROM employees WHERE employee_id = ?', [req.params.id]);
+  logActivity({ actor: req.user, action: 'employee_qr_reset', entityType: 'employee', entityId: req.params.id, entityLabel: employee?.full_name, req });
+  res.json({ path: recordPath(token) });
+});
+
 router.get('/:id/full-detail', async (req, res) => {
   const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -232,7 +281,9 @@ router.get('/:id/full-detail', async (req, res) => {
     const { status, expirationDate } = computeStatus({ record: r, requirement, masterTraining });
     return {
       training_id: r.training_id,
-      training_name: requirement?.client_training_name || r.master_training_name,
+      // A toolbox talk shows its topic ("Toolbox Talk: Ladder Safety") - lib/sessionRecords.js.
+      training_name: (r.source === 'Toolbox Talk Sign-In' && r.original_client_training_name)
+        || requirement?.client_training_name || r.master_training_name,
       master_training_name: r.master_training_name,
       original_client_training_name: r.original_client_training_name,
       completion_date: r.completion_date,
@@ -445,9 +496,12 @@ router.post('/:id/documents', requireAdmin, async (req, res) => {
     }
     // Optional link to one catalog training (server/migrations/060_employee_document_training.sql).
     const trainingId = (req.body?.training_id || '').trim() || null;
-    if (trainingId && !(await dbGet('SELECT training_id FROM master_trainings WHERE training_id = ?', [trainingId]))) {
+    // Only a training this employee actually has on their profile (Keeley's request, 2026-09-30).
+    if (trainingId && !(await dbGet(
+      'SELECT 1 AS x FROM employee_training_records WHERE employee_id = ? AND training_id = ? LIMIT 1', [req.params.id, trainingId]
+    ))) {
       fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: 'That training is not in the catalog.' });
+      return res.status(400).json({ error: "That training isn't on this employee's profile." });
     }
     const document_id = uuidv4();
     await dbRun(

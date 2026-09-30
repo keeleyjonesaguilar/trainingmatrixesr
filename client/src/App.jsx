@@ -22,6 +22,8 @@ import TrainingTypeDetail from './pages/TrainingTypeDetail.jsx';
 import PublicSignIn from './pages/PublicSignIn.jsx';
 import PublicFeedback from './pages/PublicFeedback.jsx';
 import PublicSessionEdit from './pages/PublicSessionEdit.jsx';
+import PublicRecord from './pages/PublicRecord.jsx';
+import Portal from './pages/Portal.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import { api } from './api';
 import { AuthContext } from './authContext.jsx';
@@ -36,6 +38,8 @@ export default function App() {
     location.pathname.startsWith('/s/') ||
     location.pathname.startsWith('/feedback/') ||
     location.pathname.startsWith('/session-edit/') ||
+    location.pathname.startsWith('/r/') ||
+    location.pathname === '/portal' || location.pathname.startsWith('/portal/') ||
     location.pathname.startsWith('/reset-password');
 
   const [status, setStatus] = useState('loading'); // loading | signed-out | signed-in
@@ -57,6 +61,8 @@ export default function App() {
         <Route path="/s/:token" element={<PublicSignIn />} />
         <Route path="/feedback/:token" element={<PublicFeedback />} />
         <Route path="/session-edit/:editToken" element={<PublicSessionEdit />} />
+        <Route path="/r/:token" element={<PublicRecord />} />
+        <Route path="/portal" element={<Portal />} />
         <Route path="/reset-password" element={<ResetPassword />} />
       </Routes>
     );

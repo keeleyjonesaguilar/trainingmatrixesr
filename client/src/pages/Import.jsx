@@ -194,6 +194,11 @@ export default function Import() {
         columns, then one column per training holding that training's completion date) - less common, but still
         supported for a sheet already built that way.
       </p>
+      <p className="page-subtitle">
+        Optional contact columns: <strong>Phone</strong> (or Phone #, Cell) and <strong>Email</strong> for the employee,
+        and <strong>Trainer</strong>, <strong>Trainer Phone</strong> and <strong>Trainer Email</strong> for who taught it.
+        Contact details fill in a profile's blanks - an existing phone or email on file is never overwritten.
+      </p>
       {error && <div className="error-banner">{error}</div>}
 
       {!isAdmin && (
@@ -216,7 +221,7 @@ export default function Import() {
           </div>
           <p className="page-subtitle">
             One row per employee (see below) or one row per training completion - the format is auto-detected. {' '}
-            <a href={api.importTemplateUrl}>Download a blank template</a> (Employee / Client / Certification / Activation / Training ID) to start from.
+            <a href={api.importTemplateUrl}>Download a blank template</a> (Employee / Client / Certification / Activation / Training ID, plus the optional contact columns) to start from.
           </p>
         </div>
       )}

@@ -156,9 +156,15 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
     // eslint-disable-next-line no-await-in-loop
     if (profileId) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email);
   }
-  const trainerRecipients = new Set([session.trainer_email, trainerProfileEmail, ...dayTrainerEmails].map(normalize).filter(Boolean));
-  const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL', []);
-  const recipients = [...new Set([...trainerRecipients, ...appUsers.map((u) => normalize(u.email))].filter(Boolean))];
+  // Each app user's Training Emails on/off is set on Manage Users (routes/users.js, Keeley's
+  // request, 2026-09-30); email_settings (migration 067) holds the trainer on/off and any extra
+  // addresses, which stay at their defaults (trainers on, no extras) - no screen edits them.
+  const settings = await dbGet('SELECT * FROM email_settings WHERE id = ?', ['default']);
+  const toTrainers = settings ? Boolean(settings.session_emails_to_trainers) : true;
+  const trainerRecipients = new Set(toTrainers ? [session.trainer_email, trainerProfileEmail, ...dayTrainerEmails].map(normalize).filter(Boolean) : []);
+  const appUsers = await dbAll('SELECT email FROM app_users WHERE email IS NOT NULL AND gets_session_emails = 1', []);
+  const extra = String(settings?.session_emails_extra || '').split(/[,;\s]+/).map(normalize).filter(Boolean);
+  const recipients = [...new Set([...trainerRecipients, ...appUsers.map((u) => normalize(u.email)), ...extra].filter(Boolean))];
 
   const editUrl = sessionEditUrl(await ensureEditToken(session.session_id));
   const trainingLabels = [session.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)];

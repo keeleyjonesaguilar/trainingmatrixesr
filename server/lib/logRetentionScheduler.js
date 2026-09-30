@@ -7,6 +7,7 @@
 // server/lib/backupScheduler.js, so it doesn't depend on any specific machine being on.
 const cron = require('node-cron');
 const { dbRun } = require('../db');
+const { READ_CUTOFF_SQL } = require('../routes/notifications');
 
 const LOGIN_ATTEMPTS_RETENTION_DAYS = 90;
 const ACCOUNT_CHANGES_RETENTION_DAYS = 90;
@@ -22,9 +23,13 @@ async function runCleanup() {
   const loginAttempts = await dbRun('DELETE FROM login_attempts WHERE attempted_at < ?', [cutoffIso(LOGIN_ATTEMPTS_RETENTION_DAYS)]);
   const accountChanges = await dbRun('DELETE FROM admin_actions WHERE created_at < ?', [cutoffIso(ACCOUNT_CHANGES_RETENTION_DAYS)]);
   const activityLog = await dbRun('DELETE FROM activity_log WHERE created_at < ?', [cutoffIso(ACTIVITY_LOG_RETENTION_DAYS)]);
+  // Read notifications go 24 hours after being read, for every account - including ones nobody
+  // has opened the bell on since (routes/notifications.js clears the viewer's own on each load).
+  const notifications = await dbRun(`DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ${READ_CUTOFF_SQL}`, []);
   console.log(
     `[${new Date().toISOString()}] Log retention cleanup: ` +
-      `${loginAttempts.changes} login attempt(s), ${accountChanges.changes} account change(s), ${activityLog.changes} activity log entr(ies) removed.`
+      `${loginAttempts.changes} login attempt(s), ${accountChanges.changes} account change(s), ${activityLog.changes} activity log entr(ies), ` +
+      `${notifications.changes} read notification(s) removed.`
   );
 }
 

@@ -16,6 +16,7 @@ const ACCOUNT_ACTION_LABELS = {
   mfa_disabled: '2FA disabled',
   email_changed: 'Email changed',
   email_changed_by_admin: 'Email changed (by admin)',
+  session_emails_changed: 'Training emails turned on/off',
 };
 
 // Everything server/lib/activityLog.js's logActivity() calls have used an `action` string for -
@@ -38,10 +39,15 @@ const ACTIVITY_ACTION_LABELS = {
   certificates_zip_downloaded: 'Certificates ZIP downloaded',
   client_created: 'Client created',
   client_updated: 'Client updated',
+  client_logo_updated: 'Client logo updated',
+  client_logo_removed: 'Client logo removed',
   client_deleted: 'Client deleted',
   clients_merged: 'Clients merged',
   employee_created: 'Employee created',
   employee_updated: 'Employee updated',
+  employee_qr_reset: 'Employee QR code reset',
+  portal_invite_sent: 'Portal invite sent',
+  portal_access_removed: 'Portal access removed',
   employee_deleted: 'Employee deleted',
   employees_merged: 'Employees merged',
   trainer_created: 'Trainer created',

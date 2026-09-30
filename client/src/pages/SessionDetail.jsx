@@ -188,7 +188,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     outline: session.outline || '',
     language: session.language || 'english',
     total_days: session.total_days || '',
+    toolbox_topic: session.toolbox_topic || '',
   });
+  const isToolbox = session.session_kind === 'toolbox_talk';
   // The actual calendar date scheduled for each day of a multi-day session (Keeley's request,
   // 2026-09-22) - purely informational, editable independently of total_days.
   const [dayDates, setDayDates] = useState(session.day_dates || []);
@@ -261,6 +263,12 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             {clients.map((c) => <option key={c.client_id} value={c.client_name}>{c.client_name}</option>)}
           </select>
         </div>
+        {isToolbox ? (
+          <div className="field">
+            <label>Toolbox Talk Topic</label>
+            <input value={form.toolbox_topic} onChange={(e) => setForm({ ...form, toolbox_topic: e.target.value })} required />
+          </div>
+        ) : (
         <div className="field">
           <label>Training Type</label>
           <TrainingSearchSelect
@@ -276,6 +284,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             }}
           />
         </div>
+        )}
         <div className="field">
           <label>Trainer First Name</label>
           <input value={form.trainer_first_name} onChange={(e) => setForm({ ...form, trainer_first_name: e.target.value })} required />
@@ -308,6 +317,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             <option value="both">Both (English/Spanish)</option>
           </select>
         </div>
+        {!isToolbox && (
         <div className="field">
           <label>Total Days (multi-day training)</label>
           <input
@@ -334,6 +344,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             placeholder="Leave blank for single-day"
           />
         </div>
+        )}
       </div>
       {form.total_days && dayDates.length > 0 && (
         <div className="field">
@@ -977,6 +988,7 @@ Their certificate and the training record it added to their employee file will b
                     together get one button each, since certificates are never mixed types in
                     the same ZIP. Every certificate inside is already named "Training Title_
                     Client_Trainer_Date_Trainee Name.pdf" - nothing to rename by hand. */}
+                {session.session_kind !== 'toolbox_talk' && (
                 <a
                   href={`/api/training-sessions/${id}/certificates.zip?training=primary`}
                   className="btn btn-secondary btn-sm"
@@ -984,6 +996,7 @@ Their certificate and the training record it added to their employee file will b
                 >
                   Download {session.additional_trainings?.length ? `"${session.training_type_label}"` : 'All'} Certificates (ZIP)
                 </a>
+                )}
                 {session.additional_trainings?.map((t) => (
                   <a
                     key={t.id}
@@ -1060,7 +1073,7 @@ Their certificate and the training record it added to their employee file will b
                 <th>Phone</th>
                 <th>Email</th>
                 <th>Signed At</th>
-                {session.status === 'closed' && <th>Certificate</th>}
+                {session.status === 'closed' && session.session_kind !== 'toolbox_talk' && <th>Certificate</th>}
                 {session.status === 'closed' && <th>Employee File</th>}
                 {session.status === 'open' && isAdmin && <th></th>}
                 {session.status === 'closed' && isAdmin && <th></th>}
@@ -1100,7 +1113,7 @@ Their certificate and the training record it added to their employee file will b
                       <td>{a.trainee_phone || '—'}</td>
                       <td>{a.trainee_email || '—'}</td>
                       <td>{formatEasternDateTime(a.signed_at)}</td>
-                      {session.status === 'closed' && (
+                      {session.status === 'closed' && session.session_kind !== 'toolbox_talk' && (
                         <td>
                           {/* One link per training when the session covers more than one
                               (Keeley's request, 2026-09-17) - each attendee gets a separate

@@ -37,7 +37,12 @@ const IDENTITY_COLUMN_PATTERNS = {
   first_name: [/^(employee\s*)?first\s*name$/i],
   last_name: [/^(employee\s*)?last\s*name$/i],
   trainer: [/^trainer(\s*name)?$/i, /^instructor(\s*name)?$/i],
-  employee_number: [/^emp(loyee)?\s*#?\s*(number|no|id)$/i, /^emp\s*#$/i, /^id$/i, /^(employee\s*)?phone(\s*number)?$/i, /^cell(\s*(phone|number))?$/i, /^mobile(\s*(phone|number))?$/i],
+  // Trainer contact details (Keeley's request, 2026-09-30) - filled in on the trainer's profile.
+  trainer_phone: [/^(trainer|instructor)(\s*|'s\s*)(phone|cell|mobile)(\s*(number|#|no\.?))?$/i],
+  trainer_email: [/^(trainer|instructor)(\s*|'s\s*)e-?mail(\s*address)?$/i],
+  // "Phone #" / "Phone No." added 2026-09-30 alongside the plain forms.
+  employee_number: [/^emp(loyee)?\s*#?\s*(number|no|id)$/i, /^emp\s*#$/i, /^id$/i, /^(employee\s*)?phone(\s*(number|#|no\.?))?$/i, /^cell(\s*(phone|number|#))?$/i, /^mobile(\s*(phone|number|#))?$/i],
+  email: [/^(employee\s*)?e-?mail(\s*address)?$/i],
   full_name: [/^employee\s*(full\s*)?name$/i, /^full\s*name$/i, /^employee$/i],
   job_title: [/^(job\s*)?title$/i, /^position$/i],
   department: [/^dept\.?$/i, /^department$/i],
@@ -65,6 +70,23 @@ const LONG_FORMAT_PATTERNS = {
   // classifyHeaders()'s isLongFormat check below, which deliberately does NOT require this one.
   training_id: [/^training\s*id$/i, /^cert(ification)?\s*id$/i, /^trn\s*id$/i],
 };
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// An imported email cell -> a clean lowercase address, or null for blank/garbage.
+function cleanEmail(raw) {
+  const email = String(raw || '').trim().toLowerCase();
+  return EMAIL_PATTERN.test(email) ? email : null;
+}
+
+// Fills a profile's phone/email only where they're blank - never overwrites.
+async function fillBlankContact(employeeId, phone, email) {
+  if (!employeeId || (!phone && !email)) return;
+  await dbRun(
+    "UPDATE employees SET employee_number = COALESCE(NULLIF(employee_number, ''), ?), email = COALESCE(NULLIF(email, ''), ?) WHERE employee_id = ?",
+    [phone || null, email || null, employeeId]
+  );
+}
 
 function normalize(text) {
   return String(text).toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -259,7 +281,8 @@ async function getEmployeeMatchesNeedingReview(batchId) {
 // app's existing "blank starting point" convention for every other downloadable template.
 router.get('/template.csv', async (req, res) => {
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const header = ['Employee', 'Client', 'Certification', 'Activation', 'Training ID'];
+  // Contact columns (Phone onward) are optional - see IDENTITY_COLUMN_PATTERNS above.
+  const header = ['Employee', 'Client', 'Certification', 'Activation', 'Training ID', 'Phone', 'Email', 'Trainer', 'Trainer Phone', 'Trainer Email'];
   res.set('Content-Type', 'text/csv');
   res.set('Content-Disposition', 'attachment; filename="training-import-template.csv"');
   res.send(header.map(esc).join(','));
@@ -366,8 +389,9 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
         `INSERT INTO import_staged_rows
          (staged_row_id, batch_id, employee_number_raw, full_name_raw, job_title_raw, department_raw,
           client_name_raw, resolved_client_id, first_name_raw, last_name_raw, trainer_name_raw, raw_row_json,
-          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw, employee_status_raw, training_id_raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          training_name_raw, completion_date_raw, expiration_date_raw, record_type_raw, employee_status_raw, training_id_raw,
+          email_raw, trainer_phone_raw, trainer_email_raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           uuidv4(),
           batchId,
@@ -387,6 +411,9 @@ router.post('/preview', requireAdmin, upload.single('file'), async (req, res) =>
           format === 'long' && longHeaders.record_type ? (row[longHeaders.record_type] || null) : null,
           identityHeaders.employee_status ? row[identityHeaders.employee_status] : null,
           format === 'long' && longHeaders.training_id ? (row[longHeaders.training_id] || null) : null,
+          identityHeaders.email ? (row[identityHeaders.email] || '').trim() || null : null,
+          identityHeaders.trainer_phone ? (row[identityHeaders.trainer_phone] || '').trim() || null : null,
+          identityHeaders.trainer_email ? (row[identityHeaders.trainer_email] || '').trim() || null : null,
         ]
       );
     }
@@ -570,20 +597,27 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
           continue;
         }
 
+        const sheetPhone = formatPhoneNumber(row.employee_number_raw) || null;
         let employee = employeeMatch && employeeMatch.status === 'confirmed_existing'
           ? await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeMatch.candidate_employee_id])
           : await dbGet(
               // Postgres can't infer a type for a bare "? IS NULL" placeholder (no column context to
               // infer from, unlike SQLite's fully dynamic typing) - cast makes the parameter type explicit.
-              'SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ? AND (employee_number = ? OR ?::text IS NULL)',
-              [clientId, nameKey(fullName), row.employee_number_raw, row.employee_number_raw]
+              // Phones compared in the same (xxx) xxx-xxxx format, and a blank phone on file counts as a
+              // match (it gets filled in below) - otherwise a sheet with a Phone column made a
+              // duplicate of everyone on file without one (2026-09-30). A *different* phone still
+              // means a different person.
+              `SELECT * FROM employees WHERE client_id = ? AND LOWER(full_name) = ?
+                 AND (?::text IS NULL OR COALESCE(employee_number, '') = '' OR employee_number = ?)
+               ORDER BY (employee_number = ?) DESC NULLS LAST LIMIT 1`,
+              [clientId, nameKey(fullName), sheetPhone, sheetPhone, sheetPhone]
             );
         if (!employee) {
           const employeeId = uuidv4();
           const names = nameColumns({ first_name: row.first_name_raw, last_name: row.last_name_raw, full_name: fullName });
           await dbRun(
-            `INSERT INTO employees (employee_id, client_id, employee_number, full_name, first_name, last_name, job_title, department, active, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO employees (employee_id, client_id, employee_number, full_name, first_name, last_name, job_title, department, active, notes, email)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               employeeId,
               clientId,
@@ -595,10 +629,15 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
               row.department_raw,
               parseEmployeeActiveStatus(row.employee_status_raw),
               `Created by import: ${batch.filename}`,
+              cleanEmail(row.email_raw),
             ]
           );
           employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
           employeesCreated += 1;
+        } else {
+          // Someone already on file: a blank phone/email gets filled in from the sheet, but an
+          // existing value is never overwritten (same rule the trainer close-out uses).
+          await fillBlankContact(employee.employee_id, formatPhoneNumber(row.employee_number_raw), cleanEmail(row.email_raw));
         }
         employees.push(employee);
       } else {
@@ -631,7 +670,9 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
         }
       }
 
-      const trainerEmployeeId = row.trainer_name_raw ? await repo.findOrCreateTrainerEmployee(row.trainer_name_raw) : null;
+      const trainerPhone = row.trainer_phone_raw ? formatPhoneNumber(row.trainer_phone_raw) : null;
+      const trainerEmployeeId = row.trainer_name_raw ? await repo.findOrCreateTrainerEmployee(row.trainer_name_raw, trainerPhone) : null;
+      if (trainerEmployeeId) await fillBlankContact(trainerEmployeeId, trainerPhone, cleanEmail(row.trainer_email_raw));
 
       eligibleRows.push(row);
       rowContextById.set(row.staged_row_id, employees.map((employee) => ({ employee, clientId, trainerEmployeeId })));
