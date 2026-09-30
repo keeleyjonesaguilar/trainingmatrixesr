@@ -154,6 +154,46 @@ function TrainerRatingSummary({ summary }) {
   );
 }
 
+// Every written comment trainees left for this trainer, newest first (Keeley's request,
+// 2026-09-30: "capture the notes/comments ... show on the matrix for their profiles for us to
+// review"). Feedback is anonymous, so each comment is tied to its session, not a trainee.
+const COMMENTS_SHOWN = 10;
+function TrainerFeedbackComments({ comments }) {
+  const [showAll, setShowAll] = useState(false);
+  const list = comments || [];
+  const shown = showAll ? list : list.slice(0, COMMENTS_SHOWN);
+  const starText = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+  return (
+    <div className="card profile-full">
+      <h2>Trainee Feedback Comments ({list.length})</h2>
+      {list.length === 0 ? (
+        <div className="empty-state">No written comments yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {shown.map((c) => (
+            <div key={c.feedback_id} style={{ borderLeft: '3px solid var(--esr-gold)', background: 'var(--color-bg)', padding: '10px 14px', borderRadius: '0 4px 4px 0' }}>
+              <div style={{ fontStyle: 'italic', fontSize: 14 }}>&ldquo;{c.trainer_comment}&rdquo;</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 6, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                <span>Trainer <span style={{ color: 'var(--esr-gold)' }}>{starText(c.trainer_rating)}</span></span>
+                <span>Effectiveness <span style={{ color: 'var(--esr-gold)' }}>{starText(c.effectiveness_rating)}</span></span>
+                {c.needs_additional_training === 'yes' && <span className="badge badge-expiringsoon">Needs additional training</span>}
+                <span>
+                  <Link to={`/sessions/${c.session_id}`}>{c.training_type_label}</Link> · {c.client_name} · {c.session_date}
+                </span>
+              </div>
+            </div>
+          ))}
+          {list.length > COMMENTS_SHOWN && (
+            <button type="button" className="link-button" onClick={() => setShowAll((v) => !v)} style={{ alignSelf: 'flex-start' }}>
+              {showAll ? 'Show fewer' : `Show all ${list.length} comments`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A trainer's own list of sessions they've taught, linking each to its SessionDetail page.
 function TrainingsTaughtSection({ employeeId }) {
   const [sessions, setSessions] = useState([]);
@@ -690,6 +730,7 @@ export default function EmployeeDetail() {
 
       {/* Anyone who has taught, including a trainer merged into their employee profile. */}
       {teaches && <TrainingsTaughtSection employeeId={employee.employee_id} />}
+      {teaches && <TrainerFeedbackComments comments={trainerFeedbackSummary?.comments} />}
 
       <div className="profile-full">
           <EmployeeCompliancePanel

@@ -13,6 +13,7 @@ const { listCertificateFiles, certificateZipName, certificateZipBuffer } = requi
 const { buildSessionCompleteEmail } = require('./sessionCompleteEmail');
 const { sendEmail } = require('./email');
 const { withDayTrainers } = require('./sessionDays');
+const { sessionFeedbackSummary } = require('./sessionFeedback');
 
 // The one training that also gets the official AHA Heartsaver Course Roster (Keeley's request,
 // 2026-09-21) - every other training uses the in-house roster/certificate only.
@@ -171,11 +172,12 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   const attachmentsSummary = formAttachments.map((a) => a.summary);
   const attachments = formAttachments.map(({ filename, content }) => ({ filename, content }));
   const logoUrl = `${publicBaseUrl()}/email-logo.png`;
+  const feedback = await sessionFeedbackSummary(session.session_id);
 
   await Promise.all(recipients.map((to) => {
     const recipientIsTrainer = trainerRecipients.has(to);
     const email = buildSessionCompleteEmail({
-      session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate,
+      session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate, feedback,
       editUrl: recipientIsTrainer ? editUrl : null,
     });
     return sendEmail({ to, ...email, attachments }).catch((err) => {

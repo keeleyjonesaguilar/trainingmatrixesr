@@ -37,6 +37,73 @@ function attendeeResult(a, isToolbox = false) {
   return { text: 'No certificate', color: '#b3261e', bg: '#fde8e8' };
 }
 
+function stars(n) {
+  const whole = Math.round(Number(n) || 0);
+  return `<span style="color:${GOLD};letter-spacing:1px;">${'★'.repeat(whole)}</span><span style="color:#d5d8dc;letter-spacing:1px;">${'★'.repeat(5 - whole)}</span>`;
+}
+
+// Trainee feedback (Keeley's request, 2026-09-30) - in both the trainer's copy and the office's.
+// `feedback` is lib/sessionFeedback.js sessionFeedbackSummary(): whatever had come in when the
+// email was built (the feedback QR is meant to be scanned before the trainer closes out).
+function feedbackBlock(feedback, isToolbox) {
+  if (!feedback || (isToolbox && !feedback.count)) return '';
+  const heading = `<div style="${FONT}font-size:13px;font-weight:700;color:${GREEN};text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Trainee Feedback</div>`;
+  const later = "Feedback is anonymous. Any responses that come in after close-out show on the session page and the trainer's profile.";
+  if (!feedback.count) {
+    return `
+        <tr><td style="padding:16px 28px 4px;">
+          ${heading}
+          <div style="${FONT}font-size:14px;color:${MUTED};">No feedback responses were received before close-out.</div>
+          <div style="${FONT}font-size:12px;color:${MUTED};margin-top:6px;">${later}</div>
+        </td></tr>
+`;
+  }
+  const tile = (label, value) => `
+                <td width="33%" style="padding:4px;vertical-align:top;">
+                  <div style="background:${BG};border-radius:8px;padding:12px 14px;">
+                    <div style="${FONT}font-size:11px;color:${MUTED};text-transform:uppercase;letter-spacing:.05em;">${label}</div>
+                    <div style="${FONT}font-size:18px;font-weight:700;color:${TEXT};margin-top:4px;">${value}</div>
+                  </div>
+                </td>`;
+  const tiles = [
+    tile('Trainer Rating', `${feedback.avgTrainerRating.toFixed(1)} <span style="font-size:12px;color:${MUTED};font-weight:400;">/ 5</span>`),
+    tile('Effectiveness', `${feedback.avgEffectiveness.toFixed(1)} <span style="font-size:12px;color:${MUTED};font-weight:400;">/ 5</span>`),
+    tile('Responses', String(feedback.count)),
+  ].join('');
+  const questionRows = feedback.questions.map((q) => {
+    // "Needs additional training: yes" is the answer worth a second look, so it stands out.
+    const flag = q.label === 'Needs additional training' && q.yes > 0;
+    return `
+              <tr>
+                <td style="${FONT}font-size:13px;color:${TEXT};padding:5px 0;">${esc(q.label)}</td>
+                <td align="right" style="${FONT}font-size:13px;padding:5px 0;white-space:nowrap;"><span style="color:${flag ? '#a15c00' : '#146c3a'};font-weight:600;">${q.yes} yes</span> <span style="color:${MUTED};">&nbsp;·&nbsp; ${q.no} no</span></td>
+              </tr>`;
+  }).join('');
+  const commentRows = feedback.comments.length
+    ? feedback.comments.map((c) => `
+              <tr><td style="padding:6px 0;">
+                <div style="border-left:3px solid ${GOLD};background:#fffdf5;padding:10px 14px;border-radius:0 8px 8px 0;">
+                  <div style="${FONT}font-size:14px;line-height:1.5;color:${TEXT};font-style:italic;">&ldquo;${esc(c.text)}&rdquo;</div>
+                  <div style="${FONT}font-size:12px;color:${MUTED};margin-top:4px;">Trainer ${stars(c.trainerRating)} &nbsp;·&nbsp; Effectiveness ${stars(c.effectiveness)}</div>
+                </div>
+              </td></tr>`).join('')
+    : `
+              <tr><td style="${FONT}font-size:13px;color:${MUTED};padding:4px 0;">No written comments.</td></tr>`;
+  return `
+        <tr><td style="padding:16px 28px 4px;">
+          ${heading}
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 -4px;"><tr>${tiles}
+          </tr></table>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">${questionRows}
+          </table>
+          <div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Comments (${feedback.comments.length})</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${commentRows}
+          </table>
+          <div style="${FONT}font-size:12px;color:${MUTED};margin-top:8px;">${later}</div>
+        </td></tr>
+`;
+}
+
 /**
  * @param session            closed training_sessions row joined with client_name
  * @param trainingLabels     every training the session covered (primary first)
@@ -46,8 +113,9 @@ function attendeeResult(a, isToolbox = false) {
  * @param logoUrl            absolute URL (or data: URI for previews) of the ESR logo
  * @param editUrl            the trainer's "Edit close-out details" link - trainer's copy only
  * @param isUpdate           true for the resend after the trainer edits a closed session
+ * @param feedback           lib/sessionFeedback.js sessionFeedbackSummary() for the session
  */
-function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, editUrl = null, isUpdate = false }) {
+function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, editUrl = null, isUpdate = false, feedback = null }) {
   const trainingNames = trainingLabels.map(stripTrainingIdPrefix);
   const title = trainingNames.join(' + ');
   const trainerName = session.trainer_signed_name || session.trainer_name || 'the trainer';
@@ -149,7 +217,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
             </td></tr>
           </table>
         </td></tr>
-${editBlock}
+${editBlock}${feedbackBlock(feedback, isToolbox)}
         <tr><td style="padding:16px 28px 4px;">
           <div style="${FONT}font-size:13px;font-weight:700;color:${GREEN};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Attached to this email</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${attachmentRows}

@@ -18,6 +18,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const { getSessionDays } = require('../lib/sessionDays');
 const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require('../lib/employeeRecordCard');
 const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
+const { trainerFeedbackComments } = require('../lib/sessionFeedback');
 
 const router = express.Router();
 
@@ -328,6 +329,9 @@ router.get('/:id/full-detail', async (req, res) => {
       avg_trainer_rating: agg.response_count > 0 ? Number(agg.avg_trainer_rating) : null,
       avg_effectiveness_rating: agg.response_count > 0 ? Number(agg.avg_effectiveness_rating) : null,
       response_count: agg.response_count,
+      // Every written comment, for the office to review on the profile (Keeley's request,
+      // 2026-09-30). Feedback is anonymous, so comments live on the trainer's profile only.
+      comments: await trainerFeedbackComments(employee.employee_id),
     };
   }
 
