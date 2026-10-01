@@ -4,6 +4,7 @@ import { api } from '../api';
 import { displayFirstLast } from '../lib/names.js';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
 
@@ -49,6 +50,8 @@ export default function Sessions() {
   const [newTrainerFirst, setNewTrainerFirst] = useState('');
   const [newTrainerLast, setNewTrainerLast] = useState('');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
+  // Other trainers teaching alongside the lead (Keeley's request, 2026-10-01).
+  const [coTrainerIds, setCoTrainerIds] = useState([]);
   const [outlineTouched, setOutlineTouched] = useState(false);
   // Whether the duration box is currently revealed for editing (Keeley's call, 2026-08-25):
   // unlike outlineTouched, this deliberately resets to false every time the Training Type
@@ -153,6 +156,7 @@ export default function Sessions() {
         client_name: form.client_name,
         trainer_name: form.trainer_name.trim(),
         trainer_phone: form.trainer_phone,
+        co_trainer_ids: coTrainerIds,
         session_date: form.session_date,
         location: form.location,
         duration: form.duration,
@@ -219,6 +223,7 @@ export default function Sessions() {
         // "needs review" flag from that on its own (Keeley's call: either way, review is
         // needed before this is "done"), so nothing extra needs sending here.
         trainer_phone: form.trainer_phone,
+        co_trainer_ids: coTrainerIds,
         session_date: form.session_date,
         location: form.location,
         duration: form.duration,
@@ -436,6 +441,15 @@ export default function Sessions() {
                   ) : (
                     <p className="page-subtitle" style={{ margin: 0 }}>
                       Not required for a newly added trainer - this session will be flagged for review until their Employee ID is added.
+                    </p>
+                  )}
+                </div>
+                <div className="field">
+                  <label>Other trainers</label>
+                  <CoTrainersPicker trainers={trainers} value={coTrainerIds} onChange={setCoTrainerIds} leadId={selectedTrainerId} />
+                  {coTrainerIds.length > 0 && (
+                    <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                      Every trainer&apos;s name goes on the certificates, any of them can close out, and trainees rate each one.
                     </p>
                   )}
                 </div>
@@ -667,7 +681,7 @@ export default function Sessions() {
                 <td>{s.session_date}</td>
                 <td>{s.client_name}</td>
                 <td>{s.training_type_label}</td>
-                <td>{s.trainer_signed_name || s.trainer_name}</td>
+                <td>{[s.trainer_signed_name || s.trainer_name, s.co_trainer_names].filter(Boolean).join(', ')}</td>
                 <td>{s.attendee_count}</td>
                 <td>
                   <StatusBadge status={s.status} />

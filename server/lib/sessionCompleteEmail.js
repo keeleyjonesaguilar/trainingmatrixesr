@@ -79,12 +79,19 @@ function feedbackBlock(feedback, isToolbox) {
                 <td align="right" style="${FONT}font-size:13px;padding:5px 0;white-space:nowrap;"><span style="color:${flag ? '#a15c00' : '#146c3a'};font-weight:600;">${q.yes} yes</span> <span style="color:${MUTED};">&nbsp;·&nbsp; ${q.no} no</span></td>
               </tr>`;
   }).join('');
+  // Each trainer's own average when more than one taught (per-trainer ratings, 2026-10-01).
+  const perTrainer = (feedback.trainers || []).length > 1;
+  const trainerRows = perTrainer ? feedback.trainers.map((t) => `
+              <tr>
+                <td style="${FONT}font-size:13px;color:${TEXT};padding:5px 0;font-weight:600;">${esc(t.name)}</td>
+                <td align="right" style="${FONT}font-size:13px;padding:5px 0;white-space:nowrap;">${stars(t.avg)} <span style="color:${TEXT};font-weight:600;">${t.avg.toFixed(1)}</span> <span style="color:${MUTED};">(${t.count} rating${t.count === 1 ? '' : 's'})</span></td>
+              </tr>`).join('') : '';
   const commentRows = feedback.comments.length
     ? feedback.comments.map((c) => `
               <tr><td style="padding:6px 0;">
                 <div style="border-left:3px solid ${GOLD};background:#fffdf5;padding:10px 14px;border-radius:0 8px 8px 0;">
                   <div style="${FONT}font-size:14px;line-height:1.5;color:${TEXT};font-style:italic;">&ldquo;${esc(c.text)}&rdquo;</div>
-                  <div style="${FONT}font-size:12px;color:${MUTED};margin-top:4px;">Trainer ${stars(c.trainerRating)} &nbsp;·&nbsp; Effectiveness ${stars(c.effectiveness)}</div>
+                  <div style="${FONT}font-size:12px;color:${MUTED};margin-top:4px;">${perTrainer && c.trainerName ? `About ${esc(c.trainerName)} ${stars(c.trainerRating)}` : `Trainer ${stars(c.trainerRating)}`} &nbsp;·&nbsp; Effectiveness ${stars(c.effectiveness)}</div>
                 </div>
               </td></tr>`).join('')
     : `
@@ -94,6 +101,9 @@ function feedbackBlock(feedback, isToolbox) {
           ${heading}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 -4px;"><tr>${tiles}
           </tr></table>
+          ${perTrainer ? `<div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Rating by trainer</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${trainerRows}
+          </table>` : ''}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">${questionRows}
           </table>
           <div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Comments (${feedback.comments.length})</div>

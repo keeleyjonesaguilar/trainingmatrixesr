@@ -14,7 +14,7 @@ const path = require('path');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
 const { ahaColumnsFromBody, ensureEditToken, regenerateRosters, sendCompletedFormsEmail } = require('../lib/sessionCloseOut');
-const { getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers } = require('../lib/sessionDays');
+const { getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers, sessionTrainers } = require('../lib/sessionDays');
 const { nameKey } = require('../lib/names');
 const { parseName, firstLast } = require('../lib/names');
 
@@ -88,6 +88,9 @@ router.get('/:token', async (req, res) => {
     trainer_name: prefillTrainerName,
     trainer_phone: trainerPhone,
     trainer_email: trainerEmail,
+    // Everyone teaching this session, so whichever trainer is there can close it out (Keeley's
+    // call, 2026-10-01). Names only - their contact details stay off this public page.
+    trainer_names: (await sessionTrainers(session)).map((t) => t.name),
     session_date: session.session_date,
     outline: session.outline,
     outline_es: session.outline_es,
@@ -494,6 +497,9 @@ router.get('/:token/feedback', async (req, res) => {
     training_type_label_es: session.training_type_label_es,
     language: session.language,
     trainer_name: session.trainer_name,
+    // Each trainer is rated separately (Keeley's request, 2026-10-01) - co-trainers and every
+    // day's trainer on a multi-day course.
+    trainers: (await sessionTrainers(session)).map((t) => ({ key: t.key, name: t.name })),
     session_date: session.session_date,
     labels,
   });
@@ -510,32 +516,58 @@ router.post('/:token/feedback', async (req, res) => {
     understood_material = null,
     needs_additional_training = null,
     effectiveness_rating,
-    trainer_rating,
-    trainer_comment = null,
+    trainer_ratings,
   } = req.body || {};
   const effectiveness = Number(effectiveness_rating);
-  const trainerScore = Number(trainer_rating);
   if (!Number.isInteger(effectiveness) || effectiveness < 1 || effectiveness > 5) {
     return res.status(400).json({ error: 'effectiveness_rating must be a whole number between 1 and 5.' });
   }
-  if (!Number.isInteger(trainerScore) || trainerScore < 1 || trainerScore > 5) {
-    return res.status(400).json({ error: 'trainer_rating must be a whole number between 1 and 5.' });
+
+  // A rating (and optional comment) for each trainer on the session (Keeley's request,
+  // 2026-10-01). A page loaded before this change sends one trainer_rating/trainer_comment instead,
+  // which goes to the lead trainer.
+  const trainers = await sessionTrainers(session);
+  const given = Array.isArray(trainer_ratings)
+    ? trainer_ratings
+    : [{ key: trainers[0]?.key, rating: req.body?.trainer_rating, comment: req.body?.trainer_comment }];
+  const ratings = [];
+  for (const trainer of trainers) {
+    const entry = given.find((g) => g && g.key === trainer.key);
+    if (!entry && Array.isArray(trainer_ratings)) return res.status(400).json({ error: `Please rate ${trainer.name}.` });
+    if (!entry) continue; // eslint-disable-line no-continue
+    const rating = Number(entry.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: `Please rate ${trainer.name} from 1 to 5 stars.` });
+    const comment = entry.comment ? String(entry.comment).trim().slice(0, 2000) : '';
+    ratings.push({ trainer, rating, comment: comment || null });
   }
+  if (!ratings.length) return res.status(400).json({ error: 'Please rate the trainer.' });
+
+  // The session-level columns keep working for anything that reads the session as a whole: the
+  // average of the trainers' ratings, and the comment when there's only one trainer.
+  const average = Math.round(ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length);
+  const feedbackId = uuidv4();
   await dbRun(
     `INSERT INTO session_feedback
        (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      uuidv4(),
+      feedbackId,
       session.session_id,
       could_ask_questions,
       understood_material,
       needs_additional_training,
       effectiveness,
-      trainerScore,
-      trainer_comment ? String(trainer_comment).trim() : null,
+      average,
+      ratings.length === 1 ? ratings[0].comment : null,
     ]
   );
+  for (const r of ratings) {
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      'INSERT INTO session_feedback_trainers (id, feedback_id, trainer_name, trainer_employee_id, rating, comment) VALUES (?, ?, ?, ?, ?, ?)',
+      [uuidv4(), feedbackId, r.trainer.name, r.trainer.employee_id, r.rating, r.comment]
+    );
+  }
   res.status(201).json({ ok: true });
 });
 

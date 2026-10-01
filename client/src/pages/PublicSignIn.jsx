@@ -50,6 +50,7 @@ const STRINGS = {
   person_signed_in_suffix: { en: 'person has signed in so far.', es: 'persona se ha registrado hasta ahora.' },
   people_signed_in_suffix: { en: 'people have signed in so far.', es: 'personas se han registrado hasta ahora.' },
   trainer_name: { en: 'Trainer name', es: 'Nombre del instructor' },
+  who_closing: { en: 'Which trainer is closing out?', es: '¿Qué instructor está cerrando?' },
   trainer_phone: { en: 'Trainer phone number', es: 'Número de teléfono del instructor' },
   trainer_pin: { en: 'Trainer PIN', es: 'PIN del instructor' },
   trainer_signature: { en: 'Trainer signature', es: 'Firma del instructor' },
@@ -709,6 +710,30 @@ export default function PublicSignIn() {
             ) : (
               <form onSubmit={handleTrainerClose}>
                 <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{isSignoffDay ? fill('signoff_note') : info.session_kind === 'toolbox_talk' ? t('close_note_toolbox') : t('close_note')}</p>
+                {/* Any listed trainer can close out (Keeley's call, 2026-10-01). The saved email and
+                    phone belong to the lead trainer, so picking someone else clears them. */}
+                {(info.trainer_names || []).length > 1 && (
+                  <div className="field">
+                    <label>{t('who_closing')}</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {info.trainer_names.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className={`btn btn-sm ${trainerName === name ? '' : 'btn-secondary'}`}
+                          onClick={() => {
+                            setTrainerName(name);
+                            const isLead = name === info.trainer_name;
+                            setTrainerEmail(isLead ? info.trainer_email || '' : '');
+                            setTrainerPhone(isLead ? info.trainer_phone || '' : '');
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="field">
                   <label>{t('trainer_name')}</label>
                   <input

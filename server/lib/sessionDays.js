@@ -17,7 +17,8 @@ async function listTrainerProfiles() {
         OR is_trainer = 1
         OR employee_id IN (SELECT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
         OR employee_id IN (SELECT assigned_trainer_employee_id FROM session_days WHERE assigned_trainer_employee_id IS NOT NULL)
-        OR employee_id IN (SELECT signed_trainer_employee_id FROM session_days WHERE signed_trainer_employee_id IS NOT NULL)`,
+        OR employee_id IN (SELECT signed_trainer_employee_id FROM session_days WHERE signed_trainer_employee_id IS NOT NULL)
+        OR employee_id IN (SELECT trainer_employee_id FROM session_co_trainers WHERE trainer_employee_id IS NOT NULL)`,
     [repo.INTERNAL_CLIENT_ID]
   );
 }
@@ -117,26 +118,111 @@ async function clearDaySignoff(sessionId, day) {
   );
 }
 
-// Every trainer who taught the session, in day order and without repeats ("Bob Lathan, Kasey
-// Hilton") - for the roster and email. Whoever actually signed a day counts over whoever was
-// assigned.
-async function allTrainerNames(session) {
-  const days = await getSessionDays(session);
-  const names = days.length
-    ? days.map((d) => d.signed_trainer_name || d.assigned_trainer_name)
-    : [session.trainer_signed_name || session.trainer_name];
+// The other trainers teaching alongside the lead trainer on every day (migration 074, Keeley's
+// request, 2026-10-01), in the order they were added.
+async function getCoTrainers(sessionId) {
+  return dbAll('SELECT * FROM session_co_trainers WHERE session_id = ? ORDER BY display_order, trainer_name', [sessionId]);
+}
+
+// `trainerIds`: the co-trainers' employee ids, in order. Replaces the session's list; the lead
+// trainer and repeats are skipped.
+async function saveCoTrainers(session, trainerIds) {
+  await dbRun('DELETE FROM session_co_trainers WHERE session_id = ?', [session.session_id]);
+  const seen = new Set([session.trainer_employee_id].filter(Boolean));
+  let order = 0;
+  for (const id of Array.isArray(trainerIds) ? trainerIds : []) {
+    if (!id || seen.has(id)) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    const trainer = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [id]);
+    if (!trainer) continue; // eslint-disable-line no-continue
+    seen.add(id);
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      'INSERT INTO session_co_trainers (id, session_id, trainer_name, trainer_employee_id, display_order) VALUES (?, ?, ?, ?, ?)',
+      [uuidv4(), session.session_id, trainerDisplayName(trainer), id, order]
+    );
+    order += 1;
+  }
+}
+
+function uniqueNames(names) {
   const seen = new Set();
   return names.filter((n) => {
     const key = nameKey(n);
     if (!n || !key || seen.has(key)) return false;
     seen.add(key);
     return true;
-  }).join(', ');
+  });
 }
 
-// The one trainer printed on each attendee's certificate (Keeley's call, 2026-09-29): whoever
-// taught the most days, and on a tie (e.g. one day each) the final day's trainer.
+// "Bob Lathan", "Bob Lathan & Kasey Hilton", "Bob Lathan, Kasey Hilton & Guy Raymond".
+function joinNames(names) {
+  if (names.length <= 1) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
+}
+
+// A single-day session's trainers. With only a lead trainer, whoever signed the close-out stands in
+// for them, as it always has. With co-trainers, any of them may close out (2026-10-01), so the
+// lead stays listed - under their signed name when they closed it themselves - then the
+// co-trainers, then whoever closed if they're none of those.
+function singleDayTrainerNames(session, coNames) {
+  const signer = session.trainer_signed_name;
+  if (!coNames.length) return [signer || session.trainer_name];
+  if (!signer) return [session.trainer_name, ...coNames];
+  if (nameKey(signer) === nameKey(session.trainer_name)) return [signer, ...coNames];
+  return [session.trainer_name, ...coNames, signer];
+}
+
+// Every trainer who taught the session, without repeats ("Bob Lathan, Kasey Hilton") - for the
+// roster and email: each day's trainer in day order (whoever actually signed a day counts over
+// whoever was assigned) then the co-trainers, or for a single day the lead and co-trainers.
+async function allTrainerNames(session) {
+  const days = await getSessionDays(session);
+  const co = (await getCoTrainers(session.session_id)).map((t) => t.trainer_name);
+  const names = days.length
+    ? [...days.map((d) => d.signed_trainer_name || d.assigned_trainer_name), ...co]
+    : singleDayTrainerNames(session, co);
+  return uniqueNames(names).join(', ');
+}
+
+// Everyone who taught the session as {key, name, employee_id} - the lead trainer, each day's
+// trainer (assigned and whoever signed), and the co-trainers. Feedback rates each of them, and
+// the close-out offers each of them. `key` is stable for a trainer with or without a profile.
+async function sessionTrainers(session) {
+  const days = await getSessionDays(session);
+  const candidates = [
+    { name: session.trainer_name, employee_id: session.trainer_employee_id },
+    ...days.flatMap((d) => [
+      { name: d.assigned_trainer_name, employee_id: d.assigned_trainer_employee_id },
+      { name: d.signed_trainer_name, employee_id: d.signed_trainer_employee_id },
+    ]),
+    ...(await getCoTrainers(session.session_id)).map((t) => ({ name: t.trainer_name, employee_id: t.trainer_employee_id })),
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const c of candidates) {
+    if (!c.name) continue; // eslint-disable-line no-continue
+    const nk = nameKey(c.name);
+    const key = c.employee_id || `name:${nk}`;
+    if (seen.has(key) || seen.has(`name:${nk}`)) continue; // eslint-disable-line no-continue
+    seen.add(key);
+    seen.add(`name:${nk}`);
+    out.push({ key, name: c.name, employee_id: c.employee_id || null });
+  }
+  return out;
+}
+
+// The trainer(s) printed on each attendee's certificate: on a multi-day course, whoever taught the
+// most days, and on a tie (e.g. one day each) the final day's trainer (Keeley's call, 2026-09-29);
+// otherwise the lead trainer. Co-trainers are added after them - every trainer's name goes on the
+// certificate (Keeley's call, 2026-10-01).
 async function certificateTrainerName(session) {
+  const co = (await getCoTrainers(session.session_id)).map((t) => t.trainer_name);
+  if (!session.total_days) return joinNames(uniqueNames(singleDayTrainerNames(session, co)));
+  return joinNames(uniqueNames([await mainCertificateTrainer(session), ...co]));
+}
+
+async function mainCertificateTrainer(session) {
   const days = await getSessionDays(session);
   if (!days.length) return session.trainer_signed_name || session.trainer_name;
   const counts = new Map();
@@ -156,7 +242,8 @@ async function certificateTrainerName(session) {
 // The session as certificate/roster generation should see it: all trainers' names, plus the
 // day-by-day sign-offs for the roster.
 async function withDayTrainers(session) {
-  if (!session.total_days) return session;
+  const hasCoTrainers = Boolean(await dbGet('SELECT 1 AS x FROM session_co_trainers WHERE session_id = ? LIMIT 1', [session.session_id]));
+  if (!session.total_days && !hasCoTrainers) return session;
   return {
     ...session,
     certificate_trainer_name: await certificateTrainerName(session),
@@ -167,5 +254,5 @@ async function withDayTrainers(session) {
 
 module.exports = {
   listTrainerProfiles, resolveTrainerByName, saveDayTrainers, getSessionDays, recordDaySignoff, clearDaySignoff,
-  allTrainerNames, certificateTrainerName, withDayTrainers,
+  allTrainerNames, certificateTrainerName, withDayTrainers, getCoTrainers, saveCoTrainers, sessionTrainers, joinNames,
 };

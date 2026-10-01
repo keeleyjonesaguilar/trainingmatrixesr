@@ -16,7 +16,7 @@ const { sendEmail } = require('./email');
 const { notifyAllUsers } = require('./notifications');
 const { publicSignInUrl } = require('./qr');
 const { easternToday, EASTERN_TZ } = require('./dates');
-const { getSessionDays } = require('./sessionDays');
+const { getSessionDays, getCoTrainers } = require('./sessionDays');
 const { stripTrainingIdPrefix } = require('./certificateFilename');
 
 const REMINDER_WINDOW_DAYS = 3;
@@ -69,6 +69,20 @@ async function trainerEmail(employeeId, fallback) {
   return (employee?.email || fallback || '').trim().toLowerCase() || null;
 }
 
+// Any listed trainer can close out (Keeley's call, 2026-10-01), so co-trainers with an email get
+// the same reminder - skipping an address that already got it.
+async function remindCoTrainers({ session, alreadySent, action, dayLabel, date }) {
+  const sent = new Set([alreadySent].filter(Boolean));
+  for (const co of await getCoTrainers(session.session_id)) {
+    // eslint-disable-next-line no-await-in-loop
+    const to = await trainerEmail(co.trainer_employee_id, null);
+    if (!to || sent.has(to)) continue; // eslint-disable-line no-continue
+    sent.add(to);
+    // eslint-disable-next-line no-await-in-loop
+    await sendEmail({ to, ...buildReminderEmail({ session, trainerName: co.trainer_name, action, dayLabel, date, url: publicSignInUrl(session.qr_token) }) });
+  }
+}
+
 async function remind({ session, to, trainerName, action, dayLabel, date }) {
   const label = `${stripTrainingIdPrefix(session.training_type_label)} · ${session.client_name}`;
   if (!to) {
@@ -114,10 +128,12 @@ async function runReminders(mode = 'morning') {
         );
         if (!claimed.changes) continue; // eslint-disable-line no-continue
         // eslint-disable-next-line no-await-in-loop
-        await remind({
-          session, to: await trainerEmail(session.trainer_employee_id, session.trainer_email), trainerName: session.trainer_name,
-          action: 'close out your training session', dayLabel: 'Your session', date: session.session_date,
-        });
+        const leadTo = await trainerEmail(session.trainer_employee_id, session.trainer_email);
+        const args = { action: 'close out your training session', dayLabel: 'Your session', date: session.session_date };
+        // eslint-disable-next-line no-await-in-loop
+        await remind({ session, to: leadTo, trainerName: session.trainer_name, ...args });
+        // eslint-disable-next-line no-await-in-loop
+        await remindCoTrainers({ session, alreadySent: leadTo, ...args });
         continue; // eslint-disable-line no-continue
       }
 
@@ -139,14 +155,16 @@ async function runReminders(mode = 'morning') {
       if (!claimed.changes) continue; // eslint-disable-line no-continue
       const isFinal = day.day_number === session.total_days;
       // eslint-disable-next-line no-await-in-loop
-      await remind({
-        session,
-        to: await trainerEmail(day.assigned_trainer_employee_id, day.assigned_trainer_employee_id ? null : session.trainer_email),
-        trainerName: day.assigned_trainer_name,
+      const dayTo = await trainerEmail(day.assigned_trainer_employee_id, day.assigned_trainer_employee_id ? null : session.trainer_email);
+      const dayArgs = {
         action: isFinal ? 'close out your training session' : `sign off Day ${day.day_number}`,
         dayLabel: `Day ${day.day_number} of ${session.total_days}`,
         date: day.date,
-      });
+      };
+      // eslint-disable-next-line no-await-in-loop
+      await remind({ session, to: dayTo, trainerName: day.assigned_trainer_name, ...dayArgs });
+      // eslint-disable-next-line no-await-in-loop
+      await remindCoTrainers({ session, alreadySent: dayTo, ...dayArgs });
     } catch (err) {
       console.error(`Session reminder failed for ${session.session_id}:`, err.message);
     }
@@ -174,4 +192,4 @@ function start() {
   console.log(`Session reminder scheduler started - 9:00 PM day-of and 7:00 AM next morning (${EASTERN_TZ}).`);
 }
 
-module.exports = { start, runReminders, buildReminderEmail };
+module.exports = { start, runReminders, buildReminderEmail, remindCoTrainers };

@@ -12,7 +12,7 @@ const { buildRosterFilename, stripTrainingIdPrefix } = require('./certificateFil
 const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('./certificateZip');
 const { buildSessionCompleteEmail } = require('./sessionCompleteEmail');
 const { sendEmail } = require('./email');
-const { withDayTrainers } = require('./sessionDays');
+const { withDayTrainers, getCoTrainers } = require('./sessionDays');
 const { sessionFeedbackSummary } = require('./sessionFeedback');
 
 // The one training that also gets the official AHA Heartsaver Course Roster (Keeley's request,
@@ -156,6 +156,11 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
     const profileId = d.signed_trainer_employee_id || d.assigned_trainer_employee_id;
     // eslint-disable-next-line no-await-in-loop
     if (profileId) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email);
+  }
+  // Co-trainers (migration 074) get the completed forms too.
+  for (const co of await getCoTrainers(session.session_id)) {
+    // eslint-disable-next-line no-await-in-loop
+    if (co.trainer_employee_id) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [co.trainer_employee_id]))?.email);
   }
   // Each app user's Training Emails on/off is set on Manage Users (routes/users.js, Keeley's
   // request, 2026-09-30); email_settings (migration 067) holds the trainer on/off and any extra

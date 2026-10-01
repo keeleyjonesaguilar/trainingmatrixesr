@@ -6,6 +6,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
+import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
@@ -203,6 +204,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   );
   const [trainerOptions, setTrainerOptions] = useState([]);
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
+  // Other trainers teaching alongside the lead (migration 074, 2026-10-01).
+  const [coTrainerIds, setCoTrainerIds] = useState((session.co_trainers || []).map((t) => t.trainer_employee_id).filter(Boolean));
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -227,6 +230,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         day_dates: form.total_days ? dayDates : null,
         day_outlines: form.total_days ? dayOutlines : null,
         day_trainers: form.total_days ? dayTrainers : null,
+        co_trainer_ids: coTrainerIds,
       });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
@@ -296,6 +300,10 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         <div className="field">
           <label>Trainer Employee ID</label>
           <input value={form.trainer_phone} onChange={(e) => setForm({ ...form, trainer_phone: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Other trainers</label>
+          <CoTrainersPicker trainers={trainerOptions} value={coTrainerIds} onChange={setCoTrainerIds} leadId={session.trainer_employee_id} />
         </div>
         <div className="field">
           <label>Date</label>
@@ -753,9 +761,10 @@ Their certificate and the training record it added to their employee file will b
           <div className="session-fact-value">{formatLongDate(session.session_date)}</div>
         </div>
         <div className="session-fact">
-          <div className="session-fact-label">Trainer</div>
+          <div className="session-fact-label">{session.co_trainers?.length ? 'Trainers' : 'Trainer'}</div>
           <div className="session-fact-value">
             {session.trainer_signed_name || session.trainer_name}
+            {session.co_trainers?.length > 0 && <>, {session.co_trainers.map((t) => t.trainer_name).join(', ')}</>}
             {session.trainer_email && <div className="session-fact-sub">{session.trainer_email}</div>}
           </div>
         </div>
@@ -1284,6 +1293,29 @@ Their certificate and the training record it added to their employee file will b
               trainee identity by design (session_feedback is anonymous - see migration
               023_session_feedback.sql), so responses are numbered in submission order rather
               than attributed to anyone. */}
+          {/* Each trainer's own average when more than one taught (per-trainer ratings, 2026-10-01). */}
+          {(() => {
+            const byTrainer = new Map();
+            for (const f of session.feedback) {
+              for (const r of f.trainer_ratings || []) {
+                const key = r.trainer_employee_id || r.trainer_name;
+                const entry = byTrainer.get(key) || { name: r.trainer_name, total: 0, n: 0 };
+                entry.total += r.rating; entry.n += 1;
+                byTrainer.set(key, entry);
+              }
+            }
+            if (byTrainer.size < 2) return null;
+            return (
+              <div style={{ marginBottom: 16 }}>
+                <strong style={{ fontSize: 13 }}>Rating by Trainer</strong>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', marginTop: 6, fontSize: 13 }}>
+                  {[...byTrainer.values()].map((t) => (
+                    <span key={t.name}><strong>{t.name}:</strong> {(t.total / t.n).toFixed(1)} / 5 <span style={{ color: 'var(--color-text-muted)' }}>({t.n})</span></span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <strong style={{ fontSize: 13 }}>Individual Responses</strong>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
             {session.feedback.map((f, i) => (
@@ -1294,14 +1326,24 @@ Their certificate and the training record it added to their employee file will b
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, fontSize: 13 }}>
                   <div><strong>Training Effectiveness:</strong> {'★'.repeat(f.effectiveness_rating)}{'☆'.repeat(5 - f.effectiveness_rating)}</div>
-                  <div><strong>Trainer Rating:</strong> {'★'.repeat(f.trainer_rating)}{'☆'.repeat(5 - f.trainer_rating)}</div>
+                  {(f.trainer_ratings || []).length > 0
+                    ? f.trainer_ratings.map((r) => (
+                      <div key={r.id}><strong>{r.trainer_name}:</strong> {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</div>
+                    ))
+                    : <div><strong>Trainer Rating:</strong> {'★'.repeat(f.trainer_rating)}{'☆'.repeat(5 - f.trainer_rating)}</div>}
                   <div><strong>Could Ask Questions:</strong> {f.could_ask_questions ? f.could_ask_questions[0].toUpperCase() + f.could_ask_questions.slice(1) : '—'}</div>
                   <div><strong>Understood Material:</strong> {f.understood_material ? f.understood_material[0].toUpperCase() + f.understood_material.slice(1) : '—'}</div>
                   <div><strong>Needs Additional Training:</strong> {f.needs_additional_training ? f.needs_additional_training[0].toUpperCase() + f.needs_additional_training.slice(1) : '—'}</div>
                 </div>
-                {f.trainer_comment && (
-                  <p style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>&ldquo;{f.trainer_comment}&rdquo;</p>
-                )}
+                {(f.trainer_ratings || []).some((r) => r.comment)
+                  ? f.trainer_ratings.filter((r) => r.comment).map((r) => (
+                    <p key={r.id} style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>
+                      {f.trainer_ratings.length > 1 && <span style={{ fontStyle: 'normal', fontWeight: 600 }}>About {r.trainer_name}: </span>}&ldquo;{r.comment}&rdquo;
+                    </p>
+                  ))
+                  : f.trainer_comment && (
+                    <p style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>&ldquo;{f.trainer_comment}&rdquo;</p>
+                  )}
               </div>
             ))}
           </div>

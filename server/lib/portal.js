@@ -12,6 +12,7 @@ const { displayFirstLast } = require('./names');
 const { easternToday } = require('./dates');
 const { latestTrainings } = require('./employeeRecordCard');
 const { INTERNAL_CLIENT_ID } = require('./repo');
+const { TAUGHT_SESSIONS_SQL, trainerRatingSummary } = require('./sessionFeedback');
 
 const COOKIE_NAME = 'tm_portal';
 const SESSION_DAYS = 14;
@@ -205,8 +206,8 @@ async function confirmEmailChange(session, code) {
 }
 
 // ---- What the portal shows ----
-const TAUGHT_SQL = `SELECT session_id FROM training_sessions WHERE trainer_employee_id = $1
-  UNION SELECT session_id FROM session_days WHERE assigned_trainer_employee_id = $1 OR signed_trainer_employee_id = $1`;
+// Lead, day trainer or co-trainer (lib/sessionFeedback.js).
+const TAUGHT_SQL = TAUGHT_SESSIONS_SQL;
 
 async function trainerView(employeeId) {
   const sessions = await dbAll(
@@ -226,19 +227,16 @@ async function trainerView(employeeId) {
   const upcoming = sessions.filter((s) => s.status === 'open' && (JSON.parse(s.day_dates || 'null')?.slice(-1)[0] || s.session_date) >= today)
     .map(shape).sort((a, b) => a.date.localeCompare(b.date));
   const taught = sessions.filter((s) => s.status === 'closed').map(shape);
-  const agg = await dbGet(
-    `SELECT AVG(trainer_rating) AS trainer_avg, AVG(effectiveness_rating) AS effectiveness_avg, COUNT(*) AS n
-     FROM session_feedback WHERE session_id IN (${TAUGHT_SQL})`,
-    [employeeId]
-  );
-  const n = Number(agg?.n || 0);
+  // Only ratings meant for this trainer (per-trainer feedback, 2026-10-01).
+  const summary = await trainerRatingSummary(employeeId);
+  const n = summary.response_count;
   return {
     upcoming,
     taught,
     ratings: {
       responses: n,
-      trainer_avg: n ? Number(Number(agg.trainer_avg).toFixed(2)) : null,
-      effectiveness_avg: n ? Number(Number(agg.effectiveness_avg).toFixed(2)) : null,
+      trainer_avg: n ? Number(summary.avg_trainer_rating.toFixed(2)) : null,
+      effectiveness_avg: summary.avg_effectiveness_rating !== null ? Number(summary.avg_effectiveness_rating.toFixed(2)) : null,
     },
   };
 }

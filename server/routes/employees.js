@@ -18,7 +18,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const { getSessionDays } = require('../lib/sessionDays');
 const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require('../lib/employeeRecordCard');
 const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
-const { trainerFeedbackComments } = require('../lib/sessionFeedback');
+const { TAUGHT_SESSIONS_SQL, trainerFeedbackComments, trainerRatingSummary } = require('../lib/sessionFeedback');
 const { nameSearchClause } = require('../lib/search');
 
 const router = express.Router();
@@ -338,8 +338,7 @@ router.get('/:id/full-detail', async (req, res) => {
   // they taught, but the profile becomes a regular employee, so gating on employee_type alone
   // hid all of it (Keeley's report, 2026-09-28).
   // A day of a multi-day session counts too (server/lib/sessionDays.js).
-  const TAUGHT_SESSIONS_SQL = `SELECT session_id FROM training_sessions WHERE trainer_employee_id = $1
-     UNION SELECT session_id FROM session_days WHERE assigned_trainer_employee_id = $1 OR signed_trainer_employee_id = $1`;
+  // Lead, day trainer or co-trainer (lib/sessionFeedback.js TAUGHT_SESSIONS_SQL).
   const teaches = employee.employee_type === 'trainer' || Boolean(employee.is_trainer)
     || Boolean(await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SESSIONS_SQL}) t LIMIT 1`, [employee.employee_id]));
 
@@ -348,20 +347,10 @@ router.get('/:id/full-detail', async (req, res) => {
   // taught.
   let trainerFeedbackSummary = null;
   if (teaches) {
-    const agg = await dbGet(
-      `SELECT AVG(sf.trainer_rating) AS avg_trainer_rating, AVG(sf.effectiveness_rating) AS avg_effectiveness_rating, COUNT(*) AS response_count
-       FROM session_feedback sf
-       WHERE sf.session_id IN (${TAUGHT_SESSIONS_SQL})`,
-      [employee.employee_id]
-    );
-    // AVG() on an integer column returns Postgres NUMERIC, which the pg driver hands back as a
-    // string (same reason COUNT(*)/BIGINT needed the type-parser fix in server/db.js - this just
-    // wasn't covered by that fix, since it's a different OID) - left as a string, the frontend's
-    // .toFixed(1) call throws outright.
+    // Only ratings meant for this trainer (per-trainer feedback since 2026-10-01; older feedback
+    // counts for everyone who taught the session) - lib/sessionFeedback.js.
     trainerFeedbackSummary = {
-      avg_trainer_rating: agg.response_count > 0 ? Number(agg.avg_trainer_rating) : null,
-      avg_effectiveness_rating: agg.response_count > 0 ? Number(agg.avg_effectiveness_rating) : null,
-      response_count: agg.response_count,
+      ...(await trainerRatingSummary(employee.employee_id)),
       // Every written comment, for the office to review on the profile (Keeley's request,
       // 2026-09-30). Feedback is anonymous, so comments live on the trainer's profile only.
       comments: await trainerFeedbackComments(employee.employee_id),

@@ -9,13 +9,13 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
 const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
-const { saveDayTrainers, getSessionDays, clearDaySignoff, withDayTrainers } = require('../lib/sessionDays');
+const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers } = require('../lib/sessionDays');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
 const { logActivity } = require('../lib/activityLog');
-const { generateCertificate } = require('../lib/pdfGen');
-const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
+const { insertManualAttendee, certifyAfterClose } = require('../lib/lateAttendees');
+const { isValidPhoneNumber } = require('../lib/phone');
 const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
 
@@ -102,7 +102,8 @@ const SESSION_WITH_CLIENT_SQL = `
 // the list several hundred KB that only grows. The full session page (GET /:id) still has them.
 const SESSION_LIST_SQL = `
   SELECT ts.*, c.client_name,
-    (SELECT COUNT(*) FROM session_attendees sa WHERE sa.session_id = ts.session_id) AS attendee_count
+    (SELECT COUNT(*) FROM session_attendees sa WHERE sa.session_id = ts.session_id) AS attendee_count,
+    (SELECT string_agg(ct.trainer_name, ', ' ORDER BY ct.display_order) FROM session_co_trainers ct WHERE ct.session_id = ts.session_id) AS co_trainer_names
   FROM training_sessions ts
   JOIN clients c ON c.client_id = ts.client_id
 `;
@@ -127,8 +128,9 @@ router.get('/', async (req, res) => {
   // A multi-day session counts for every trainer who was assigned or signed off one of its days.
   if (trainer_employee_id) {
     clauses.push(`(ts.trainer_employee_id = ? OR EXISTS (SELECT 1 FROM session_days sd WHERE sd.session_id = ts.session_id
-                   AND (sd.assigned_trainer_employee_id = ? OR sd.signed_trainer_employee_id = ?)))`);
-    params.push(trainer_employee_id, trainer_employee_id, trainer_employee_id);
+                   AND (sd.assigned_trainer_employee_id = ? OR sd.signed_trainer_employee_id = ?))
+                   OR EXISTS (SELECT 1 FROM session_co_trainers ct WHERE ct.session_id = ts.session_id AND ct.trainer_employee_id = ?))`);
+    params.push(trainer_employee_id, trainer_employee_id, trainer_employee_id, trainer_employee_id);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = await dbAll(`${SESSION_LIST_SQL} ${where} ORDER BY ts.session_date DESC, ts.created_at DESC`, params);
@@ -173,7 +175,12 @@ router.get('/:id', async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
   const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
-  const feedback = await dbAll('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at', [session.session_id]);
+  const feedbackRows = await dbAll('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at', [session.session_id]);
+  // Each response's rating/comment per trainer (migration 074) - empty for feedback from before then.
+  const trainerRatings = feedbackRows.length
+    ? await dbAll('SELECT * FROM session_feedback_trainers WHERE feedback_id = ANY(?) ORDER BY trainer_name', [feedbackRows.map((f) => f.feedback_id)])
+    : [];
+  const feedback = feedbackRows.map((f) => ({ ...f, trainer_ratings: trainerRatings.filter((t) => t.feedback_id === f.feedback_id) }));
   // Extra trainings beyond the primary (server/migrations/045_multi_training_sessions.sql) -
   // each attendee's certificate/status for those lives in attendee_certificates since there can
   // be several, unlike the primary training's single certificate_path/processing_status columns.
@@ -205,6 +212,7 @@ router.get('/:id', async (req, res) => {
     feedback,
     additional_trainings: additionalTrainings,
     days: await getSessionDays(session),
+    co_trainers: await getCoTrainers(session.session_id),
   });
 });
 
@@ -221,7 +229,7 @@ router.post('/', async (req, res) => {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
     total_days = null, day_dates = null, day_outlines = null, day_trainers = null,
-    session_kind = 'training', toolbox_topic = null,
+    session_kind = 'training', toolbox_topic = null, co_trainer_ids = [],
   } = req.body || {};
   // A toolbox talk (Keeley's request, 2026-09-30): a Topic instead of a catalog training, filed
   // under the catalog's "Toolbox Talk" entry; outline/duration optional; never multi-day.
@@ -325,6 +333,10 @@ router.post('/', async (req, res) => {
   // Each day's trainer (lib/sessionDays.js) - a blank entry means the session's own trainer.
   if (totalDays) {
     await saveDayTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), day_trainers);
+  }
+  // Other trainers teaching alongside the lead trainer (migration 074, Keeley's request, 2026-10-01).
+  if (Array.isArray(co_trainer_ids) && co_trainer_ids.length) {
+    await saveCoTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), co_trainer_ids);
   }
 
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
@@ -449,6 +461,13 @@ router.put('/:id', requireAdmin, async (req, res) => {
     await saveDayTrainers(savedSession, current.map((d) => d.assigned_trainer_employee_id));
   } else {
     await saveDayTrainers(savedSession, null);
+  }
+  // Co-trainers: replaced when the form sends them; re-saved otherwise so a new lead trainer who
+  // was a co-trainer isn't listed twice.
+  if (Object.prototype.hasOwnProperty.call(req.body, 'co_trainer_ids')) {
+    await saveCoTrainers(savedSession, req.body.co_trainer_ids);
+  } else {
+    await saveCoTrainers(savedSession, (await getCoTrainers(savedSession.session_id)).map((t) => t.trainer_employee_id));
   }
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   logActivity({
@@ -740,39 +759,6 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
 // extend to a session's *additional* trainings (server/migrations/045_multi_training_sessions.sql)
 // - a rare-enough compounding edge case (multi-training session + a manual add after close) that
 // it's left for a manual Retry-style follow-up rather than adding here.
-// After close-out, give one attendee their certificate and employee-file record - when they've
-// made every day of a multi-day session; otherwise flag them incomplete with `incompleteReason`.
-// Shared by adding an attendee after close and the office marking a missed day present, so both
-// apply the same full-attendance gate the close route itself does. Returns true when certified.
-async function certifyAfterClose(session, attendeeId, incompleteReason) {
-  const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendeeId]);
-  let eligible = true;
-  if (session.total_days) {
-    const { n } = await dbGet(
-      'SELECT COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? AND attendee_id = ?',
-      [session.session_id, attendeeId]
-    );
-    eligible = Number(n) >= session.total_days;
-  }
-  if (!eligible) {
-    await dbRun(
-      `UPDATE session_attendees SET processing_status = 'incomplete_attendance', processing_error = ? WHERE attendee_id = ?`,
-      [incompleteReason, attendeeId]
-    );
-    return false;
-  }
-  let certPath = null;
-  try {
-    // A toolbox talk has no certificate - the record below still logs their attendance.
-    if (session.session_kind !== 'toolbox_talk') certPath = await generateCertificate(await withDayTrainers(session), attendee);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`Certificate generation failed for attendee ${attendeeId}:`, err);
-  }
-  await processAttendee(session, attendee, certPath);
-  return true;
-}
-
 router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -792,22 +778,9 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
 
-  const attendee_id = uuidv4();
-  await dbRun(
-    `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_first_name, trainee_last_name, trainee_phone, trainee_job_title, trainee_email, signature, added_by_admin)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-    [
-      attendee_id,
-      session.session_id,
-      trainee_name,
-      traineeFirst || null,
-      traineeLast || null,
-      trainee_phone ? formatPhoneNumber(trainee_phone) : null,
-      trainee_job_title ? trainee_job_title.trim() : null,
-      trainee_email ? trainee_email.trim().toLowerCase() : null,
-      signature || null,
-    ]
-  );
+  const attendee_id = await insertManualAttendee(session, {
+    firstName: traineeFirst, lastName: traineeLast, phone: trainee_phone, jobTitle: trainee_job_title, email: trainee_email, signature,
+  });
 
   if (session.status === 'closed') {
     await certifyAfterClose(session, attendee_id, 'Added after the session closed with no recorded attendance days on file.');

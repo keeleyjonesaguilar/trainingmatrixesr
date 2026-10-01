@@ -235,11 +235,18 @@ function drawCertificate(doc, session, attendee) {
     .font('Helvetica')
     .fontSize(13)
     .text(formatDate(session.session_date), pageWidth * 0.365, footerValueY, { width: pageWidth * 0.565 - pageWidth * 0.365, align: 'center' });
+  // Every trainer's name goes on the certificate (Keeley's call, 2026-10-01) - with two or three
+  // trainers the text shrinks until it fits the line instead of wrapping into the label below.
+  const trainerText = pdfSafeText(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || '');
+  const trainerWidth = pageWidth * 0.866 - pageWidth * 0.665;
+  let trainerSize = 13;
+  doc.font('Helvetica');
+  while (trainerSize > 7 && doc.fontSize(trainerSize).widthOfString(trainerText) > trainerWidth) trainerSize -= 0.5;
   doc
     .fillColor(ESR_GREEN)
     .font('Helvetica')
-    .fontSize(13)
-    .text(pdfSafeText(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || ''), pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
+    .fontSize(trainerSize)
+    .text(trainerText, pageWidth * 0.665, footerValueY + (13 - trainerSize) * 0.6, { width: trainerWidth, align: 'center', lineBreak: trainerSize > 7 ? false : true });
 }
 
 // One roster PDF per session listing every attendee + both signatures.
@@ -257,7 +264,8 @@ function generateRosterPdf(session, attendees) {
   doc.fontSize(11).font('Helvetica');
   doc.text(pdfSafeText(`Client: ${session.client_name}`));
   doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
-  doc.text(pdfSafeText(`Trainer${session.session_days?.length ? '(s)' : ''}: ${session.all_trainer_names || session.trainer_signed_name || session.trainer_name}`));
+  const trainerNames = session.all_trainer_names || session.trainer_signed_name || session.trainer_name;
+  doc.text(pdfSafeText(`Trainer${session.session_days?.length || String(trainerNames || '').includes(',') ? '(s)' : ''}: ${trainerNames}`));
   doc.text(`Date: ${formatDate(session.session_date)}`);
   if (session.outline) {
     doc.moveDown(0.3);

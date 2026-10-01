@@ -490,6 +490,16 @@ async function mergeEmployees(winnerId, loserIds) {
     // Uploaded documents (migration 058) cascade-delete with their employee - without this, the
     // merged-away profile's OSHA cards/medical evals vanished from the app (found 2026-10-01).
     await dbRun('UPDATE employee_documents SET employee_id = ? WHERE employee_id = ?', [winnerId, loserId]);
+    // Co-trainer spots and per-trainer feedback ratings (migration 074) - SET NULL on delete would
+    // otherwise drop the credit and the ratings. A session that already lists the winner keeps one row.
+    await dbRun(
+      `DELETE FROM session_co_trainers WHERE trainer_employee_id = ?
+         AND session_id IN (SELECT session_id FROM session_co_trainers WHERE trainer_employee_id = ?
+                            UNION SELECT session_id FROM training_sessions WHERE trainer_employee_id = ?)`,
+      [loserId, winnerId, winnerId]
+    );
+    await dbRun('UPDATE session_co_trainers SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
+    await dbRun('UPDATE session_feedback_trainers SET trainer_employee_id = ? WHERE trainer_employee_id = ?', [winnerId, loserId]);
     // These reference the loser without a cascade, so the delete below failed outright when the
     // loser had an extra-training certificate or was an old import's possible match.
     await dbRun('UPDATE attendee_certificates SET employee_id = ? WHERE employee_id = ?', [winnerId, loserId]);

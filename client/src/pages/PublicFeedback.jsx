@@ -19,6 +19,7 @@ function formatDate(d) {
 const STRINGS = {
   heading: { en: 'Training Feedback', es: 'Comentarios sobre la capacitación' },
   trainer_label: { en: 'Trainer:', es: 'Instructor:' },
+  trainers_label: { en: 'Trainers:', es: 'Instructores:' },
   thank_you: {
     en: 'Thank you — your feedback has been submitted.',
     es: 'Gracias — sus comentarios han sido enviados.',
@@ -37,6 +38,7 @@ const STRINGS = {
     en: "Please rate the trainer's performance.",
     es: 'Por favor califique el desempeño del instructor.',
   },
+  err_rate_named: { en: 'Please rate', es: 'Por favor califique a' },
 };
 
 // Same shape as PublicSignIn.jsx's makeTranslator: English, Spanish, or "English/Spanish" for
@@ -73,8 +75,10 @@ export default function PublicFeedback() {
   const [understoodMaterial, setUnderstoodMaterial] = useState('');
   const [needsAdditionalTraining, setNeedsAdditionalTraining] = useState('');
   const [effectiveness, setEffectiveness] = useState(0);
-  const [trainerRating, setTrainerRating] = useState(0);
-  const [comment, setComment] = useState('');
+  // A rating and optional comment for each trainer (Keeley's request, 2026-10-01) - co-trainers
+  // and each day's trainer on a multi-day course are rated separately.
+  const [trainerAnswers, setTrainerAnswers] = useState({});
+  const setAnswer = (key, patch) => setTrainerAnswers((prev) => ({ ...prev, [key]: { rating: 0, comment: '', ...prev[key], ...patch } }));
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -84,12 +88,14 @@ export default function PublicFeedback() {
   }, [token]);
 
   const t = makeTranslator(info?.language || 'english');
+  const trainers = info?.trainers?.length ? info.trainers : [{ key: 'lead', name: info?.trainer_name || '' }];
 
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
     if (!effectiveness) return setFormError(t('err_effectiveness'));
-    if (!trainerRating) return setFormError(t('err_trainer_rating'));
+    const unrated = trainers.find((tr) => !trainerAnswers[tr.key]?.rating);
+    if (unrated) return setFormError(trainers.length > 1 ? `${t('err_rate_named')} ${unrated.name}.` : t('err_trainer_rating'));
     setSubmitting(true);
     try {
       await api.publicSubmitFeedback(token, {
@@ -97,8 +103,11 @@ export default function PublicFeedback() {
         understood_material: understoodMaterial || null,
         needs_additional_training: needsAdditionalTraining || null,
         effectiveness_rating: effectiveness,
-        trainer_rating: trainerRating,
-        trainer_comment: comment.trim() || null,
+        trainer_ratings: trainers.map((tr) => ({
+          key: tr.key,
+          rating: trainerAnswers[tr.key].rating,
+          comment: (trainerAnswers[tr.key].comment || '').trim() || null,
+        })),
       });
       setSubmitted(true);
     } catch (err) {
@@ -144,7 +153,7 @@ export default function PublicFeedback() {
             {trainingLabel} · {info.client_name} · {formatDate(info.session_date)}
           </div>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
-            {t('trainer_label')} {info.trainer_name}
+            {trainers.length > 1 ? t('trainers_label') : t('trainer_label')} {trainers.map((tr) => tr.name).join(', ')}
           </div>
         </div>
 
@@ -184,19 +193,27 @@ export default function PublicFeedback() {
                 <label>{labelText(info.labels, 'effectiveness', language)}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
               </div>
-              <div className="field">
-                <label>{labelText(info.labels, 'trainer_rating', language)}</label>
-                <StarRating value={trainerRating} onChange={setTrainerRating} />
-              </div>
-              <div className="field">
-                <label>{labelText(info.labels, 'comment', language)}</label>
-                <textarea
-                  rows={3}
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder={t('comment_placeholder')}
-                />
-              </div>
+              {trainers.map((tr) => (
+                <div
+                  key={tr.key}
+                  style={trainers.length > 1 ? { border: '1px solid var(--color-border)', borderRadius: 4, padding: '10px 12px', marginBottom: 12 } : undefined}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{tr.name}</div>
+                  <div className="field">
+                    <label>{labelText(info.labels, 'trainer_rating', language)}</label>
+                    <StarRating value={trainerAnswers[tr.key]?.rating || 0} onChange={(v) => setAnswer(tr.key, { rating: v })} />
+                  </div>
+                  <div className="field" style={trainers.length > 1 ? { marginBottom: 0 } : undefined}>
+                    <label>{labelText(info.labels, 'comment', language)}</label>
+                    <textarea
+                      rows={3}
+                      value={trainerAnswers[tr.key]?.comment || ''}
+                      onChange={(e) => setAnswer(tr.key, { comment: e.target.value })}
+                      placeholder={t('comment_placeholder')}
+                    />
+                  </div>
+                </div>
+              ))}
               <button className="btn btn-accent" type="submit" disabled={submitting} style={{ width: '100%' }}>
                 {submitting ? t('submitting_ellipsis') : t('submit_button')}
               </button>
