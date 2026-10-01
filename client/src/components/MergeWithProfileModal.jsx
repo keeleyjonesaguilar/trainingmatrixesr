@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
 
 // General-purpose "merge this profile with another one" tool (Keeley's request, 2026-09-21) -
@@ -29,6 +29,15 @@ export default function MergeWithProfileModal({ employee, onMerged, onCancel }) 
     }
   };
 
+  // Click outside the popup, press Esc, or use the x to close it - not while a merge is saving
+  // (Keeley's report, 2026-10-01: a long result list ran off the screen with no way out).
+  const close = () => { if (!merging) onCancel(); };
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+
   const pick = (candidate) => {
     setSelected(candidate);
     setWinnerId(employee.employee_id); // defaults to keeping the current profile
@@ -52,9 +61,10 @@ export default function MergeWithProfileModal({ employee, onMerged, onCancel }) 
   };
 
   return (
-    <div className="modal-backdrop">
-      <div className="modal-card">
-        <h2>Merge With Another Profile</h2>
+    <div className="modal-backdrop" onClick={close}>
+      <div className="modal-card" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="modal-close" aria-label="Close" onClick={close} disabled={merging}>×</button>
+        <h2 style={{ paddingRight: 28 }}>Merge With Another Profile</h2>
         <p className="page-subtitle">
           Search for the other profile that's actually the same person as {employee.full_name} - works across employees and trainers, any client.
         </p>
@@ -79,7 +89,9 @@ export default function MergeWithProfileModal({ employee, onMerged, onCancel }) 
             <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
 
             {results && (
-              <div style={{ marginTop: 14 }}>
+              // Only the results scroll, so the search box and Cancel stay in view.
+              <div style={{ marginTop: 14, maxHeight: '50vh', overflowY: 'auto', paddingRight: 4 }}>
+                {results.length > 0 && <p className="page-subtitle" style={{ margin: '0 0 8px' }}>{results.length} match{results.length === 1 ? '' : 'es'}</p>}
                 {results.length === 0 && <p className="page-subtitle">No matches found.</p>}
                 {results.map((r) => (
                   <div key={r.employee_id} className="card" style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
