@@ -178,12 +178,14 @@ router.get('/:id', async (req, res) => {
   // lets SessionDetail.jsx draw the "who made every day" matrix. Empty for every normal
   // single-day session (total_days is null), so this is a no-op query for the common case.
   const attendanceDays = session.total_days && attendees.length
-    ? await dbAll('SELECT attendee_id, day_number FROM session_attendance_days WHERE session_id = ?', [session.session_id])
+    ? await dbAll('SELECT attendee_id, day_number, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id])
     : [];
   const attendeesWithCerts = attendees.map((a) => ({
     ...a,
     additional_certificates: additionalCerts.filter((c) => c.attendee_id === a.attendee_id),
     days_attended: attendanceDays.filter((d) => d.attendee_id === a.attendee_id).map((d) => d.day_number).sort((x, y) => x - y),
+    // Days the office marked present instead of the trainee signing in (migration 073).
+    days_marked_by_office: attendanceDays.filter((d) => d.attendee_id === a.attendee_id && d.marked_by).map((d) => d.day_number),
   }));
   res.json({
     ...withParsedDayDates(session),
@@ -728,6 +730,39 @@ router.get('/:sessionId/certificates.zip', async (req, res) => {
 // extend to a session's *additional* trainings (server/migrations/045_multi_training_sessions.sql)
 // - a rare-enough compounding edge case (multi-training session + a manual add after close) that
 // it's left for a manual Retry-style follow-up rather than adding here.
+// After close-out, give one attendee their certificate and employee-file record - when they've
+// made every day of a multi-day session; otherwise flag them incomplete with `incompleteReason`.
+// Shared by adding an attendee after close and the office marking a missed day present, so both
+// apply the same full-attendance gate the close route itself does. Returns true when certified.
+async function certifyAfterClose(session, attendeeId, incompleteReason) {
+  const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendeeId]);
+  let eligible = true;
+  if (session.total_days) {
+    const { n } = await dbGet(
+      'SELECT COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? AND attendee_id = ?',
+      [session.session_id, attendeeId]
+    );
+    eligible = Number(n) >= session.total_days;
+  }
+  if (!eligible) {
+    await dbRun(
+      `UPDATE session_attendees SET processing_status = 'incomplete_attendance', processing_error = ? WHERE attendee_id = ?`,
+      [incompleteReason, attendeeId]
+    );
+    return false;
+  }
+  let certPath = null;
+  try {
+    // A toolbox talk has no certificate - the record below still logs their attendance.
+    if (session.session_kind !== 'toolbox_talk') certPath = await generateCertificate(await withDayTrainers(session), attendee);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Certificate generation failed for attendee ${attendeeId}:`, err);
+  }
+  await processAttendee(session, attendee, certPath);
+  return true;
+}
+
 router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
   if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -765,35 +800,7 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
   );
 
   if (session.status === 'closed') {
-    const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee_id]);
-
-    // Multi-day session (server/migrations/055_multiday_sessions.sql): someone added after the
-    // fact has zero recorded attendance days on file, so the same full-attendance gate the close
-    // route itself applies correctly leaves them incomplete unless total_days is unset.
-    let eligible = true;
-    if (session.total_days) {
-      const { n } = await dbGet(
-        'SELECT COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? AND attendee_id = ?',
-        [session.session_id, attendee_id]
-      );
-      eligible = Number(n) >= session.total_days;
-    }
-    if (!eligible) {
-      await dbRun(
-        `UPDATE session_attendees SET processing_status = 'incomplete_attendance', processing_error = ? WHERE attendee_id = ?`,
-        ['Added after the session closed with no recorded attendance days on file.', attendee_id]
-      );
-    } else {
-      let certPath = null;
-      try {
-        // A toolbox talk has no certificate - the record below still logs their attendance.
-        if (session.session_kind !== 'toolbox_talk') certPath = await generateCertificate(await withDayTrainers(session), attendee);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(`Certificate generation failed for manually-added attendee ${attendee_id}:`, err);
-      }
-      await processAttendee(session, attendee, certPath);
-    }
+    await certifyAfterClose(session, attendee_id, 'Added after the session closed with no recorded attendance days on file.');
 
     // Regenerate the combined roster (and AHA roster, if applicable) so the new attendee shows
     // up on both right away, same generation the close route itself uses.
@@ -807,6 +814,93 @@ router.post('/:sessionId/attendees', requireAdmin, async (req, res) => {
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: trainee_name.trim(), req,
   });
   res.status(201).json(await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ?', [attendee_id]));
+});
+
+// Mark someone present for a day of a multi-day session from the office (Keeley's request,
+// 2026-10-01: "in case they forget" to sign in). Only for days that have started - up to the
+// current day while open, any day once closed. On a closed session this can complete their
+// attendance, which issues the certificate and training record just like an after-close add.
+async function attendanceDayContext(req, res) {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.sessionId]);
+  if (!session) { res.status(404).json({ error: 'Session not found' }); return null; }
+  if (!session.total_days) { res.status(400).json({ error: 'This is not a multi-day session.' }); return null; }
+  const day = Number(req.params.day);
+  if (!Number.isInteger(day) || day < 1 || day > session.total_days) {
+    res.status(400).json({ error: `Pick a day from 1 to ${session.total_days}.` });
+    return null;
+  }
+  const attendee = await dbGet('SELECT * FROM session_attendees WHERE attendee_id = ? AND session_id = ?', [req.params.attendeeId, session.session_id]);
+  if (!attendee) { res.status(404).json({ error: 'Attendee not found' }); return null; }
+  return { session, day, attendee };
+}
+
+async function attendanceResult(sessionId, attendeeId) {
+  const rows = await dbAll('SELECT day_number, marked_by FROM session_attendance_days WHERE session_id = ? AND attendee_id = ? ORDER BY day_number', [sessionId, attendeeId]);
+  const attendee = await dbGet('SELECT processing_status FROM session_attendees WHERE attendee_id = ?', [attendeeId]);
+  return {
+    days_attended: rows.map((r) => r.day_number),
+    days_marked_by_office: rows.filter((r) => r.marked_by).map((r) => r.day_number),
+    processing_status: attendee?.processing_status,
+  };
+}
+
+router.post('/:sessionId/attendees/:attendeeId/days/:day', requireAdmin, async (req, res) => {
+  const ctx = await attendanceDayContext(req, res);
+  if (!ctx) return;
+  const { session, day, attendee } = ctx;
+  if (session.status === 'open' && day > session.current_day) {
+    return res.status(400).json({ error: `Day ${day} hasn't started yet - the session is on Day ${session.current_day}.` });
+  }
+  // A closed session may issue a certificate here, and certificate files have to be made by the
+  // live server - a local copy would save a path only this computer has into the live records.
+  if (session.status === 'closed' && process.env.RENDER !== 'true' && process.env.ALLOW_LOCAL_ROSTER_REBUILD !== 'on') {
+    return res.status(400).json({ error: 'Mark days on a closed session from the live site (esr-training.com) - certificates are stored there.' });
+  }
+  const existing = await dbGet(
+    'SELECT id FROM session_attendance_days WHERE session_id = ? AND attendee_id = ? AND day_number = ?',
+    [session.session_id, attendee.attendee_id, day]
+  );
+  if (existing) return res.json(await attendanceResult(session.session_id, attendee.attendee_id));
+  await dbRun(
+    'INSERT INTO session_attendance_days (id, session_id, attendee_id, day_number, signature, marked_by) VALUES (?, ?, ?, ?, NULL, ?)',
+    [uuidv4(), session.session_id, attendee.attendee_id, day, req.user.username]
+  );
+  let certified = false;
+  if (session.status === 'closed' && attendee.processing_status === 'incomplete_attendance') {
+    certified = await certifyAfterClose(session, attendee.attendee_id, 'Still missing a day after the office marked attendance.');
+    if (certified) {
+      const allAttendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+      const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]);
+      await regenerateRosters(session, allAttendees, additionalTrainings);
+    }
+  }
+  logActivity({
+    actor: req.user, action: 'attendance_marked', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`,
+    details: `${attendee.trainee_name} – Day ${day}${certified ? ' (attendance complete, certificate issued)' : ''}`, req,
+  });
+  res.json({ ...(await attendanceResult(session.session_id, attendee.attendee_id)), certified });
+});
+
+// Undo an office-marked day (a mis-click) while the session is still open. A trainee's own
+// signed sign-in is never removed here, and a closed session's attendance is final.
+router.delete('/:sessionId/attendees/:attendeeId/days/:day', requireAdmin, async (req, res) => {
+  const ctx = await attendanceDayContext(req, res);
+  if (!ctx) return;
+  const { session, day, attendee } = ctx;
+  if (session.status !== 'open') return res.status(400).json({ error: 'Attendance can only be changed while the session is open.' });
+  const row = await dbGet(
+    'SELECT id, marked_by FROM session_attendance_days WHERE session_id = ? AND attendee_id = ? AND day_number = ?',
+    [session.session_id, attendee.attendee_id, day]
+  );
+  if (!row) return res.json(await attendanceResult(session.session_id, attendee.attendee_id));
+  if (!row.marked_by) return res.status(400).json({ error: `${attendee.trainee_name} signed in for Day ${day} themselves - only days marked by the office can be undone.` });
+  await dbRun('DELETE FROM session_attendance_days WHERE id = ?', [row.id]);
+  logActivity({
+    actor: req.user, action: 'attendance_unmarked', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `${attendee.trainee_name} – Day ${day}`, req,
+  });
+  res.json(await attendanceResult(session.session_id, attendee.attendee_id));
 });
 
 // Manual correction of a typo'd attendee entry (name/phone/email), while the session is still open.

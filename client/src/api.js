@@ -228,6 +228,10 @@ export const api = {
   // training record that sign-in produced, and rebuilds the rosters.
   deleteSessionAttendee: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}`, { method: 'DELETE' }),
+  markAttendanceDay: (sessionId, attendeeId, day) =>
+    request(`/training-sessions/${sessionId}/attendees/${attendeeId}/days/${day}`, { method: 'POST' }),
+  unmarkAttendanceDay: (sessionId, attendeeId, day) =>
+    request(`/training-sessions/${sessionId}/attendees/${attendeeId}/days/${day}`, { method: 'DELETE' }),
   getSessionEditLink: (sessionId) => request(`/training-sessions/${sessionId}/edit-link`, { method: 'POST' }),
   rebuildSessionRosters: (sessionId) => request(`/training-sessions/${sessionId}/rebuild-rosters`, { method: 'POST' }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>

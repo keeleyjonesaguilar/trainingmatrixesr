@@ -31,6 +31,8 @@ const ACTIVITY_ACTION_LABELS = {
   session_link_copied: 'Session link copied',
   session_edited_by_trainer: 'Close-out details edited by trainer',
   attendee_removed: 'Attendee removed from session',
+  attendance_marked: 'Attendance marked by office',
+  attendance_unmarked: 'Office attendance mark undone',
   qr_code_downloaded: 'QR code downloaded',
   roster_downloaded: 'Roster downloaded',
   rosters_rebuilt: 'Roster rebuilt',

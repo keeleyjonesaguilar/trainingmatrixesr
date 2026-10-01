@@ -163,13 +163,15 @@ async function multiDayEvents(recordId) {
   if (!link) return null;
   const session = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [link.session_id]);
   if (!session?.total_days) return null;
-  const attended = await dbAll('SELECT day_number, signed_at FROM session_attendance_days WHERE attendee_id = ?', [link.attendee_id]);
+  const attended = await dbAll('SELECT day_number, signed_at, marked_by FROM session_attendance_days WHERE attendee_id = ?', [link.attendee_id]);
   const signedIn = new Map(attended.map((a) => [a.day_number, a.signed_at]));
+  const markedByOffice = new Set(attended.filter((a) => a.marked_by).map((a) => a.day_number));
   return (await getSessionDays(session)).map((d) => ({
     day_number: d.day_number,
     date: d.date,
     trainer_name: d.signed_trainer_name || d.assigned_trainer_name,
     employee_signed_in_at: signedIn.get(d.day_number) || null,
+    marked_by_office: markedByOffice.has(d.day_number),
     trainer_signed_off_at: d.signed_at,
   }));
 }

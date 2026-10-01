@@ -20,7 +20,7 @@ function MultiDayEvents({ days }) {
             <td>Day {d.day_number}</td>
             <td>{d.date ? formatShortDate(d.date) : '—'}</td>
             <td>{d.trainer_name || '—'}</td>
-            <td>{d.employee_signed_in_at ? formatEasternDateTime(d.employee_signed_in_at) : <span style={{ color: 'var(--status-expired-text)' }}>Not signed in</span>}</td>
+            <td>{d.employee_signed_in_at ? (d.marked_by_office ? `Marked present by office ${formatEasternDateTime(d.employee_signed_in_at)}` : formatEasternDateTime(d.employee_signed_in_at)) : <span style={{ color: 'var(--status-expired-text)' }}>Not signed in</span>}</td>
             <td>{d.trainer_signed_off_at ? formatEasternDateTime(d.trainer_signed_off_at) : '—'}</td>
           </tr>
         ))}

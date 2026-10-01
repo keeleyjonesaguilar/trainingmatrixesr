@@ -516,6 +516,7 @@ export default function SessionDetail() {
   const [retryingId, setRetryingId] = useState(null);
   const [savingEditId, setSavingEditId] = useState(null);
   const [removingId, setRemovingId] = useState(null);
+  const [markingDay, setMarkingDay] = useState('');
   const [editingSession, setEditingSession] = useState(false);
   const [clients, setClients] = useState([]);
   const [trainings, setTrainings] = useState([]);
@@ -579,6 +580,37 @@ Their certificate and the training record it added to their employee file will b
       setError(err.message);
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  // Mark a multi-day attendee present for a day they forgot to sign in for (Keeley's request,
+  // 2026-10-01), or undo an office mark. On a closed session, completing their days issues the
+  // certificate and training record.
+  const markDay = async (attendee, day) => {
+    const closedNote = session.status === 'closed'
+      ? '\n\nThe session is closed - if this completes their days, their certificate and training record are created now.'
+      : '';
+    if (!window.confirm(`Mark ${attendee.trainee_name} present for Day ${day}? This shows as marked by the office (no signature).${closedNote}`)) return;
+    setMarkingDay(`${attendee.attendee_id}:${day}`);
+    try {
+      await api.markAttendanceDay(id, attendee.attendee_id, day);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMarkingDay('');
+    }
+  };
+  const unmarkDay = async (attendee, day) => {
+    if (!window.confirm(`Undo the office mark for ${attendee.trainee_name} on Day ${day}?`)) return;
+    setMarkingDay(`${attendee.attendee_id}:${day}`);
+    try {
+      await api.unmarkAttendanceDay(id, attendee.attendee_id, day);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMarkingDay('');
     }
   };
 
@@ -880,15 +912,43 @@ Their certificate and the training record it added to their employee file will b
                 return (
                   <tr key={a.attendee_id}>
                     <td>{a.trainee_name}</td>
-                    {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => (
-                      <td key={d} style={{ textAlign: 'center' }}>
-                        {daysAttended.includes(d) ? (
-                          <span style={{ color: 'var(--status-current-text)', fontWeight: 700 }}>✓</span>
-                        ) : (
-                          <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                        )}
-                      </td>
-                    ))}
+                    {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => {
+                      const byOffice = (a.days_marked_by_office || []).includes(d);
+                      // Only days that have started: up to the current day while open, any day once closed.
+                      const dayStarted = session.status === 'closed' || d <= session.current_day;
+                      const busy = markingDay === `${a.attendee_id}:${d}`;
+                      return (
+                        <td key={d} style={{ textAlign: 'center' }}>
+                          {daysAttended.includes(d) ? (
+                            <>
+                              <span style={{ color: 'var(--status-current-text)', fontWeight: 700 }}>✓</span>
+                              {byOffice && (
+                                <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                  Marked by office
+                                  {isAdmin && session.status === 'open' && (
+                                    <>
+                                      {' · '}
+                                      <button type="button" className="link-button" style={{ fontSize: 11 }} disabled={busy} onClick={() => unmarkDay(a, d)}>Undo</button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                              {isAdmin && dayStarted && (
+                                <div>
+                                  <button type="button" className="link-button" style={{ fontSize: 11 }} disabled={busy} onClick={() => markDay(a, d)}>
+                                    {busy ? 'Saving…' : 'Mark present'}
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      );
+                    })}
                     <td>
                       {session.status === 'closed' ? (
                         <RecordStatusBadge status={a.processing_status} />
