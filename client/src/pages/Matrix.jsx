@@ -6,6 +6,7 @@ import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
+import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { nameKey, nameParts } from '../lib/names.js';
 import { downloadCsv } from '../lib/csv.js';
@@ -269,13 +270,7 @@ export default function Matrix() {
       <div className="filter-bar">
         <div className="field-row">
           <label>Search Employee</label>
-          <input
-            type="search"
-            placeholder="Type name..."
-            defaultValue={search}
-            onKeyDown={(e) => { if (e.key === 'Enter') updateParam('search', e.target.value); }}
-            onBlur={(e) => updateParam('search', e.target.value)}
-          />
+          <LiveSearchInput placeholder="Type any part of a name..." value={search} onSearch={(v) => updateParam('search', v.trim())} />
         </div>
         <div className="field-row">
           <label>Client Account</label>

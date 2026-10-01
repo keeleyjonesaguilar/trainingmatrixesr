@@ -24,8 +24,9 @@ router.get('/login-attempts', async (req, res) => {
   const params = [];
 
   if (req.query.username) {
-    clauses.push('username_attempted = ?');
-    params.push(String(req.query.username).trim().toLowerCase());
+    // Part of a username is enough (2026-10-01: searches work as you type, not only on an exact match).
+    clauses.push('username_attempted ILIKE ?');
+    params.push(`%${String(req.query.username).trim()}%`);
   }
   if (req.query.outcome === 'success') clauses.push('success = 1');
   else if (req.query.outcome === 'failed') clauses.push('success = 0 AND blocked = 0');
@@ -78,8 +79,8 @@ router.get('/account-changes', async (req, res) => {
   const params = [];
 
   if (req.query.username) {
-    const needle = String(req.query.username).trim();
-    clauses.push('(actor_username = ? OR target_username = ?)');
+    const needle = `%${String(req.query.username).trim()}%`;
+    clauses.push('(actor_username ILIKE ? OR target_username ILIKE ?)');
     params.push(needle, needle);
   }
   if (req.query.action) {
@@ -110,8 +111,8 @@ router.get('/activity-log', async (req, res) => {
   const params = [];
 
   if (req.query.username) {
-    clauses.push('actor_username = ?');
-    params.push(String(req.query.username).trim());
+    clauses.push('actor_username ILIKE ?');
+    params.push(`%${String(req.query.username).trim()}%`);
   }
   if (req.query.action) {
     clauses.push('action = ?');

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { matchesSearch } from '../lib/search.js';
 
 // Type-to-filter picker for the master training catalog (Keeley's request, 2026-09-17: a plain
 // <select> became unusable once the catalog grew to 100+ trainings). Shared outside-click-closes
@@ -20,7 +21,7 @@ function filterTrainings(trainings, query, excludeIds) {
   const q = query.trim().toLowerCase();
   return trainings
     .filter((t) => !excludeIds.includes(t.training_id))
-    .filter((t) => !q || t.training_id.toLowerCase().includes(q) || t.training_name.toLowerCase().includes(q));
+    .filter((t) => !q || matchesSearch(`${t.training_id} ${t.training_name}`, q));
 }
 
 // Single-select: value/onChange are a single training_id, like the <select> it replaces.

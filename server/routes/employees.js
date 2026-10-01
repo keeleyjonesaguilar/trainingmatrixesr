@@ -19,6 +19,7 @@ const { getSessionDays } = require('../lib/sessionDays');
 const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require('../lib/employeeRecordCard');
 const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
 const { trainerFeedbackComments } = require('../lib/sessionFeedback');
+const { nameSearchClause } = require('../lib/search');
 
 const router = express.Router();
 
@@ -59,7 +60,8 @@ router.get('/', async (req, res) => {
   if (client_id) { clauses.push('client_id = ?'); params.push(client_id); }
   if (department) { clauses.push('department = ?'); params.push(department); }
   if (job_title) { clauses.push('job_title = ?'); params.push(job_title); }
-  if (search) { clauses.push('LOWER(full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
+  const nameMatch = nameSearchClause('full_name', search);
+  if (nameMatch) { clauses.push(nameMatch.sql); params.push(...nameMatch.params); }
   if (activeOnly === 'true') { clauses.push('active = 1'); }
   const where = `WHERE ${clauses.join(' AND ')}`;
   const rows = await dbAll(`SELECT * FROM employees ${where} ORDER BY full_name ASC`, params);
@@ -72,9 +74,10 @@ router.get('/', async (req, res) => {
 // crosses that boundary on their own.
 router.get('/search-any', async (req, res) => {
   const { q, exclude_id } = req.query;
-  if (!q || !q.trim()) return res.json([]);
-  const clauses = ['LOWER(e.full_name) LIKE ?'];
-  const params = [`%${q.trim().toLowerCase()}%`];
+  const nameMatch = nameSearchClause('e.full_name', q);
+  if (!nameMatch) return res.json([]);
+  const clauses = [nameMatch.sql];
+  const params = [...nameMatch.params];
   if (exclude_id) { clauses.push('e.employee_id != ?'); params.push(exclude_id); }
   const rows = await dbAll(
     `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id

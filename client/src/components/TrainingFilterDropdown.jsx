@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { matchesSearch } from '../lib/search.js';
 
 // Shared by the main Employee Matrix (client/src/pages/Matrix.jsx) and the per-client employee
 // list embedded on a client's Compliance Overview (client/src/pages/Dashboard.jsx) - extracted
@@ -8,7 +9,7 @@ export default function TrainingFilterDropdown({ masterTrainings, selected, onCh
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const filtered = masterTrainings.filter(
-    (mt) => !search || mt.training_name.toLowerCase().includes(search.toLowerCase()) || mt.training_id.toLowerCase().includes(search.toLowerCase())
+    (mt) => !search || matchesSearch(`${mt.training_id} ${mt.training_name}`, search)
   );
   const toggle = (id) => {
     if (selected.includes(id)) onChange(selected.filter((s) => s !== id));

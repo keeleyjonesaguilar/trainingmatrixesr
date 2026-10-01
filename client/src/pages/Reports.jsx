@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import { matchesSearch } from '../lib/search.js';
 import { downloadCsv } from '../lib/csv';
 
 // A narrower list than matrixCell.js's full STATUS_OPTIONS - this report only ever shows rows
@@ -87,8 +89,8 @@ export default function Reports() {
 
   const sortedRows = useMemo(() => {
     if (!rows) return rows;
-    const needle = employeeSearch.trim().toLowerCase();
-    const filtered = needle ? rows.filter((r) => (r.full_name || '').toLowerCase().includes(needle)) : rows;
+    // Any word order, ignoring commas/accents (lib/search.js) - "john smith" finds "Smith, John".
+    const filtered = employeeSearch.trim() ? rows.filter((r) => matchesSearch(r.full_name, employeeSearch)) : rows;
     const accessor = SORT_ACCESSORS[sortField];
     const copy = [...filtered];
     copy.sort((a, b) => {
@@ -137,13 +139,7 @@ export default function Reports() {
         </div>
         <div className="field-row">
           <label>Employee</label>
-          <input
-            type="search"
-            placeholder="Search by name..."
-            defaultValue={employeeSearch}
-            onKeyDown={(e) => { if (e.key === 'Enter') updateParam('employee_search', e.target.value); }}
-            onBlur={(e) => updateParam('employee_search', e.target.value)}
-          />
+          <LiveSearchInput placeholder="Type any part of a name..." value={employeeSearch} onSearch={(v) => updateParam('employee_search', v.trim())} delay={150} />
         </div>
         <div className="field-row">
           <label>Training</label>

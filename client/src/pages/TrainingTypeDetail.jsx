@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import LoadingState from '../components/LoadingState.jsx';
@@ -306,11 +307,7 @@ export default function TrainingTypeDetail() {
 
         <div>
           <div className="card" style={{ marginBottom: 16 }}>
-            <input
-              placeholder="Filter sessions by client…"
-              value={sessionClientFilter}
-              onChange={(e) => setSessionClientFilter(e.target.value)}
-            />
+            <LiveSearchInput placeholder="Filter sessions by client…" value={sessionClientFilter} onSearch={(v) => setSessionClientFilter(v.trim())} />
           </div>
           <SessionList title="Upcoming Sessions" sessions={upcoming} showRosterLinks={false} emptyText="No upcoming sessions scheduled." loading={sessionsLoading} />
           <SessionList title="Past Sessions" sessions={past} showRosterLinks emptyText="No completed sessions yet." loading={sessionsLoading} />

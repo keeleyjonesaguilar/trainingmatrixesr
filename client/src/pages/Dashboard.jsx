@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
@@ -216,13 +217,7 @@ function ClientEmployeesSection({ clientId, clientName }) {
       <div className="filter-bar">
         <div className="field-row">
           <label>Search Employee</label>
-          <input
-            type="search"
-            placeholder="Type name..."
-            defaultValue={search}
-            onKeyDown={(e) => { if (e.key === 'Enter') setSearch(e.target.value); }}
-            onBlur={(e) => setSearch(e.target.value)}
-          />
+          <LiveSearchInput placeholder="Type any part of a name..." value={search} onSearch={(v) => setSearch(v.trim())} />
         </div>
         <TrainingFilterDropdown masterTrainings={allMasterTrainings} selected={trainingIds} onChange={setTrainingIds} />
         <div className="field-row">

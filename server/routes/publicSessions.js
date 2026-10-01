@@ -4,6 +4,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
+const { nameSearchClause } = require('../lib/search');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { generateCertificate } = require('../lib/pdfGen');
 const { processAttendee, processAttendeeAdditionalTraining } = require('../lib/sessionRecords');
@@ -236,10 +237,13 @@ router.get('/:token/attendees/search', async (req, res) => {
   if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
+  // Any word order (Keeley's request, 2026-10-01) - "Garcia Juan" finds "Juan Garcia".
+  const nameMatch = nameSearchClause('trainee_name', q);
+  if (!nameMatch) return res.json([]);
   const rows = await dbAll(
     `SELECT attendee_id, trainee_name FROM session_attendees
-     WHERE session_id = ? AND trainee_name ILIKE ? ORDER BY trainee_name LIMIT 8`,
-    [session.session_id, `%${q}%`]
+     WHERE session_id = ? AND ${nameMatch.sql} ORDER BY trainee_name LIMIT 8`,
+    [session.session_id, ...nameMatch.params]
   );
   if (rows.length === 0) return res.json([]);
   const days = await dbAll(

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
+import { matchesSearch } from '../lib/search.js';
 import { useIsAdmin } from '../authContext.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 
@@ -77,7 +78,7 @@ export default function TrainingTypes() {
   useEffect(load, []);
 
   const bySearch = trainings.filter((t) => {
-    if (search && !`${t.training_id} ${t.training_name}`.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !matchesSearch(`${t.training_id} ${t.training_name}`, search)) return false;
     return true;
   });
 

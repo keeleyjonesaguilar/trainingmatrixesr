@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { formatEasternDate, formatEasternDateTime } from '../lib/dates';
 import LoadingState from '../components/LoadingState.jsx';
 
@@ -178,23 +179,27 @@ export default function Security() {
   useEffect(() => { loadActivity(); }, [activityOffset]);
   useEffect(() => { api.getAccessRoster().then(setRoster).catch((e) => setRosterError(e.message)); }, []);
 
-  const submitFilters = (e) => {
-    e.preventDefault();
+  // Filters apply as you type or pick (Keeley's request, 2026-10-01) - back to page 1 each time.
+  // Skipped on the first render, where the offset effects above already load each list.
+  const filtersReady = useRef(false);
+  useEffect(() => {
+    if (!filtersReady.current) return;
     setLoginOffset(0);
     load();
-  };
-
-  const submitChangesFilter = (e) => {
-    e.preventDefault();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usernameFilter, outcomeFilter]);
+  useEffect(() => {
+    if (!filtersReady.current) return;
     setChangesOffset(0);
     loadChanges();
-  };
-
-  const submitActivityFilter = (e) => {
-    e.preventDefault();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changesUsernameFilter]);
+  useEffect(() => {
+    if (!filtersReady.current) { filtersReady.current = true; return; }
     setActivityOffset(0);
     loadActivity();
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityUsernameFilter]);
 
   const outcomeLabel = (row) => {
     if (row.blocked) return 'Blocked (lockout)';
@@ -305,21 +310,16 @@ export default function Security() {
           <h2>Login Attempts</h2>
           <RetentionNote days={90} />
           {loginError && <div className="error-banner">{loginError}</div>}
-          <form onSubmit={submitFilters} className="toolbar">
-            <input
-              type="text"
-              placeholder="Filter by username"
-              value={usernameFilter}
-              onChange={(e) => setUsernameFilter(e.target.value)}
-            />
+          <div className="toolbar">
+            <LiveSearchInput placeholder="Filter by username" value={usernameFilter} onSearch={(v) => setUsernameFilter(v.trim())} />
             <select value={outcomeFilter} onChange={(e) => setOutcomeFilter(e.target.value)}>
               <option value="all">All outcomes</option>
               <option value="success">Success only</option>
               <option value="failed">Failed only</option>
               <option value="blocked">Blocked (lockout) only</option>
             </select>
-            <button type="submit" disabled={loading}>{loading ? 'Loading...' : 'Apply Filters'}</button>
-          </form>
+            {loading && <span className="page-subtitle" style={{ margin: 0 }}>Loading...</span>}
+          </div>
 
           <table>
             <thead>
@@ -361,15 +361,10 @@ export default function Security() {
             role changes, password resets, and 2FA/email changes - who did it, to which account, and from what IP.
           </p>
           {changesError && <div className="error-banner">{changesError}</div>}
-          <form onSubmit={submitChangesFilter} className="toolbar">
-            <input
-              type="text"
-              placeholder="Filter by username (actor or target)"
-              value={changesUsernameFilter}
-              onChange={(e) => setChangesUsernameFilter(e.target.value)}
-            />
-            <button type="submit" disabled={changesLoading}>{changesLoading ? 'Loading...' : 'Apply Filter'}</button>
-          </form>
+          <div className="toolbar">
+            <LiveSearchInput placeholder="Filter by username (actor or target)" value={changesUsernameFilter} onSearch={(v) => setChangesUsernameFilter(v.trim())} />
+            {changesLoading && <span className="page-subtitle" style={{ margin: 0 }}>Loading...</span>}
+          </div>
 
           <table>
             <thead>
@@ -412,15 +407,10 @@ export default function Security() {
             created or changed, and imports committed.
           </p>
           {activityError && <div className="error-banner">{activityError}</div>}
-          <form onSubmit={submitActivityFilter} className="toolbar">
-            <input
-              type="text"
-              placeholder="Filter by username"
-              value={activityUsernameFilter}
-              onChange={(e) => setActivityUsernameFilter(e.target.value)}
-            />
-            <button type="submit" disabled={activityLoading}>{activityLoading ? 'Loading...' : 'Apply Filter'}</button>
-          </form>
+          <div className="toolbar">
+            <LiveSearchInput placeholder="Filter by username" value={activityUsernameFilter} onSearch={(v) => setActivityUsernameFilter(v.trim())} />
+            {activityLoading && <span className="page-subtitle" style={{ margin: 0 }}>Loading...</span>}
+          </div>
 
           <table>
             <thead>

@@ -15,19 +15,21 @@ export default function MergeWithProfileModal({ employee, onMerged, onCancel }) 
   const [merging, setMerging] = useState(false);
   const [error, setError] = useState('');
 
-  const search = async () => {
-    if (!query.trim()) return;
+  // Results as you type (Keeley's request, 2026-10-01) - a moment after typing pauses, any word
+  // order ("john smith" finds "Smith, John"). A slower, older lookup never replaces a newer one.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setResults(null); setSearching(false); return undefined; }
+    let current = true;
     setSearching(true);
-    setError('');
-    try {
-      const rows = await api.searchAnyEmployee(query.trim(), employee.employee_id);
-      setResults(rows);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSearching(false);
-    }
-  };
+    const handle = setTimeout(() => {
+      api.searchAnyEmployee(q, employee.employee_id)
+        .then((rows) => { if (current) { setResults(rows); setError(''); } })
+        .catch((e) => { if (current) setError(e.message); })
+        .finally(() => { if (current) setSearching(false); });
+    }, 250);
+    return () => { current = false; clearTimeout(handle); };
+  }, [query, employee.employee_id]);
 
   // Click outside the popup, press Esc, or use the x to close it - not while a merge is saving
   // (Keeley's report, 2026-10-01: a long result list ran off the screen with no way out).
@@ -75,18 +77,15 @@ export default function MergeWithProfileModal({ employee, onMerged, onCancel }) 
             <div className="field-row">
               <label>Search by name</label>
               <input
-                type="text"
+                type="search"
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
-                placeholder="e.g. Jamie Rivera"
+                placeholder="Type any part of a name, e.g. Jamie Rivera"
               />
             </div>
-            <button type="button" disabled={searching || !query.trim()} onClick={search}>
-              {searching ? 'Searching...' : 'Search'}
-            </button>{' '}
             <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+            {searching && <span className="page-subtitle" style={{ marginLeft: 10 }}>Searching…</span>}
 
             {results && (
               // Only the results scroll, so the search box and Cancel stay in view.

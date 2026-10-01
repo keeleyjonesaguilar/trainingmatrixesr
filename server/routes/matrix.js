@@ -1,6 +1,7 @@
 const express = require('express');
 const { dbGet, dbAll } = require('../db');
 const repo = require('../lib/repo');
+const { nameSearchClause } = require('../lib/search');
 
 const router = express.Router();
 
@@ -24,7 +25,8 @@ router.get('/', async (req, res) => {
   if (client_id) { sharedClauses.push('e.client_id = ?'); params.push(client_id); }
   if (department) { sharedClauses.push('e.department = ?'); params.push(department); }
   if (job_title) { sharedClauses.push('e.job_title = ?'); params.push(job_title); }
-  if (search) { sharedClauses.push('LOWER(e.full_name) LIKE ?'); params.push(`%${search.toLowerCase()}%`); }
+  const nameMatch = nameSearchClause('e.full_name', search);
+  if (nameMatch) { sharedClauses.push(nameMatch.sql); params.push(...nameMatch.params); }
   const where = `WHERE e.active = ? AND ${sharedClauses.join(' AND ')}`;
 
   const employees = await dbAll(
