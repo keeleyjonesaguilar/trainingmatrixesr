@@ -91,16 +91,26 @@ function withParsedDayDates(session) {
   };
 }
 
-async function attendeeCount(sessionId) {
-  const { n } = await dbGet('SELECT COUNT(*) AS n FROM session_attendees WHERE session_id = ?', [sessionId]);
-  return n;
-}
-
 const SESSION_WITH_CLIENT_SQL = `
   SELECT ts.*, c.client_name
   FROM training_sessions ts
   JOIN clients c ON c.client_id = ts.client_id
 `;
+
+// Session lists (2026-10-01, speed): the attendee count comes from the same query instead of one
+// extra query per session, and signature images are left out - no list shows them, and they made
+// the list several hundred KB that only grows. The full session page (GET /:id) still has them.
+const SESSION_LIST_SQL = `
+  SELECT ts.*, c.client_name,
+    (SELECT COUNT(*) FROM session_attendees sa WHERE sa.session_id = ts.session_id) AS attendee_count
+  FROM training_sessions ts
+  JOIN clients c ON c.client_id = ts.client_id
+`;
+function withoutSignatures(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row)) if (!k.endsWith('signature')) out[k] = v;
+  return out;
+}
 
 // List sessions, optionally filtered by client_id (exact - used for cross-links from a client's
 // own page), client_name (fuzzy - used by the filter box on the Sessions list), training, or status.
@@ -121,8 +131,8 @@ router.get('/', async (req, res) => {
     params.push(trainer_employee_id, trainer_employee_id, trainer_employee_id);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const rows = await dbAll(`${SESSION_WITH_CLIENT_SQL} ${where} ORDER BY ts.session_date DESC, ts.created_at DESC`, params);
-  res.json(await Promise.all(rows.map(async (r) => ({ ...r, attendee_count: await attendeeCount(r.session_id) }))));
+  const rows = await dbAll(`${SESSION_LIST_SQL} ${where} ORDER BY ts.session_date DESC, ts.created_at DESC`, params);
+  res.json(rows.map((r) => ({ ...withoutSignatures(r), attendee_count: Number(r.attendee_count) })));
 });
 
 // Training Types directory (the "master page per training type" ask): every training in the
@@ -155,8 +165,8 @@ router.get('/by-training/:trainingId', async (req, res) => {
   const clauses = ['(ts.master_training_id = ? OR EXISTS (SELECT 1 FROM session_additional_trainings sat WHERE sat.session_id = ts.session_id AND sat.master_training_id = ?))'];
   const params = [req.params.trainingId, req.params.trainingId];
   if (client_id) { clauses.push('ts.client_id = ?'); params.push(client_id); }
-  const rows = await dbAll(`${SESSION_WITH_CLIENT_SQL} WHERE ${clauses.join(' AND ')} ORDER BY ts.session_date DESC`, params);
-  res.json(await Promise.all(rows.map(async (r) => ({ ...r, attendee_count: await attendeeCount(r.session_id) }))));
+  const rows = await dbAll(`${SESSION_LIST_SQL} WHERE ${clauses.join(' AND ')} ORDER BY ts.session_date DESC`, params);
+  res.json(rows.map((r) => ({ ...withoutSignatures(r), attendee_count: Number(r.attendee_count) })));
 });
 
 router.get('/:id', async (req, res) => {

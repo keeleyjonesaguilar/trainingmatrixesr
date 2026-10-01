@@ -227,37 +227,12 @@ router.get('/:id/full-detail', async (req, res) => {
   const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [req.params.id]);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   const client = await dbGet('SELECT * FROM clients WHERE client_id = ?', [employee.client_id]);
+  // Loaded up front in a handful of queries, then worked out in memory (2026-10-01, speed): this
+  // used to run 2-3 queries per catalog training plus several per completed record - 230-280
+  // round trips for one profile.
   const masterTrainings = await repo.listMasterTrainings({ activeOnly: true });
-  const trainings = await Promise.all(masterTrainings.map(async (mt) => {
-    const { requirement, record, status, expirationDate } = await repo.computeCell({
-      employeeId: employee.employee_id,
-      clientId: employee.client_id,
-      trainingId: mt.training_id,
-      masterTraining: mt,
-    });
-    return {
-      training_id: mt.training_id,
-      training_name: requirement?.client_training_name || mt.training_name,
-      master_training_name: mt.training_name,
-      training_type: mt.training_type,
-      requirement_status: requirement ? requirement.requirement_status : 'Not Required',
-      original_client_training_name: record ? record.original_client_training_name : null,
-      completion_date: record ? record.completion_date : null,
-      expiration_date: expirationDate,
-      status,
-      expiring_soon: await repo.isExpiringSoon(status, expirationDate),
-      notes: record ? record.notes : null,
-      record_id: record ? record.record_id : null,
-      duplicate_status: record ? record.duplicate_status : 'none',
-      certificate_filename: record ? record.certificate_filename : null,
-      trainer_employee_id: record ? record.trainer_employee_id : null,
-      // Only records created by closing out a sign-in session have a captured signature - one
-      // manually entered via "Record Training Completion" or brought in by CSV import has none.
-      signature: record
-        ? (await dbGet('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1', [record.record_id]))?.signature || null
-        : null,
-    };
-  }));
+  const masterById = new Map((await repo.listMasterTrainings({ activeOnly: false })).map((mt) => [mt.training_id, mt]));
+  const lookups = await repo.loadCellLookups([employee.employee_id], [employee.client_id]);
 
   // Every completed record on file, not just the one "latest" one per training type (Keeley's
   // request: nothing should ever look overridden - a training taken more than once, e.g. Day
@@ -272,9 +247,62 @@ router.get('/:id/full-detail', async (req, res) => {
      ORDER BY r.completion_date DESC, r.insert_seq DESC`,
     [employee.employee_id]
   );
+
+  // Only records created by closing out a sign-in session have a captured signature - one
+  // manually entered via "Record Training Completion" or brought in by CSV import has none.
+  const recordIds = [...new Set([
+    ...[...lookups.recordMap.values()].map((r) => r.record_id),
+    ...completedRecordsRaw.map((r) => r.record_id),
+  ])];
+  const signatureByRecord = new Map();
+  const multiDayRecordIds = new Set();
+  if (recordIds.length) {
+    for (const row of await dbAll(
+      `SELECT DISTINCT ON (training_record_id) training_record_id, signature FROM session_attendees
+       WHERE training_record_id = ANY(?) ORDER BY training_record_id, signed_at DESC`,
+      [recordIds]
+    )) signatureByRecord.set(row.training_record_id, row.signature);
+    // Which records came from a multi-day session - only those get the day-by-day lookup.
+    for (const row of await dbAll(
+      `SELECT sa.training_record_id AS record_id FROM session_attendees sa JOIN training_sessions ts ON ts.session_id = sa.session_id
+         WHERE ts.total_days IS NOT NULL AND sa.training_record_id = ANY(?)
+       UNION SELECT ac.training_record_id FROM attendee_certificates ac JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id
+         JOIN training_sessions ts ON ts.session_id = sa.session_id WHERE ts.total_days IS NOT NULL AND ac.training_record_id = ANY(?)`,
+      [recordIds, recordIds]
+    )) multiDayRecordIds.add(row.record_id);
+  }
+
+  const trainings = masterTrainings.map((mt) => {
+    const { requirement, record, status, expirationDate } = repo.computeCellFromLookups({
+      employeeId: employee.employee_id,
+      clientId: employee.client_id,
+      trainingId: mt.training_id,
+      masterTraining: mt,
+      ...lookups,
+    });
+    return {
+      training_id: mt.training_id,
+      training_name: requirement?.client_training_name || mt.training_name,
+      master_training_name: mt.training_name,
+      training_type: mt.training_type,
+      requirement_status: requirement ? requirement.requirement_status : 'Not Required',
+      original_client_training_name: record ? record.original_client_training_name : null,
+      completion_date: record ? record.completion_date : null,
+      expiration_date: expirationDate,
+      status,
+      expiring_soon: repo.isExpiringSoon(status, expirationDate),
+      notes: record ? record.notes : null,
+      record_id: record ? record.record_id : null,
+      duplicate_status: record ? record.duplicate_status : 'none',
+      certificate_filename: record ? record.certificate_filename : null,
+      trainer_employee_id: record ? record.trainer_employee_id : null,
+      signature: record ? signatureByRecord.get(record.record_id) || null : null,
+    };
+  });
+
   const completedRecords = await Promise.all(completedRecordsRaw.map(async (r) => {
-    const requirement = await repo.getRequirement(employee.client_id, r.training_id);
-    const masterTraining = await repo.getMasterTraining(r.training_id);
+    const requirement = lookups.requirementMap.get(`${employee.client_id}|${r.training_id}`) || null;
+    const masterTraining = masterById.get(r.training_id) || null;
     // Status/expiration are recomputed live here (Keeley's report, 2026-08-26: this table
     // was showing r.status/r.expiration_date straight off the DB row, frozen at whatever
     // they were the last time the record was written - so a training that's genuinely
@@ -292,13 +320,13 @@ router.get('/:id/full-detail', async (req, res) => {
       completion_date: r.completion_date,
       expiration_date: expirationDate,
       status,
-      expiring_soon: await repo.isExpiringSoon(status, expirationDate),
+      expiring_soon: repo.isExpiringSoon(status, expirationDate),
       notes: r.notes,
       record_id: r.record_id,
       certificate_filename: r.certificate_filename,
       trainer_employee_id: r.trainer_employee_id,
-      signature: (await dbGet('SELECT signature FROM session_attendees WHERE training_record_id = ? ORDER BY signed_at DESC LIMIT 1', [r.record_id]))?.signature || null,
-      days: await multiDayEvents(r.record_id),
+      signature: signatureByRecord.get(r.record_id) || null,
+      days: multiDayRecordIds.has(r.record_id) ? await multiDayEvents(r.record_id) : null,
     };
   }));
 

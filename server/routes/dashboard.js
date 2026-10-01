@@ -269,10 +269,17 @@ router.get('/', async (req, res) => {
   gaps.sort((a, b) => (a.expiration_date || '9999').localeCompare(b.expiration_date || '9999'));
 
   const clients = await dbAll('SELECT * FROM clients WHERE is_internal = 0 ORDER BY client_name');
+  // One grouped count for every client (2026-10-01, speed) - this was one query per client, ~75
+  // round trips on every Dashboard load once the non-retainer clients were imported.
+  const recordCountByClient = new Map((await dbAll(
+    'SELECT client_id, COUNT(*) AS n FROM employee_training_records WHERE is_inactive = 0 GROUP BY client_id'
+  )).map((r) => [r.client_id, Number(r.n)]));
+  const employeeCountByClient = new Map();
+  for (const e of allEmployees) employeeCountByClient.set(e.client_id, (employeeCountByClient.get(e.client_id) || 0) + 1);
   const perClient = await Promise.all(
     clients.map(async (c) => {
-      const totalActiveEmployees = allEmployees.reduce((n, e) => n + (e.client_id === c.client_id ? 1 : 0), 0);
-      const { n: recordCount } = await dbGet('SELECT COUNT(*) AS n FROM employee_training_records WHERE client_id = ? AND is_inactive = 0', [c.client_id]);
+      const totalActiveEmployees = employeeCountByClient.get(c.client_id) || 0;
+      const recordCount = recordCountByClient.get(c.client_id) || 0;
       const clientCounts = countsByClient.get(c.client_id) || zeroCounts();
       return {
         client_id: c.client_id,
