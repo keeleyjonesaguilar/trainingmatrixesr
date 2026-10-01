@@ -487,6 +487,19 @@ async function mergeEmployees(winnerId, loserIds) {
     // Same for a multi-day session's per-day trainer assignments and sign-offs (migration 064).
     await dbRun('UPDATE session_days SET assigned_trainer_employee_id = ? WHERE assigned_trainer_employee_id = ?', [winnerId, loserId]);
     await dbRun('UPDATE session_days SET signed_trainer_employee_id = ? WHERE signed_trainer_employee_id = ?', [winnerId, loserId]);
+    // Uploaded documents (migration 058) cascade-delete with their employee - without this, the
+    // merged-away profile's OSHA cards/medical evals vanished from the app (found 2026-10-01).
+    await dbRun('UPDATE employee_documents SET employee_id = ? WHERE employee_id = ?', [winnerId, loserId]);
+    // These reference the loser without a cascade, so the delete below failed outright when the
+    // loser had an extra-training certificate or was an old import's possible match.
+    await dbRun('UPDATE attendee_certificates SET employee_id = ? WHERE employee_id = ?', [winnerId, loserId]);
+    await dbRun('UPDATE import_employee_matches SET candidate_employee_id = ? WHERE candidate_employee_id = ?', [winnerId, loserId]);
+    // "Ignore this gap" choices carry over unless the winner already has one for that training.
+    await dbRun(
+      `UPDATE ignored_compliance_gaps SET employee_id = ? WHERE employee_id = ?
+         AND training_id NOT IN (SELECT training_id FROM ignored_compliance_gaps WHERE employee_id = ?)`,
+      [winnerId, loserId, winnerId]
+    );
     await dbRun('DELETE FROM employees WHERE employee_id = ?', [loserId]);
   }
 
