@@ -13,7 +13,7 @@
 // if either is unset, so this is opt-in and never blocks the local backup from completing.
 const BACKUP_FILE_PATH = 'training-matrix-backup-latest.json';
 
-async function pushBackupToGitHub(dump) {
+async function pushBackupToGitHub(json, dumpedAt) {
   const token = process.env.GITHUB_BACKUP_TOKEN;
   const repo = process.env.GITHUB_BACKUP_REPO;
   if (!token || !repo) return { skipped: true };
@@ -36,13 +36,13 @@ async function pushBackupToGitHub(dump) {
     throw new Error(`GitHub backup lookup failed (${getRes.status}): ${(await getRes.text()).slice(0, 300)}`);
   }
 
-  // Pretty-printed (unlike the local copy) so GitHub's own diff view on the file's history is
-  // actually readable, since that history is the whole point of pushing it here.
-  const content = Buffer.from(JSON.stringify(dump, null, 2)).toString('base64');
+  // The same compact JSON as the local copy. It used to be re-serialized pretty-printed for a
+  // readable GitHub diff, but at ~25 MB GitHub doesn't render the diff anyway, and building a
+  // second, larger copy doubled the backup's memory use (audit, 2026-10-01).
   const putRes = await fetch(apiUrl, {
     method: 'PUT',
     headers,
-    body: JSON.stringify({ message: `Backup ${dump.dumped_at}`, content, sha }),
+    body: JSON.stringify({ message: `Backup ${dumpedAt}`, content: Buffer.from(json).toString('base64'), sha }),
   });
   if (!putRes.ok) {
     throw new Error(`GitHub backup push failed (${putRes.status}): ${(await putRes.text()).slice(0, 300)}`);

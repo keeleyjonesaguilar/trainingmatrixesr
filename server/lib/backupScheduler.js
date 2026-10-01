@@ -58,7 +58,11 @@ async function runBackup() {
   if (fs.existsSync(LATEST_PATH)) {
     fs.copyFileSync(LATEST_PATH, PREVIOUS_PATH);
   }
-  const json = JSON.stringify(dump);
+  let json = JSON.stringify(dump);
+  // Let go of the row objects as soon as they're serialized - the backup now covers every table
+  // (~25 MB and growing), and holding the rows, this string and the GitHub copy at once was the
+  // biggest memory spike of the day on a 512 MB server (audit, 2026-10-01).
+  dump.tables = null;
   fs.writeFileSync(LATEST_PATH, json);
 
   const sizeMb = (Buffer.byteLength(json) / (1024 * 1024)).toFixed(2);
@@ -68,7 +72,8 @@ async function runBackup() {
   // githubBackup.js. Failure here is logged loudly (this is the whole point of the exercise) but
   // doesn't undo the local backup above, which already succeeded.
   try {
-    const result = await pushBackupToGitHub(dump);
+    const result = await pushBackupToGitHub(json, dump.dumped_at);
+    json = null;
     if (result.skipped) {
       log('GitHub off-Render backup skipped (GITHUB_BACKUP_TOKEN/GITHUB_BACKUP_REPO not set).');
     } else {
