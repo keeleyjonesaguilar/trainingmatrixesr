@@ -8,6 +8,7 @@ const portal = require('../lib/portal');
 const { notifyAllUsers } = require('../lib/notifications');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { displayFirstLast } = require('../lib/names');
+const { recordHasCertificate, sendRecordCertificate } = require('../lib/recordCertificates');
 
 const router = express.Router();
 
@@ -114,10 +115,10 @@ router.post('/email-change/confirm', requirePortal, async (req, res) => {
 
 router.get('/records/:recordId/certificate', requirePortal, async (req, res) => {
   const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.recordId]);
-  if (!record || !ownProfile(req, record.employee_id) || !record.certificate_path || !fs.existsSync(record.certificate_path)) {
+  if (!record || !ownProfile(req, record.employee_id) || !recordHasCertificate(record)) {
     return res.status(404).json({ error: 'No certificate on file for this training.' });
   }
-  res.download(record.certificate_path, record.certificate_filename || 'certificate.pdf');
+  return sendRecordCertificate(res, record);
 });
 
 router.get('/documents/:documentId', requirePortal, async (req, res) => {

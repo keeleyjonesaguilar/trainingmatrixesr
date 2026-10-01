@@ -172,7 +172,31 @@ function generateCertificate(session, attendee, outputPath) {
   const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 0 });
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
+  drawCertificate(doc, session, attendee);
+  doc.end();
+  return new Promise((resolve, reject) => {
+    stream.on('finish', () => resolve(filePath));
+    stream.on('error', reject);
+  });
+}
 
+// The same certificate built in memory and never saved (Keeley's report, 2026-10-01: ~8,000 saved
+// copies of imported/hand-entered records' certificates filled the live server's 1 GB disk). Those
+// certificates carry no signatures, so they're rebuilt from the record each time one is downloaded.
+function generateCertificateBuffer(session, attendee) {
+  const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 0 });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
+  const done = new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+  drawCertificate(doc, session, attendee);
+  doc.end();
+  return done;
+}
+
+function drawCertificate(doc, session, attendee) {
   const pageWidth = doc.page.width;
   const pageHeight = doc.page.height;
 
@@ -216,12 +240,6 @@ function generateCertificate(session, attendee, outputPath) {
     .font('Helvetica')
     .fontSize(13)
     .text(pdfSafeText(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || ''), pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
-
-  doc.end();
-  return new Promise((resolve, reject) => {
-    stream.on('finish', () => resolve(filePath));
-    stream.on('error', reject);
-  });
 }
 
 // One roster PDF per session listing every attendee + both signatures.
@@ -334,4 +352,4 @@ function generateRosterPdf(session, attendees) {
   });
 }
 
-module.exports = { generateCertificate, generateRosterPdf, pdfSafeText };
+module.exports = { generateCertificate, generateCertificateBuffer, generateRosterPdf, pdfSafeText };

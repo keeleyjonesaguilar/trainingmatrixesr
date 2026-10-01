@@ -5,7 +5,8 @@ function sanitizeFilenamePart(s) {
   // Strips characters that are illegal (or awkward) in a filename on Windows/macOS/most zip
   // tools, but leaves spaces alone - the requested format keeps them within each field, only
   // using underscores as the separator between fields.
-  return String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim();
+  // Trailing dots go too, so "Kyle Landgren Jr." doesn't end in "Jr..pdf".
+  return String(s || '').replace(/[\\/:*?"<>|]/g, '-').trim().replace(/\.+$/, '');
 }
 
 // A training's label is sometimes typed/imported as "TRN-007 - Ladder Safety" rather than just

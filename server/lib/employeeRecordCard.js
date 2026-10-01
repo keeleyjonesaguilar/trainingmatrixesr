@@ -56,7 +56,7 @@ async function latestTrainings(employee) {
     const { status, expirationDate } = computeStatus({ record: r, requirement, masterTraining });
     trainings.push({
       record_id: r.record_id,
-      has_certificate: Boolean(r.certificate_path),
+      has_certificate: Boolean(r.certificate_path || r.certificate_auto_generated),
       training_id: r.training_id,
       training_name: (r.source === 'Toolbox Talk Sign-In' && r.original_client_training_name)
         || requirement?.client_training_name || r.master_training_name,

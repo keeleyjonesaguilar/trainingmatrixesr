@@ -880,11 +880,11 @@ router.post('/batches/:batchId/commit', requireAdmin, async (req, res) => {
     employee_matches_needing_review_count: pendingEmployeeMatchCount,
   });
 
-  // Certificates are generated after responding, one at a time in the background (Keeley's
-  // request to auto-generate them for imported completions too) - an import can create
-  // hundreds of records at once, and building that many PDFs synchronously inside the request
-  // would make large imports painfully slow. A failure on one record is logged and skipped;
-  // it never blocks the rest or the commit itself, which has already succeeded by this point.
+  // Each imported completion gets an auto-generated certificate (Keeley's request) - marked after
+  // responding, one at a time in the background. Since 2026-10-01 nothing is built or saved here:
+  // the PDF is built when someone downloads it (lib/recordCertificates.js), after saved copies
+  // filled the live server's disk. A failure on one record is logged and skipped; it never blocks
+  // the rest or the commit itself, which has already succeeded by this point.
   (async () => {
     for (const recordId of createdRecordIds) {
       // eslint-disable-next-line no-await-in-loop

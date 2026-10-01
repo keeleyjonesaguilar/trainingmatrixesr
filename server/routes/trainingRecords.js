@@ -4,7 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('../lib/repo');
-const { maybeGenerateCertificate, computeFilenameForRecord } = require('../lib/recordCertificates');
+const { maybeGenerateCertificate, sendRecordCertificate } = require('../lib/recordCertificates');
 const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -142,17 +142,11 @@ router.post('/:id/certificate', requireAdmin, async (req, res) => {
 // (view-only accounts can still see certificates - requireAdmin only gates the upload/change).
 router.get('/:id/certificate', async (req, res) => {
   const record = await dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [req.params.id]);
-  if (!record || !record.certificate_path) return res.status(404).json({ error: 'No certificate on file for this record' });
-  if (!fs.existsSync(record.certificate_path)) return res.status(404).json({ error: 'Certificate file is missing on disk' });
-  // Auto-generated (import/manual-entry/session-linked) certificates get the same "Training
-  // Title_Client_Trainer_Date_Trainee Name.pdf" naming as everywhere else (Keeley's request,
-  // 2026-09-16) - computed fresh here rather than trusted from the stored certificate_filename
-  // column, so this applies even to certificates generated before today. A real file an admin
-  // uploaded by hand (certificate_auto_generated = 0) keeps whatever name they gave it.
-  const filename = record.certificate_auto_generated
-    ? (await computeFilenameForRecord(record)) || record.certificate_filename || 'certificate'
-    : record.certificate_filename || 'certificate';
-  res.download(record.certificate_path, filename);
+  if (!record) return res.status(404).json({ error: 'No certificate on file for this record' });
+  // A hand-uploaded certificate keeps the name it was given; an auto-generated one is named
+  // "Training Title_Client_Trainer_Date_Trainee Name.pdf" (Keeley's request, 2026-09-16) and,
+  // since 2026-10-01, built on download rather than saved (lib/recordCertificates.js).
+  return sendRecordCertificate(res, record);
 });
 
 module.exports = router;

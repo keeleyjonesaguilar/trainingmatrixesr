@@ -104,6 +104,39 @@ async function runOneTimeFixes() {
     await dbRun('DELETE FROM login_attempts');
     await dbRun('DELETE FROM admin_actions');
   });
+
+  // Auto-generated record certificates are now built when downloaded instead of saved (Keeley's
+  // report, 2026-10-01: ~8,000 saved copies filled the live server's 1 GB disk mid-import, leaving
+  // 781 imported records with no certificate). This removes the saved copies and any half-written
+  // leftovers, and marks every imported/hand-entered record still missing one so it builds on
+  // download too. Only on the live server - the files are on its disk, and a local copy of the
+  // app (same database) must not mark this done or clear paths it can't actually delete.
+  if (process.env.RENDER === 'true') {
+    await runOnce('fix_on_demand_record_certificates_v1', 'switched auto-generated record certificates to build-on-download and freed their disk space', async () => {
+      const { maybeGenerateCertificate, RECORD_CERT_DIR } = require('./recordCertificates');
+      const saved = await dbAll(`SELECT certificate_path FROM employee_training_records WHERE certificate_auto_generated = 1 AND certificate_path IS NOT NULL`);
+      await dbRun(`UPDATE employee_training_records SET certificate_path = NULL WHERE certificate_auto_generated = 1`);
+      let removed = 0;
+      for (const { certificate_path: p } of saved) {
+        if (p && path.resolve(p).startsWith(path.resolve(RECORD_CERT_DIR)) && fs.existsSync(p)) { fs.unlinkSync(p); removed += 1; }
+      }
+      // Anything else left in the auto-certificate folder belongs to no record (e.g. a PDF that was
+      // half-written when the disk filled).
+      const stillUsed = new Set((await dbAll(`SELECT certificate_path FROM employee_training_records WHERE certificate_path IS NOT NULL`)).map((r) => path.resolve(r.certificate_path)));
+      if (fs.existsSync(RECORD_CERT_DIR)) {
+        for (const name of fs.readdirSync(RECORD_CERT_DIR)) {
+          const file = path.join(RECORD_CERT_DIR, name);
+          if (!stillUsed.has(path.resolve(file)) && fs.statSync(file).isFile()) { fs.unlinkSync(file); removed += 1; }
+        }
+      }
+      const missing = await dbAll(
+        `SELECT record_id FROM employee_training_records
+         WHERE certificate_auto_generated = 0 AND certificate_path IS NULL AND (source LIKE 'Import:%' OR source = 'Manual Entry')`
+      );
+      for (const { record_id: id } of missing) await maybeGenerateCertificate(id); // eslint-disable-line no-await-in-loop
+      console.log(`On-demand certificates: removed ${removed} saved file(s); ${missing.length} record(s) without a certificate now get one on download.`);
+    });
+  }
 }
 
 module.exports = { runOneTimeFixes };
