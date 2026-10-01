@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
@@ -6,7 +6,7 @@ import DuplicateEmployeesPanel from '../components/DuplicateEmployeesPanel.jsx';
 import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
-import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
+import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { nameKey, nameParts } from '../lib/names.js';
 import { downloadCsv } from '../lib/csv.js';
 import { useSortableRows } from '../lib/useSortableRows';
@@ -177,12 +177,31 @@ export default function Matrix() {
   const matrixSortAccessors = useMemo(() => {
     const trainingAccessors = {};
     for (const mt of data?.masterTrainings || []) {
-      trainingAccessors[mt.training_id] = (r) => r.cells[mt.training_id]?.completion_date || null;
+      trainingAccessors[mt.training_id] = (r) => cellFor(r, mt.training_id).completion_date || null;
     }
     return { ...MATRIX_BASE_SORT_ACCESSORS, ...trainingAccessors };
   }, [data?.masterTrainings]);
 
   const { sortedRows: sortedEmployees, toggleSort, sortIndicator } = useSortableRows(data?.employees, matrixSortAccessors, 'full_name');
+
+  // Draws the first rows and adds more as you scroll (Keeley's request, 2026-10-01: speed). With
+  // ~2,400 employees x ~110 trainings the full grid was ~270,000 cells for the browser to build on
+  // every load. Sorting, filters and Download Report still use every employee.
+  const ROWS_PER_STEP = 150;
+  const employeeRows = sortedEmployees || [];
+  const [visibleRows, setVisibleRows] = useState(ROWS_PER_STEP);
+  const moreRowsRef = useRef(null);
+  useEffect(() => { setVisibleRows(ROWS_PER_STEP); }, [data, employeeRows.length]);
+  useEffect(() => {
+    const marker = moreRowsRef.current;
+    if (!marker || typeof IntersectionObserver === 'undefined') return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setVisibleRows((n) => n + ROWS_PER_STEP);
+    }, { rootMargin: '400px' });
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, [visibleRows, employeeRows.length]);
+  const shownEmployees = employeeRows.slice(0, visibleRows);
 
   const setTrainingIds = (ids) => updateParam('trainings', ids.join(','));
 
@@ -310,13 +329,13 @@ export default function Matrix() {
                 </tr>
               </thead>
               <tbody>
-                {sortedEmployees.map((emp) => (
+                {shownEmployees.map((emp) => (
                   <tr key={emp.employee_id}>
                     <td><Link to={`/employees/${emp.employee_id}`}>{emp.full_name}</Link></td>
                     <td>{emp.client_name}</td>
                     <td>{emp.job_title || '—'}</td>
                     {data.masterTrainings.map((mt) => {
-                      const cell = emp.cells[mt.training_id];
+                      const cell = cellFor(emp, mt.training_id);
                       const formatted = formatCell(cell);
                       return (
                         <td key={mt.training_id}>
@@ -328,6 +347,12 @@ export default function Matrix() {
                 ))}
               </tbody>
             </table>
+            {visibleRows < employeeRows.length && (
+              <div ref={moreRowsRef} style={{ padding: '10px 12px', fontSize: 13, color: 'var(--color-text-muted)' }}>
+                Showing {visibleRows} of {employeeRows.length} employees - scroll for more, or{' '}
+                <button type="button" className="link-button" onClick={() => setVisibleRows(employeeRows.length)}>show all</button>
+              </div>
+            )}
           </div>
         )
       )}

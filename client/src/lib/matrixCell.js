@@ -12,6 +12,14 @@ export function daysBetween(dateStr) {
   return Math.round((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 }
 
+// The server leaves out cells that are just "Not Applicable" with nothing filled in (2026-10-01,
+// to keep the Employees page fast) - this fills them back in, so every page reads a cell the same
+// way it always has.
+const NOT_APPLICABLE_CELL = Object.freeze({ status: 'Not Applicable' });
+export function cellFor(emp, trainingId) {
+  return emp.cells[trainingId] || NOT_APPLICABLE_CELL;
+}
+
 // Keeley's call: the matrix tracks completion, not compliance-against-requirements. A
 // training that hasn't been completed just shows as a plain dash - it's not flagged as
 // "Missing," since most trainings aren't required for most employees. Completed trainings
@@ -60,8 +68,7 @@ export function buildComplianceReportRows(employees, masterTrainings, { status, 
   const rows = [];
   for (const emp of employees) {
     for (const mt of masterTrainings) {
-      const cell = emp.cells[mt.training_id];
-      if (!cell) continue;
+      const cell = cellFor(emp, mt.training_id);
       if (status) {
         // Same rule as server/routes/matrix.js: "Current" includes never-expiring trainings.
         if (cell.status !== status && !(status === 'Current' && cell.status === 'No Expiration')) continue;

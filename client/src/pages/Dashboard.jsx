@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatCell, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
+import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
@@ -278,7 +278,7 @@ function ClientEmployeesSection({ clientId, clientName }) {
                   <td><Link to={`/employees/${emp.employee_id}`}>{emp.full_name}</Link></td>
                   <td>{emp.job_title || '—'}</td>
                   {data.masterTrainings.map((mt) => {
-                    const cell = emp.cells[mt.training_id];
+                    const cell = cellFor(emp, mt.training_id);
                     const formatted = formatCell(cell);
                     return (
                       <td key={mt.training_id}>

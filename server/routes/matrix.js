@@ -139,9 +139,27 @@ router.get('/', async (req, res) => {
     });
   }
 
+  // Only cells with something in them are sent (Keeley's request, 2026-10-01: speed up the site).
+  // Every employee used to carry all ~110 trainings, mostly "Not Applicable" with nothing filled
+  // in - 38 MB per load with ~2,400 employees. Filtering above still sees every cell; the page
+  // fills a missing cell back in as Not Applicable (client/src/lib/matrixCell.js cellFor).
+  const compactCells = (cells) => {
+    const out = {};
+    for (const [trainingId, cell] of Object.entries(cells)) {
+      if (cell.status === 'Not Applicable' && !cell.completion_date) continue;
+      const kept = { status: cell.status };
+      if (cell.completion_date) kept.completion_date = cell.completion_date;
+      if (cell.expiration_date) kept.expiration_date = cell.expiration_date;
+      if (cell.original_client_training_name) kept.original_client_training_name = cell.original_client_training_name;
+      if (cell.expiring_soon) kept.expiring_soon = true;
+      out[trainingId] = kept;
+    }
+    return out;
+  };
+
   res.json({
     masterTrainings,
-    employees: filteredRows,
+    employees: filteredRows.map((r) => ({ ...r, cells: compactCells(r.cells) })),
     stats: {
       audited_employees: activeCount,
       inactive_employees: inactiveCount,
