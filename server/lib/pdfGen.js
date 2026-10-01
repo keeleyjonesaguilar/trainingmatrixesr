@@ -91,6 +91,32 @@ function drawWrappedSmallCaps(doc, text, { x, width, startY, lineGap, bigSize, s
   });
 }
 
+// PDFKit's built-in fonts (Helvetica, Times-Roman) only cover the Windows-1252 character set, and
+// anything else scrambles the rest of the line - a TAB pasted in with a Word bullet list turned a
+// roster's outline into symbols (Keeley's report, 2026-10-01: "•<tab>Hand Signals" printed as
+// "•”† æB 6–væ Ç0"). Every piece of typed text goes through this before it's drawn: tabs become
+// spaces, other control characters go, Word's symbol-font bullets and a few common look-alikes
+// become characters the font has, and anything else the font can't draw is dropped.
+const WIN_ANSI_EXTRAS = new Set([...'€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ']);
+const LOOKALIKES = {
+  '\uF0B7': '•', '\uF0A7': '•', '\uF076': '•', '\uF0D8': '•', '\uF0FC': '•', '\u25CF': '•', '\u25AA': '•', '\u25A0': '•',
+  '\u25E6': '•', '\u2023': '•', '\u2043': '•', '\u2219': '•', '\u00B7': '·', '\u2192': '->', '\u2190': '<-',
+  '\u2212': '-', '\u2010': '-', '\u2011': '-', '\u00A0': ' ', '\u2009': ' ', '\u202F': ' ',
+};
+function pdfSafeText(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\t+/g, ' ')
+    .replace(/[^\n]/gu, (c) => {
+      if (LOOKALIKES[c] !== undefined) return LOOKALIKES[c];
+      const code = c.codePointAt(0);
+      return (code >= 32 && code <= 126) || (code >= 160 && code <= 255) || WIN_ANSI_EXTRAS.has(c) ? c : '';
+    })
+    .replace(/ {2,}/g, ' ')
+    .replace(/ +\n/g, '\n');
+}
+
 function b64ToBuffer(dataUrl) {
   if (!dataUrl) return null;
   const match = /^data:image\/(png|jpeg);base64,(.+)$/.exec(dataUrl);
@@ -157,7 +183,7 @@ function generateCertificate(session, attendee, outputPath) {
   const contentLeft = pageWidth * 0.365;
   const contentWidth = pageWidth * 0.95 - contentLeft;
 
-  drawSmallCapsLine(doc, attendee.trainee_name, {
+  drawSmallCapsLine(doc, pdfSafeText(attendee.trainee_name), {
     x: contentLeft,
     width: contentWidth,
     baselineY: pageHeight * 0.565,
@@ -168,7 +194,7 @@ function generateCertificate(session, attendee, outputPath) {
 
   // Catalog code ("TRN-060 - ") dropped from the printed title - it's an internal ID, not part
   // of the training's name.
-  drawWrappedSmallCaps(doc, stripTrainingIdPrefix(session.training_type_label), {
+  drawWrappedSmallCaps(doc, pdfSafeText(stripTrainingIdPrefix(session.training_type_label)), {
     x: contentLeft,
     width: contentWidth,
     startY: pageHeight * 0.715,
@@ -189,7 +215,7 @@ function generateCertificate(session, attendee, outputPath) {
     .fillColor(ESR_GREEN)
     .font('Helvetica')
     .fontSize(13)
-    .text(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || '', pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
+    .text(pdfSafeText(session.certificate_trainer_name || session.trainer_signed_name || session.trainer_name || ''), pageWidth * 0.665, footerValueY, { width: pageWidth * 0.866 - pageWidth * 0.665, align: 'center' });
 
   doc.end();
   return new Promise((resolve, reject) => {
@@ -211,14 +237,14 @@ function generateRosterPdf(session, attendees) {
   doc.fontSize(18).font('Helvetica-Bold').text(session.session_kind === 'toolbox_talk' ? 'Toolbox Talk Sign-In Roster' : 'Training Sign-In Roster');
   doc.moveDown(0.3);
   doc.fontSize(11).font('Helvetica');
-  doc.text(`Client: ${session.client_name}`);
-  doc.text(`Training: ${session.training_type_label}`);
-  doc.text(`Trainer${session.session_days?.length ? '(s)' : ''}: ${session.all_trainer_names || session.trainer_signed_name || session.trainer_name}`);
+  doc.text(pdfSafeText(`Client: ${session.client_name}`));
+  doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
+  doc.text(pdfSafeText(`Trainer${session.session_days?.length ? '(s)' : ''}: ${session.all_trainer_names || session.trainer_signed_name || session.trainer_name}`));
   doc.text(`Date: ${formatDate(session.session_date)}`);
   if (session.outline) {
     doc.moveDown(0.3);
     doc.font('Helvetica-Bold').text('Outline / Topics Covered:');
-    doc.font('Helvetica').text(session.outline);
+    doc.font('Helvetica').text(pdfSafeText(session.outline));
   }
   doc.moveDown(0.5);
   doc.font('Helvetica-Bold').text(`Attendees (${attendees.length})`);
@@ -230,9 +256,9 @@ function generateRosterPdf(session, attendees) {
   attendees.forEach((a, i) => {
     if (doc.y > doc.page.height - 160) doc.addPage();
     const rowLeft = doc.x;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(`${i + 1}. ${a.trainee_name}`);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(pdfSafeText(`${i + 1}. ${a.trainee_name}`));
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
-    doc.text(`Phone: ${a.trainee_phone || '—'}    Email: ${a.trainee_email || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
+    doc.text(`Phone: ${pdfSafeText(a.trainee_phone) || '—'}    Email: ${pdfSafeText(a.trainee_email) || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
     const imageTop = doc.y + 2;
     const sig = b64ToBuffer(a.signature);
     let bottom = imageTop;
@@ -262,7 +288,7 @@ function generateRosterPdf(session, attendees) {
       if (doc.y > doc.page.height - 110) doc.addPage();
       const left = doc.x;
       doc.font('Helvetica-Bold').fontSize(10).fillColor('#111111')
-        .text(`Day ${d.day_number}${d.date ? ` - ${formatDate(d.date)}` : ''}: ${d.signed_trainer_name || d.assigned_trainer_name || '—'}`);
+        .text(pdfSafeText(`Day ${d.day_number}${d.date ? ` - ${formatDate(d.date)}` : ''}: ${d.signed_trainer_name || d.assigned_trainer_name || '—'}`));
       doc.font('Helvetica').fontSize(10).fillColor('#333333')
         .text(d.signed_at ? `Signed off: ${formatDateTime(d.signed_at)}` : 'Not signed off');
       const top = doc.y + 2;
@@ -286,8 +312,8 @@ function generateRosterPdf(session, attendees) {
   doc.moveDown(0.5);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#111111').text(session.session_days?.length ? 'Final Close-Out' : 'Trainer Sign-Off');
   doc.font('Helvetica').fontSize(10).fillColor('#333333');
-  doc.text(`Trainer: ${session.trainer_signed_name || session.trainer_name}`);
-  doc.text(`Trainer Email: ${session.trainer_email || '—'}`);
+  doc.text(pdfSafeText(`Trainer: ${session.trainer_signed_name || session.trainer_name}`));
+  doc.text(pdfSafeText(`Trainer Email: ${session.trainer_email || '—'}`));
   doc.text(`Closed: ${formatDateTime(session.closed_at)}`);
   const trainerImageTop = doc.y + 2;
   const trainerSig = b64ToBuffer(session.trainer_signature);
@@ -308,4 +334,4 @@ function generateRosterPdf(session, attendees) {
   });
 }
 
-module.exports = { generateCertificate, generateRosterPdf };
+module.exports = { generateCertificate, generateRosterPdf, pdfSafeText };
