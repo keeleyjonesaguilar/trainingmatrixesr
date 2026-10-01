@@ -1,8 +1,9 @@
 // The trainer's post-close "Edit close-out details" page (Keeley's request, 2026-09-24), reached
 // from the link in their close-out email at /session-edit/:editToken. No login - the trainer PIN
 // unlocks it (server/routes/sessionEdit.js). Lets them fill in sign-off details they didn't have
-// at close-out (e.g. the AHA roster's address) and remove duplicate sign-ins; saving rebuilds the
-// rosters and re-sends the completed forms email.
+// at close-out (e.g. the AHA roster's address), remove duplicate sign-ins, and add people they
+// notice are missing from the final roster (2026-10-01); saving rebuilds the rosters and re-sends
+// the completed forms email.
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api';
@@ -44,6 +45,12 @@ export default function PublicSessionEdit() {
   const [trainerPhone, setTrainerPhone] = useState('');
   const [ahaFields, setAhaFields] = useState(null);
   const [toRemove, setToRemove] = useState([]);
+  // People to add who aren't on the roster - name required, the rest optional; multi-day sessions
+  // also pick which days they attended (all ticked to start).
+  const blankDraft = (days) => ({ first_name: '', last_name: '', phone: '', job_title: '', email: '', days: (days || []).map((d) => d.day_number) });
+  const [toAdd, setToAdd] = useState([]);
+  const [draft, setDraft] = useState(blankDraft(null));
+  const [draftError, setDraftError] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
@@ -58,7 +65,25 @@ export default function PublicSessionEdit() {
     setTrainerPhone(data.trainer_phone);
     setAhaFields(ahaFieldsFromSaved(data.aha));
     setToRemove([]);
+    setToAdd([]);
+    setDraft(blankDraft(data.days));
+    setDraftError('');
   };
+
+  const addDraft = () => {
+    setDraftError('');
+    setSavedMessage('');
+    if (!draft.first_name.trim() || !draft.last_name.trim()) return setDraftError('Enter their first and last name.');
+    if (draft.email.trim() && !EMAIL_PATTERN.test(draft.email.trim())) return setDraftError("That email doesn't look right.");
+    if (details.days && !draft.days.length) return setDraftError('Tick the days they attended.');
+    setToAdd((prev) => [...prev, { ...draft, key: `${Date.now()}-${prev.length}` }]);
+    setDraft(blankDraft(details.days));
+    return undefined;
+  };
+
+  const changeSummary = [toAdd.length ? `add ${toAdd.length}` : '', toRemove.length ? `remove ${toRemove.length}` : ''].filter(Boolean).join(', ');
+
+  const toggleDraftDay = (day) => setDraft((d) => ({ ...d, days: d.days.includes(day) ? d.days.filter((x) => x !== day) : [...d.days, day].sort((a, b) => a - b) }));
 
   const duplicateIds = useMemo(() => likelyDuplicateIds(details?.attendees || []), [details]);
 
@@ -87,6 +112,9 @@ export default function PublicSessionEdit() {
     setSavedMessage('');
     if (!trainerEmail.trim() || !EMAIL_PATTERN.test(trainerEmail.trim())) return setFormError('Please enter a valid email address.');
     if (!trainerPhone.trim()) return setFormError('Please enter your phone number.');
+    if (draft.first_name.trim() || draft.last_name.trim()) {
+      return setFormError(`You started adding ${`${draft.first_name} ${draft.last_name}`.trim()} - click "Add to roster" or clear the name first.`);
+    }
     if (toRemove.length) {
       const names = details.attendees.filter((a) => toRemove.includes(a.attendee_id)).map((a) => a.trainee_name).join(', ');
       const ok = window.confirm(
@@ -103,9 +131,10 @@ export default function PublicSessionEdit() {
         trainer_phone: trainerPhone.trim(),
         ...(details.is_aha ? ahaFieldsPayload(ahaFields) : {}),
         remove_attendee_ids: toRemove,
+        add_attendees: toAdd.map(({ key, ...a }) => a),
       });
       showDetails(result);
-      setSavedMessage('Saved. The updated roster and certificates have been emailed to you and the ESR team.');
+      setSavedMessage(`Saved${result.added_count ? ` - added ${result.added_count} ${result.added_count === 1 ? 'person' : 'people'}` : ''}. The updated roster and certificates have been emailed to you and the ESR team.`);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setFormError(err.message);
@@ -228,8 +257,65 @@ export default function PublicSessionEdit() {
               })}
             </div>
 
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h3 style={{ marginTop: 0, fontSize: 14 }}>Add someone who&apos;s missing</h3>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -6 }}>
+                Someone attended but isn&apos;t on the roster? Add them here - they get a certificate and the training on their record
+                {details.days ? ' when every day is ticked' : ''}.
+              </p>
+              {toAdd.map((a) => (
+                <div key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--color-border)' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600 }}>{a.first_name} {a.last_name} <span className="badge badge-current" style={{ fontSize: 10, marginLeft: 4 }}>To add</span></div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>
+                      {[a.phone, a.job_title, a.email].filter(Boolean).join(' · ') || 'No other details'}
+                      {details.days ? ` · Day${a.days.length === 1 ? '' : 's'} ${a.days.join(', ')}` : ''}
+                    </div>
+                  </div>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => setToAdd((prev) => prev.filter((x) => x.key !== a.key))}>Remove</button>
+                </div>
+              ))}
+              {draftError && <p className="error-banner" style={{ marginTop: 8 }}>{draftError}</p>}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>First name</label>
+                  <input value={draft.first_name} onChange={(e) => setDraft({ ...draft, first_name: e.target.value })} />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Last name</label>
+                  <input value={draft.last_name} onChange={(e) => setDraft({ ...draft, last_name: e.target.value })} />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Phone (optional)</label>
+                  <input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} placeholder="(555) 123-4567" />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label>Job title (optional)</label>
+                  <input value={draft.job_title} onChange={(e) => setDraft({ ...draft, job_title: e.target.value })} />
+                </div>
+                <div className="field" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
+                  <label>Email (optional)</label>
+                  <input type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
+                </div>
+              </div>
+              {details.days && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Days attended</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
+                    {details.days.map((d) => (
+                      <label key={d.day_number} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                        <input type="checkbox" checked={draft.days.includes(d.day_number)} onChange={() => toggleDraftDay(d.day_number)} />
+                        Day {d.day_number}{d.date ? ` (${formatDate(d.date)})` : ''}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={addDraft}>+ Add to roster</button>
+            </div>
+
             <button className="btn btn-accent" type="submit" disabled={busy} style={{ width: '100%' }}>
-              {busy ? 'Saving…' : toRemove.length ? `Save Changes & Remove ${toRemove.length}` : 'Save Changes'}
+              {busy ? 'Saving…' : changeSummary ? `Save Changes (${changeSummary})` : 'Save Changes'}
             </button>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 10 }}>
               Saving rebuilds the roster{details.is_aha ? ' and AHA roster' : ''} and emails the updated forms.

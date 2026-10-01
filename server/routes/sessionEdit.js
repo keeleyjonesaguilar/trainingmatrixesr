@@ -8,6 +8,8 @@ const express = require('express');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { removeAttendee } = require('../lib/sessionRecords');
+const { insertManualAttendee, markDaysAttended, certifyAfterClose } = require('../lib/lateAttendees');
+const { getSessionDays } = require('../lib/sessionDays');
 const { logActivity } = require('../lib/activityLog');
 const {
   AHA_ROSTER_TRAINING_ID, AHA_FIELDS, ahaColumnsFromBody, getSessionWithClient, regenerateRosters, sendCompletedFormsEmail,
@@ -75,6 +77,8 @@ async function sessionDetails(session) {
     is_aha: session.master_training_id === AHA_ROSTER_TRAINING_ID,
     aha,
     attendees,
+    // Multi-day: the days a trainer can tick for someone they add (Keeley's request, 2026-10-01).
+    days: session.total_days ? (await getSessionDays(session)).map((d) => ({ day_number: d.day_number, date: d.date })) : null,
   };
 }
 
@@ -120,6 +124,37 @@ router.post('/:editToken/save', async (req, res) => {
     [trainerEmail.toLowerCase(), formatPhoneNumber(trainerPhone), ...Object.values(ahaColumns), session.session_id]
   );
 
+  // People the trainer noticed are missing from the final roster (Keeley's request, 2026-10-01).
+  // Name only; phone, job title and email optional. On a multi-day session the trainer ticks the
+  // days they attended - every day gets them their certificate and training record, a missed day
+  // leaves them flagged incomplete, same as anyone else.
+  const toAdd = Array.isArray(body.add_attendees) ? body.add_attendees.slice(0, 50) : [];
+  const cleanAdds = [];
+  for (const raw of toAdd) {
+    const firstName = String(raw?.first_name || '').trim();
+    const lastName = String(raw?.last_name || '').trim();
+    if (!firstName || !lastName) return res.status(400).json({ error: 'Enter a first and last name for everyone you add.' });
+    const phone = String(raw?.phone || '').trim();
+    if (phone && !isValidPhoneNumber(phone)) return res.status(400).json({ error: `Phone number for ${firstName} ${lastName} should be a standard 10-digit number.` });
+    const email = String(raw?.email || '').trim();
+    if (email && !EMAIL_PATTERN.test(email)) return res.status(400).json({ error: `Email for ${firstName} ${lastName} doesn't look right.` });
+    const days = session.total_days
+      ? [...new Set((Array.isArray(raw?.days) ? raw.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 1 && d <= session.total_days)
+      : [];
+    if (session.total_days && !days.length) return res.status(400).json({ error: `Tick at least one day for ${firstName} ${lastName}.` });
+    cleanAdds.push({ firstName, lastName, phone, jobTitle: String(raw?.job_title || '').trim(), email, days });
+  }
+  const trainerLabel = `Trainer: ${session.trainer_signed_name || session.trainer_name}`;
+  const addedNames = [];
+  for (const add of cleanAdds) {
+    /* eslint-disable no-await-in-loop */
+    const attendeeId = await insertManualAttendee(session, add);
+    if (session.total_days) await markDaysAttended(session, attendeeId, add.days, trainerLabel);
+    await certifyAfterClose(session, attendeeId, `Added by the trainer after close-out; attended ${add.days.length} of ${session.total_days} days.`);
+    /* eslint-enable no-await-in-loop */
+    addedNames.push(`${add.firstName} ${add.lastName}`);
+  }
+
   const removeIds = Array.isArray(body.remove_attendee_ids) ? body.remove_attendee_ids.map(String) : [];
   const removedNames = [];
   for (const attendeeId of removeIds) {
@@ -148,10 +183,11 @@ router.post('/:editToken/save', async (req, res) => {
     entityType: 'training_session',
     entityId: session.session_id,
     entityLabel: `${updatedSession.training_type_label} · ${updatedSession.client_name}`,
-    details: removedNames.length ? `Removed: ${removedNames.join(', ')}` : null,
+    details: [addedNames.length ? `Added: ${addedNames.join(', ')}` : '', removedNames.length ? `Removed: ${removedNames.join(', ')}` : '']
+      .filter(Boolean).join('; ') || null,
     req,
   });
-  res.json({ ok: true, removed_count: removedNames.length, ...(await sessionDetails(updatedSession)) });
+  res.json({ ok: true, added_count: addedNames.length, removed_count: removedNames.length, ...(await sessionDetails(updatedSession)) });
 });
 
 module.exports = router;
