@@ -7,6 +7,7 @@ import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday }
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
+import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
@@ -638,6 +639,7 @@ Their certificate and the training record it added to their employee file will b
   };
 
   const [rebuilding, setRebuilding] = useState(false);
+  const [showDocsUpload, setShowDocsUpload] = useState(false);
   const rebuildRosters = async () => {
     if (!window.confirm('Rebuild the roster PDF(s) from what is on file now? Nothing is emailed.')) return;
     setRebuilding(true);
@@ -1050,6 +1052,10 @@ Their certificate and the training record it added to their employee file will b
                     <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} disabled={rebuilding} onClick={rebuildRosters}>
                       {rebuilding ? 'Rebuilding…' : 'Rebuild Roster'}
                     </button>
+                    <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={() => setShowDocsUpload(true)}>
+                      Upload Attendee Documents
+                    </button>
+                    {showDocsUpload && <AttendeeDocumentsUpload session={session} onClose={() => setShowDocsUpload(false)} />}
                   </>
                 )}
                 {/* One ZIP per training (Keeley's request, 2026-09-17) - a session covering just

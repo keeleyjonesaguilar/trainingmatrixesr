@@ -18,6 +18,8 @@ const { insertManualAttendee, certifyAfterClose } = require('../lib/lateAttendee
 const { isValidPhoneNumber } = require('../lib/phone');
 const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 
 const router = express.Router();
 
@@ -919,6 +921,75 @@ router.delete('/:sessionId/attendees/:attendeeId', requireAdmin, async (req, res
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: removed.trainee_name, req,
   });
   res.json({ ok: true });
+});
+
+// Attendee documents in bulk (Keeley's request, 2026-10-02: e.g. a CPR class's AHA skills
+// checklists, one per person) - the files are chosen together on the session page, matched to
+// attendees there by the name in each file name, and filed under each person's Documents (same
+// folder, types and size limit as a single document upload on a profile), linked to the
+// session's training when it's on their profile. Saved on the live server only - a local copy
+// would record a path only that computer has.
+const ATTENDEE_DOCS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data'), 'employee-documents');
+const attendeeDocsUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => { fs.mkdirSync(ATTENDEE_DOCS_DIR, { recursive: true }); cb(null, ATTENDEE_DOCS_DIR); },
+    filename: (req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname) || ''}`),
+  }),
+  limits: { fileSize: 15 * 1024 * 1024, files: 100 },
+  fileFilter: (req, file, cb) => (/\.(pdf|jpg|jpeg|png)$/i.test(file.originalname)
+    ? cb(null, true)
+    : cb(new Error(`${file.originalname}: only PDF, JPG, or PNG files can be uploaded`))),
+});
+
+router.post('/:id/attendee-documents', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (process.env.RENDER !== 'true' && process.env.ALLOW_LOCAL_ROSTER_REBUILD !== 'on') {
+    return res.status(400).json({ error: 'Upload attendee documents from the live site (esr-training.com) - this copy of the app stores files on this computer only.' });
+  }
+  attendeeDocsUpload.array('documents', 100)(req, res, async (err) => {
+    const files = req.files || [];
+    const discard = () => files.forEach((f) => fs.unlink(f.path, () => {}));
+    if (err) { discard(); return res.status(400).json({ error: err.message }); }
+    let assignments;
+    try { assignments = JSON.parse(req.body?.assignments || '[]'); } catch { assignments = null; }
+    if (!Array.isArray(assignments) || assignments.length !== files.length || !files.length) {
+      discard();
+      return res.status(400).json({ error: 'Choose at least one file and who it belongs to.' });
+    }
+    const attendees = await dbAll('SELECT attendee_id, employee_id, trainee_name FROM session_attendees WHERE session_id = ?', [session.session_id]);
+    const byId = new Map(attendees.map((a) => [a.attendee_id, a]));
+    const problems = [];
+    files.forEach((f, i) => {
+      const a = byId.get(assignments[i]?.attendee_id);
+      if (!a) problems.push(`${f.originalname}: pick who it belongs to`);
+      else if (!a.employee_id) problems.push(`${f.originalname}: ${a.trainee_name} isn't linked to an employee profile yet`);
+      else if (!String(assignments[i]?.label || '').trim()) problems.push(`${f.originalname}: needs a label`);
+    });
+    if (problems.length) { discard(); return res.status(400).json({ error: problems.join('; ') }); }
+
+    const saved = [];
+    for (let i = 0; i < files.length; i += 1) {
+      const a = byId.get(assignments[i].attendee_id);
+      // eslint-disable-next-line no-await-in-loop
+      const hasTraining = session.master_training_id && await dbGet(
+        'SELECT 1 AS x FROM employee_training_records WHERE employee_id = ? AND training_id = ? LIMIT 1', [a.employee_id, session.master_training_id]
+      );
+      // eslint-disable-next-line no-await-in-loop
+      await dbRun(
+        `INSERT INTO employee_documents (document_id, employee_id, label, filename, file_path, uploaded_by, training_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), a.employee_id, String(assignments[i].label).trim().slice(0, 200), files[i].originalname, files[i].path, req.user.username,
+          hasTraining ? session.master_training_id : null]
+      );
+      saved.push(`${a.trainee_name}: ${String(assignments[i].label).trim()}`);
+    }
+    logActivity({
+      actor: req.user, action: 'attendee_documents_uploaded', entityType: 'training_session', entityId: session.session_id,
+      entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `${saved.length} document(s)`, req,
+    });
+    res.status(201).json({ saved: saved.length, details: saved });
+  });
 });
 
 // Rebuild a closed session's roster PDFs from what's on file now (Keeley's request, 2026-09-29:
