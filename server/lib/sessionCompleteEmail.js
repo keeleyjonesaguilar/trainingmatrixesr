@@ -32,6 +32,12 @@ function sessionDates(session) {
 
 function attendeeResult(a, isToolbox = false) {
   if (isToolbox) return { text: 'Attended', color: '#146c3a', bg: '#e3f6ea' };
+  // Multi Training Day: a certificate per training they checked in for.
+  if (a.trainings_total) {
+    if (a.trainings_certified >= a.trainings_total) return { text: 'Certified', color: '#146c3a', bg: '#e3f6ea' };
+    if (a.trainings_certified > 0) return { text: `Certified ${a.trainings_certified} of ${a.trainings_total}`, color: '#a15c00', bg: '#fff2df' };
+    return { text: 'No certificate', color: '#b3261e', bg: '#fde8e8' };
+  }
   if (a.processing_status === 'incomplete_attendance') return { text: 'Incomplete – missed a day', color: '#a15c00', bg: '#fff2df' };
   if (a.certificate_path) return { text: 'Certified', color: '#146c3a', bg: '#e3f6ea' };
   return { text: 'No certificate', color: '#b3261e', bg: '#fde8e8' };
@@ -106,6 +112,7 @@ function feedbackBlock(feedback, isToolbox) {
           </table>` : ''}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">${questionRows}
           </table>
+          ${(feedback.followUps || []).length ? `<div style="${FONT}font-size:13px;color:#a15c00;margin-top:6px;"><strong>Asked for additional training:</strong> ${feedback.followUps.map(esc).join(', ')}</div>` : ''}
           <div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Comments (${feedback.comments.length})</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${commentRows}
           </table>
@@ -134,7 +141,8 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
   const allTrainers = session.all_trainer_names || trainerName;
   const greeting = allTrainers.includes(',') ? 'Hi' : `Hi ${esc(trainerName.split(' ')[0])}`;
   const isToolbox = session.session_kind === 'toolbox_talk';
-  const certified = attendees.filter((a) => ['Certified', 'Attended'].includes(attendeeResult(a, isToolbox).text)).length;
+  const certified = attendees.filter((a) => ['Certified', 'Attended'].includes(attendeeResult(a, isToolbox).text)
+    || (a.trainings_total && a.trainings_certified > 0)).length;
   const notCertified = attendees.length - certified;
 
   const kindWord = isToolbox ? 'Toolbox Talk' : 'Training';

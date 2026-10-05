@@ -91,18 +91,26 @@ function recordHasCertificate(record) {
 
 // Sends a record's certificate - the saved file when there is one, otherwise the auto-generated
 // one built on the spot. Responds 404 when the record has neither.
-async function sendRecordCertificate(res, record) {
+// `inline` opens it in the browser instead of downloading (the public QR record page, viewed on a
+// phone on site).
+async function sendRecordCertificate(res, record, { inline = false } = {}) {
+  const setName = (filename) => {
+    res.attachment(filename);
+    if (inline) res.set('Content-Disposition', res.get('Content-Disposition').replace(/^attachment/, 'inline'));
+  };
   if (record.certificate_path && fs.existsSync(record.certificate_path)) {
     const filename = record.certificate_auto_generated
       ? (await computeFilenameForRecord(record)) || record.certificate_filename || 'certificate.pdf'
       : record.certificate_filename || 'certificate.pdf';
-    return res.download(record.certificate_path, filename);
+    if (!inline) return res.download(record.certificate_path, filename);
+    setName(filename);
+    return res.sendFile(path.resolve(record.certificate_path));
   }
   if (!record.certificate_auto_generated) return res.status(404).json({ error: 'No certificate on file for this record' });
   const pdf = await buildRecordCertificate(record);
   if (!pdf) return res.status(404).json({ error: 'No certificate on file for this record' });
   const filename = (await computeFilenameForRecord(record)) || record.certificate_filename || 'certificate.pdf';
-  res.attachment(filename);
+  setName(filename);
   res.type('application/pdf');
   return res.send(pdf);
 }

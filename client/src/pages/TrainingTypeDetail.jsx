@@ -215,7 +215,7 @@ function SessionList({ title, sessions, showRosterLinks, emptyText, loading }) {
       {pageRows.map((s) => (
         <div key={s.session_id} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--color-border)' }}>
           <Link to={`/sessions/${s.session_id}`}>{s.session_date}</Link>
-          <div className="page-subtitle" style={{ margin: '2px 0 0' }}>{s.client_name} · {s.trainer_signed_name || s.trainer_name}</div>
+          <div className="page-subtitle" style={{ margin: '2px 0 0' }}>{s.client_name} · {s.trainer_names || s.trainer_signed_name || s.trainer_name}</div>
           {showRosterLinks && (
             <div style={{ fontSize: 12, marginTop: 2 }}>
               <a href={`/api/training-sessions/${s.session_id}/roster.pdf`}>PDF</a> ·{' '}

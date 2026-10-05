@@ -136,6 +136,14 @@ async function runOneTimeFixes() {
       for (const { record_id: id } of missing) await maybeGenerateCertificate(id); // eslint-disable-line no-await-in-loop
       console.log(`On-demand certificates: removed ${removed} saved file(s); ${missing.length} record(s) without a certificate now get one on download.`);
     });
+
+    // Older multi-day feedback goes to the trainer of the day it was submitted (Keeley's call,
+    // 2026-10-05) - lib/sessionFeedback.js. Live server only, so it lands with the deploy.
+    await runOnce('fix_credit_old_multiday_feedback_v1', "credited older multi-day feedback to the day's trainer", async () => {
+      const { creditOldMultiDayFeedback } = require('./sessionFeedback'); // eslint-disable-line global-require
+      const done = await creditOldMultiDayFeedback();
+      console.log(`Older multi-day feedback: ${done.length} response(s) credited to the day's trainer.`);
+    });
   }
 }
 

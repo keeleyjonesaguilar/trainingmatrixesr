@@ -14,6 +14,7 @@ const { buildSessionCompleteEmail } = require('./sessionCompleteEmail');
 const { sendEmail } = require('./email');
 const { withDayTrainers, getCoTrainers } = require('./sessionDays');
 const { sessionFeedbackSummary } = require('./sessionFeedback');
+const { isMultiTrainingDay, trainingParts } = require('./sessionParts');
 
 // The one training that also gets the official AHA Heartsaver Course Roster (Keeley's request,
 // 2026-09-21) - every other training uses the in-house roster/certificate only.
@@ -80,7 +81,14 @@ async function regenerateRosters(sessionRow, attendees, additionalTrainings) {
       ...session,
       training_type_label: [session.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', '),
     };
-    rosterPath = await generateRosterPdf(rosterSession, attendees);
+    let rosterAttendees = attendees;
+    // Multi Training Day: each training with its own duration, and which ones each person checked in for.
+    if (isMultiTrainingDay(session)) {
+      rosterSession.training_parts = await trainingParts(session, additionalTrainings);
+      const checkins = await dbAll('SELECT attendee_id, day_number, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
+      rosterAttendees = attendees.map((a) => ({ ...a, part_checkins: checkins.filter((c) => c.attendee_id === a.attendee_id) }));
+    }
+    rosterPath = await generateRosterPdf(rosterSession, rosterAttendees);
     await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -149,18 +157,22 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
 
   const normalize = (e) => (e ? e.trim().toLowerCase() : null);
   // A multi-day session's other day trainers get the completed forms too - by the email they
-  // signed off with, or their trainer profile's.
+  // signed off with, or their trainer profile's. Co-trainers (migration 074) too. Anyone teaching
+  // with no email anywhere is flagged to the office instead of silently skipped.
   const dayTrainerEmails = [];
+  const unreachable = [];
+  const addTrainer = async (name, profileId, signedEmail = null) => {
+    const profileEmail = profileId ? (await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email : null;
+    dayTrainerEmails.push(signedEmail, profileEmail);
+    if (!normalize(signedEmail) && !normalize(profileEmail) && name) unreachable.push(name);
+  };
   for (const d of session.session_days || []) {
-    dayTrainerEmails.push(d.signed_trainer_email);
-    const profileId = d.signed_trainer_employee_id || d.assigned_trainer_employee_id;
     // eslint-disable-next-line no-await-in-loop
-    if (profileId) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email);
+    await addTrainer(d.signed_trainer_name || d.assigned_trainer_name, d.signed_trainer_employee_id || d.assigned_trainer_employee_id, d.signed_trainer_email);
   }
-  // Co-trainers (migration 074) get the completed forms too.
   for (const co of await getCoTrainers(session.session_id)) {
     // eslint-disable-next-line no-await-in-loop
-    if (co.trainer_employee_id) dayTrainerEmails.push((await dbGet('SELECT email FROM employees WHERE employee_id = ?', [co.trainer_employee_id]))?.email);
+    await addTrainer(co.trainer_name, co.trainer_employee_id);
   }
   // Each app user's Training Emails on/off is set on Manage Users (routes/users.js, Keeley's
   // request, 2026-09-30); email_settings (migration 067) holds the trainer on/off and any extra
@@ -178,18 +190,58 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   const attachments = formAttachments.map(({ filename, content }) => ({ filename, content }));
   const logoUrl = `${publicBaseUrl()}/email-logo.png`;
   const feedback = await sessionFeedbackSummary(session.session_id);
+  // Multi Training Day: how many of the trainings each attendee was certified for.
+  let emailAttendees = attendees;
+  if (isMultiTrainingDay(session)) {
+    const certs = attendees.length
+      ? await dbAll('SELECT attendee_id FROM attendee_certificates WHERE attendee_id = ANY(?) AND certificate_path IS NOT NULL', [attendees.map((a) => a.attendee_id)])
+      : [];
+    const total = 1 + additionalTrainings.length;
+    emailAttendees = attendees.map((a) => ({
+      ...a,
+      trainings_total: total,
+      trainings_certified: (a.certificate_path ? 1 : 0) + certs.filter((c) => c.attendee_id === a.attendee_id).length,
+    }));
+  }
 
-  await Promise.all(recipients.map((to) => {
+  // One at a time (lib/email.js also paces them) - sent all at once, the email service refused
+  // some and a trainer never got theirs (Keeley's report, 2026-10-05).
+  const failed = [];
+  for (const to of recipients) {
     const recipientIsTrainer = trainerRecipients.has(to);
     const email = buildSessionCompleteEmail({
-      session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate, feedback,
+      session, trainingLabels, attendees: emailAttendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate, feedback,
       editUrl: recipientIsTrainer ? editUrl : null,
     });
-    return sendEmail({ to, ...email, attachments }).catch((err) => {
+    try {
+      await sendEmail({ to, ...email, attachments }); // eslint-disable-line no-await-in-loop
+    } catch (err) {
+      failed.push(to);
       // eslint-disable-next-line no-console
       console.error(`Completed forms email to ${to} failed for session ${session.session_id}:`, err.message);
-    });
-  }));
+    }
+  }
+
+  // Tell the office (bell only) when a trainer couldn't be emailed, so someone can forward it.
+  const problems = [
+    ...(toTrainers ? [...new Set(unreachable)].map((name) => `${name} has no email on file`) : []),
+    ...failed.map((to) => `the email to ${to} didn't go through`),
+  ];
+  if (problems.length) {
+    try {
+      const { notifyAllUsers } = require('./notifications'); // eslint-disable-line global-require
+      await notifyAllUsers({
+        type: 'session_email_problem',
+        title: `${stripTrainingIdPrefix(session.training_type_label)} · ${session.client_name}: completed forms not delivered to everyone`,
+        body: `${problems.join('; ')}. Download the roster and certificates from the session page to send them.`,
+        link_path: `/sessions/${session.session_id}`,
+        email: false,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`Could not flag the email problem for session ${session.session_id}:`, err.message);
+    }
+  }
 }
 
 module.exports = {

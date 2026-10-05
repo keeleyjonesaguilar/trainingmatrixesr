@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('./repo');
 const { displayFirstLast, nameKey } = require('./names');
+const { isMultiDay } = require('./sessionParts');
 
 // Everyone who can be picked as a trainer - same definition as the Trainers page (routes/
 // trainers.js): trainer-type profiles plus anyone who has taught a session, which covers a
@@ -41,7 +42,7 @@ function trainerDisplayName(employee) {
 // session's trainer". Rewrites the assignments for days 1..total_days (sign-offs already recorded
 // are kept) and drops rows past the last day if the course got shorter.
 async function saveDayTrainers(session, dayTrainers) {
-  if (!session.total_days) {
+  if (!isMultiDay(session)) {
     await dbRun('DELETE FROM session_days WHERE session_id = ?', [session.session_id]);
     return;
   }
@@ -67,9 +68,9 @@ async function saveDayTrainers(session, dayTrainers) {
 
 // Every day of a multi-day session, 1..total_days, filled in even where no row exists yet (e.g.
 // sessions created before per-day trainers existed): scheduled date, assigned trainer, and the
-// sign-off if there is one. Empty for a single-day session.
+// sign-off if there is one. Empty for a single-day session and a Multi Training Day (one day).
 async function getSessionDays(session) {
-  if (!session.total_days) return [];
+  if (!isMultiDay(session)) return [];
   const rows = await dbAll('SELECT * FROM session_days WHERE session_id = ? ORDER BY day_number', [session.session_id]);
   const byDay = new Map(rows.map((r) => [r.day_number, r]));
   const dates = session.day_dates ? (typeof session.day_dates === 'string' ? JSON.parse(session.day_dates) : session.day_dates) : [];
@@ -218,7 +219,7 @@ async function sessionTrainers(session) {
 // certificate (Keeley's call, 2026-10-01).
 async function certificateTrainerName(session) {
   const co = (await getCoTrainers(session.session_id)).map((t) => t.trainer_name);
-  if (!session.total_days) return joinNames(uniqueNames(singleDayTrainerNames(session, co)));
+  if (!isMultiDay(session)) return joinNames(uniqueNames(singleDayTrainerNames(session, co)));
   return joinNames(uniqueNames([await mainCertificateTrainer(session), ...co]));
 }
 
@@ -243,7 +244,7 @@ async function mainCertificateTrainer(session) {
 // day-by-day sign-offs for the roster.
 async function withDayTrainers(session) {
   const hasCoTrainers = Boolean(await dbGet('SELECT 1 AS x FROM session_co_trainers WHERE session_id = ? LIMIT 1', [session.session_id]));
-  if (!session.total_days && !hasCoTrainers) return session;
+  if (!isMultiDay(session) && !hasCoTrainers) return session;
   return {
     ...session,
     certificate_trainer_name: await certificateTrainerName(session),

@@ -16,6 +16,8 @@ const { notifyAllUsers } = require('../lib/notifications');
 const { ahaColumnsFromBody, ensureEditToken, regenerateRosters, sendCompletedFormsEmail } = require('../lib/sessionCloseOut');
 const { getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers, sessionTrainers } = require('../lib/sessionDays');
 const { nameKey } = require('../lib/names');
+const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
+const { certifyTrainingParts } = require('../lib/lateAttendees');
 const { parseName, firstLast } = require('../lib/names');
 
 // An attendee's name as first/last parts plus the "First Last" trainee_name printed on their
@@ -75,9 +77,10 @@ router.get('/:token', async (req, res) => {
     }
   }
   const additionalTrainings = await dbAll(
-    'SELECT training_type_label FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
+    'SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order',
     [session.session_id]
   );
+  const multiTraining = isMultiTrainingDay(session);
   res.json({
     client_name: session.client_name,
     master_training_id: session.master_training_id,
@@ -99,6 +102,12 @@ router.get('/:token', async (req, res) => {
     attendee_count: attendeeCount,
     total_days: session.total_days,
     current_day: session.current_day,
+    // Multi Training Day (migration 075): the trainings in check-in order with their durations -
+    // total_days/current_day then count trainings, not days.
+    multi_training_day: multiTraining,
+    trainings: multiTraining
+      ? (await trainingParts(session, additionalTrainings)).map((t) => ({ number: t.number, label: t.label, duration: t.duration }))
+      : null,
     day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
     day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
     // Who teaches / signed off each day - no signatures or contact details on this public page.
@@ -150,7 +159,7 @@ router.post('/:token/days/:day/signoff', async (req, res) => {
   const session = await getSessionByToken(req.params.token);
   if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
   if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
-  if (!session.total_days) return res.status(400).json({ error: 'This is a single-day session - use Close Session instead.' });
+  if (!isMultiDay(session)) return res.status(400).json({ error: 'This is a single-day session - use Close Session instead.' });
   const dayNumber = Number(req.params.day);
   if (dayNumber !== session.current_day) {
     return res.status(400).json({ error: `This session is on Day ${session.current_day}, so only Day ${session.current_day} can be signed off right now.` });
@@ -170,6 +179,35 @@ router.post('/:token/days/:day/signoff', async (req, res) => {
   await fillTrainerProfile(employeeId, phone, email);
   await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ? AND current_day = ?', [dayNumber + 1, session.session_id, dayNumber]);
   res.json({ ok: true, signed_off_day: dayNumber, current_day: dayNumber + 1, total_days: session.total_days });
+});
+
+// Multi Training Day (Keeley's request, 2026-10-05): at the end of one training the trainer taps
+// "Start next training" and enters the trainer PIN - no signature - and attendees scan the same QR
+// code again to check in for it. `expected` is the training the trainer's page showed as open, so
+// a double tap (or two trainers at once) can't skip a training.
+router.post('/:token/next-training', async (req, res) => {
+  const session = await getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
+  if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
+  if (!isMultiTrainingDay(session)) return res.status(400).json({ error: 'This session has only one training.' });
+  const pinSetting = await dbGet('SELECT pin FROM trainer_close_pin_settings WHERE id = ?', ['default']);
+  if (String(req.body?.pin || '').trim().toUpperCase() !== String(pinSetting?.pin || '').trim().toUpperCase()) {
+    return res.status(400).json({ error: 'Incorrect PIN.' });
+  }
+  const parts = await trainingParts(session);
+  const expected = Number(req.body?.expected_current || session.current_day);
+  if (expected !== session.current_day || session.current_day >= parts.length) {
+    const open = parts[session.current_day - 1];
+    return res.status(400).json({
+      error: session.current_day >= parts.length
+        ? `${open.label} is the last training - close the session when it's done.`
+        : `${open.label} is already open for check-in.`,
+      current_day: session.current_day,
+    });
+  }
+  const next = session.current_day + 1;
+  await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ? AND current_day = ?', [next, session.session_id, session.current_day]);
+  res.json({ ok: true, current_day: next, total_days: parts.length, training: parts[next - 1].label });
 });
 
 // A trainee signs in.
@@ -289,7 +327,8 @@ router.post('/:token/attendees/:attendeeId/checkin', async (req, res) => {
     [session.session_id, attendee.attendee_id, session.current_day]
   );
   if (existing) {
-    return res.status(400).json({ error: `Already checked in for Day ${session.current_day}.` });
+    const what = isMultiTrainingDay(session) ? (await trainingParts(session))[session.current_day - 1].label : `Day ${session.current_day}`;
+    return res.status(400).json({ error: `Already checked in for ${what}.` });
   }
   await dbRun(
     `INSERT INTO session_attendance_days (id, session_id, attendee_id, day_number, signature)
@@ -310,6 +349,12 @@ router.post('/:token/close', async (req, res) => {
   }
   // A multi-day session can only close from its final day (Keeley's call) - otherwise closing
   // early would judge attendance against a course that hasn't finished yet.
+  if (isMultiTrainingDay(session) && session.current_day < session.total_days) {
+    const parts = await trainingParts(session);
+    return res.status(400).json({
+      error: `${parts[session.current_day - 1].label} is still open. Start the last training (${parts[parts.length - 1].label}) before closing the session.`,
+    });
+  }
   if (session.total_days && session.current_day < session.total_days) {
     return res.status(400).json({
       error: `This is a ${session.total_days}-day session, currently on Day ${session.current_day}. Sign off Day ${session.current_day} first - the session closes on Day ${session.total_days}.`,
@@ -349,7 +394,7 @@ router.post('/:token/close', async (req, res) => {
   // a stray duplicate instead of updating the real one. Only fall back to finding/creating a new
   // link for the rare session that somehow has none yet.
   let trainerEmployeeId = session.trainer_employee_id;
-  if (session.total_days) {
+  if (isMultiDay(session)) {
     // Multi-day: whoever closes is signing off the final day, possibly a different trainer from
     // the session's main one - record that day's sign-off, and fill in *their* profile instead.
     const finalDay = (await getSessionDays(session))[session.total_days - 1];
@@ -396,7 +441,7 @@ router.post('/:token/close', async (req, res) => {
   // attendee only gets certified if they attended every required day. Counted once here rather
   // than per-attendee in the loop below, since it's the same query either way.
   let daysAttendedByAttendee = null;
-  if (updatedSession.total_days && attendees.length) {
+  if (isMultiDay(updatedSession) && attendees.length) {
     const dayRows = await dbAll(
       'SELECT attendee_id, COUNT(DISTINCT day_number) AS n FROM session_attendance_days WHERE session_id = ? GROUP BY attendee_id',
       [session.session_id]
@@ -409,6 +454,11 @@ router.post('/:token/close', async (req, res) => {
   // employee record) - then the same for each additional training, one certificate/record per
   // (attendee, training) pair.
   for (const attendee of attendees) {
+    // Multi Training Day: a certificate for each training they checked in for (lib/lateAttendees.js).
+    if (isMultiTrainingDay(updatedSession)) {
+      await certifyTrainingParts(updatedSession, attendee.attendee_id); // eslint-disable-line no-await-in-loop
+      continue; // eslint-disable-line no-continue
+    }
     if (daysAttendedByAttendee) {
       const daysAttended = daysAttendedByAttendee[attendee.attendee_id] || 0;
       if (daysAttended < updatedSession.total_days) {
@@ -482,6 +532,21 @@ router.post('/:token/close', async (req, res) => {
   res.json({ ok: true, attendee_count: attendees.length });
 });
 
+async function feedbackTrainers(session) {
+  const trainers = await sessionTrainers(session);
+  const days = await getSessionDays(session);
+  return trainers.map((t) => {
+    const taught = days
+      .filter((d) => {
+        const name = d.signed_trainer_name || d.assigned_trainer_name;
+        const id = d.signed_trainer_name ? d.signed_trainer_employee_id : d.assigned_trainer_employee_id;
+        return (t.employee_id && id === t.employee_id) || nameKey(name) === nameKey(t.name);
+      })
+      .map((d) => d.day_number);
+    return { key: t.key, name: t.name, days: taught };
+  });
+}
+
 // Fetch session context for the feedback page (no auth) - same minimal shape as the sign-in
 // context fetch above, just for the second QR code's landing page.
 router.get('/:token/feedback', async (req, res) => {
@@ -491,15 +556,21 @@ router.get('/:token/feedback', async (req, res) => {
   // - read here rather than through the authenticated /api/feedback-settings route, since this
   // page has no login to read it with.
   const labels = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
+  const additionalTrainings = await dbAll(
+    'SELECT training_type_label FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]
+  );
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
+    additional_training_labels: additionalTrainings.map((t) => t.training_type_label),
     training_type_label_es: session.training_type_label_es,
     language: session.language,
     trainer_name: session.trainer_name,
     // Each trainer is rated separately (Keeley's request, 2026-10-01) - co-trainers and every
     // day's trainer on a multi-day course.
-    trainers: (await sessionTrainers(session)).map((t) => ({ key: t.key, name: t.name })),
+    // Which days each trainer taught on a multi-day course (e.g. "Days 1-2"), so trainees rate the
+    // right person for the right days (Keeley's request, 2026-10-05).
+    trainers: await feedbackTrainers(session),
     session_date: session.session_date,
     labels,
   });
@@ -521,6 +592,12 @@ router.post('/:token/feedback', async (req, res) => {
   const effectiveness = Number(effectiveness_rating);
   if (!Number.isInteger(effectiveness) || effectiveness < 1 || effectiveness > 5) {
     return res.status(400).json({ error: 'effectiveness_rating must be a whole number between 1 and 5.' });
+  }
+  // Someone who says they need more training gives their name so the office can reach out
+  // (Keeley's request, 2026-10-05) - the only time the form asks who they are.
+  const contactName = needs_additional_training === 'yes' ? String(req.body?.contact_name || '').trim().slice(0, 200) : '';
+  if (needs_additional_training === 'yes' && !contactName) {
+    return res.status(400).json({ error: 'Please enter your name so we can reach out about additional training.' });
   }
 
   // A rating (and optional comment) for each trainer on the session (Keeley's request,
@@ -548,8 +625,8 @@ router.post('/:token/feedback', async (req, res) => {
   const feedbackId = uuidv4();
   await dbRun(
     `INSERT INTO session_feedback
-       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment, contact_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feedbackId,
       session.session_id,
@@ -559,6 +636,7 @@ router.post('/:token/feedback', async (req, res) => {
       effectiveness,
       average,
       ratings.length === 1 ? ratings[0].comment : null,
+      contactName || null,
     ]
   );
   for (const r of ratings) {
@@ -567,6 +645,20 @@ router.post('/:token/feedback', async (req, res) => {
       'INSERT INTO session_feedback_trainers (id, feedback_id, trainer_name, trainer_employee_id, rating, comment) VALUES (?, ?, ?, ?, ?, ?)',
       [uuidv4(), feedbackId, r.trainer.name, r.trainer.employee_id, r.rating, r.comment]
     );
+  }
+  // Flagged on the office's bell so someone can follow up.
+  if (contactName) {
+    try {
+      await notifyAllUsers({
+        type: 'feedback_needs_training',
+        title: `${contactName} asked for additional training`,
+        body: `${session.training_type_label} · ${session.client_name} · ${session.session_date}`,
+        link_path: `/sessions/${session.session_id}`,
+        email: false,
+      });
+    } catch (err) {
+      console.error(`Notification failed for feedback on session ${session.session_id}:`, err); // eslint-disable-line no-console
+    }
   }
   res.status(201).json({ ok: true });
 });

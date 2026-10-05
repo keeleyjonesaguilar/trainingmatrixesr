@@ -278,6 +278,8 @@ export const api = {
   publicCloseSession: (token, payload) => request(`/public/${token}/close`, { method: 'POST', body: JSON.stringify(payload) }),
   // A multi-day session's trainer signs off their day (no certificates until the final day closes).
   publicSignOffDay: (token, day, payload) => request(`/public/${token}/days/${day}/signoff`, { method: 'POST', body: JSON.stringify(payload) }),
+  // Multi Training Day: the trainer opens the next training for check-in (PIN only).
+  publicNextTraining: (token, payload) => request(`/public/${token}/next-training`, { method: 'POST', body: JSON.stringify(payload) }),
   // "Find your name" returning-attendee check-in on a multi-day session (Keeley's request,
   // 2026-09-21/22) - no auth, same as the rest of the public sign-in surface.
   publicSearchAttendees: (token, q) => request(`/public/${token}/attendees/search?q=${encodeURIComponent(q)}`),

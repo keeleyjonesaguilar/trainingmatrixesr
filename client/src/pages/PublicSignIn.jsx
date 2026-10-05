@@ -132,7 +132,45 @@ const STRINGS = {
   confirm_checkin_button: { en: 'Confirm & Check In', es: 'Confirmar y registrarse' },
   checking_in_ellipsis: { en: 'Checking in…', es: 'Registrando…' },
   checkin_success_banner: { en: "You're checked in for today!", es: '¡Está registrado para hoy!' },
+  // Multi Training Day (Keeley's request, 2026-10-05): several trainings back to back on one day,
+  // checking in again at the start of each one.
+  mtd_title: { en: 'Multi Training Day', es: 'Día de capacitación múltiple' },
+  mtd_progress: { en: 'Training {n} of {total}', es: 'Capacitación {n} de {total}' },
+  mtd_notice: {
+    en: 'Scan this QR code and check in at the start of EACH training. You only get a certificate for the trainings you check in for.',
+    es: 'Escanee este código QR y regístrese al inicio de CADA capacitación. Solo recibe certificado de las capacitaciones en las que se registre.',
+  },
+  mtd_now_open: { en: 'Now checking in for:', es: 'Registro abierto para:' },
+  mtd_choice_first_title: { en: 'This is my first training today', es: 'Esta es mi primera capacitación de hoy' },
+  mtd_choice_first_sub: { en: 'I have NOT checked in for an earlier training today', es: 'NO me registré en una capacitación anterior hoy' },
+  mtd_choice_returning_title: { en: 'I checked in for an earlier training today', es: 'Me registré en una capacitación anterior hoy' },
+  mtd_choice_returning_sub: { en: 'Find my name and check in for {training}', es: 'Buscar mi nombre y registrarme para {training}' },
+  mtd_choice_hint: {
+    en: 'Checked in for an earlier training today? Choose "I checked in for an earlier training today" - do not sign up again.',
+    es: '¿Se registró en una capacitación anterior hoy? Elija "Me registré en una capacitación anterior hoy" - no se registre de nuevo.',
+  },
+  mtd_already_now: { en: 'checked in for this training', es: 'registrado en esta capacitación' },
+  mtd_checked_in_for: { en: 'checked in for', es: 'registrado en' },
+  mtd_confirm_title: { en: "Confirm it's you — sign for {training}", es: 'Confirme que es usted — firme para {training}' },
+  mtd_checkin_success: { en: "You're checked in for {training}!", es: '¡Está registrado para {training}!' },
+  mtd_trainer_tab_next: { en: "I'm the trainer — start next training", es: 'Soy el instructor — iniciar la siguiente capacitación' },
+  mtd_next_note: {
+    en: 'Do this when {current} is over. It opens {next} for check-in - everyone scans this QR code again and checks in for it. Certificates are created when you close the session after the last training.',
+    es: 'Hágalo cuando termine {current}. Abre {next} para el registro - todos escanean este código QR otra vez y se registran. Los certificados se crean al cerrar la sesión después de la última capacitación.',
+  },
+  mtd_next_button: { en: 'Start {next}', es: 'Iniciar {next}' },
+  mtd_next_confirm: {
+    en: 'Start {next} now?\n\nOnly do this when {current} is over. Anyone who checks in after this is checked in for {next}.',
+    es: '¿Iniciar {next} ahora?\n\nHágalo solo cuando termine {current}. Quien se registre después quedará registrado en {next}.',
+  },
+  mtd_next_banner: { en: '{next} is open - everyone can scan the QR code to check in for it.', es: '{next} está abierta - todos pueden escanear el código QR para registrarse.' },
+  starting_ellipsis: { en: 'Starting…', es: 'Iniciando…' },
 };
+
+// "TRN-016 - Fall Protection" -> "Fall Protection" for the small step labels.
+function shortTraining(label) {
+  return String(label || '').replace(/^TRN-\d+\s*-\s*/, '');
+}
 
 // Returns the phrase for `key` in the session's language: English, Spanish, or (for "both")
 // "English/Spanish" - matches the format Keeley asked for ("First Name/Nombre").
@@ -161,7 +199,8 @@ function dayProgressLabel(t, day, total) {
 // the word-set matching used for import de-duplication (which answers a different question: "is
 // this the exact same words in different order," not "does this look like what's been typed so
 // far").
-function ReturningAttendeeFlow({ token, t, onBack, onDone }) {
+function ReturningAttendeeFlow({ token, t, onBack, onDone, trainings = null, currentDay = null }) {
+  const currentTraining = trainings?.[currentDay - 1];
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -224,9 +263,11 @@ function ReturningAttendeeFlow({ token, t, onBack, onDone }) {
             const isSelected = selected?.attendee_id === r.attendee_id;
             const initials = r.trainee_name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
             const meta = r.already_checked_in_today
-              ? t('find_name_already_today')
+              ? t(trainings ? 'mtd_already_now' : 'find_name_already_today')
               : r.days_attended.length
-                ? `${t('find_name_signed_days')} ${r.days_attended.join(', ')}`
+                ? trainings
+                  ? `${t('mtd_checked_in_for')} ${r.days_attended.map((d) => shortTraining(trainings[d - 1]?.label)).join(', ')}`
+                  : `${t('find_name_signed_days')} ${r.days_attended.join(', ')}`
                 : '';
             return (
               <button
@@ -270,7 +311,9 @@ function ReturningAttendeeFlow({ token, t, onBack, onDone }) {
       )}
       {selected && !selected.already_checked_in_today && (
         <div className="card" style={{ textAlign: 'left' }}>
-          <strong style={{ fontSize: 13 }}>{t('confirm_checkin_title')}</strong>
+          <strong style={{ fontSize: 13 }}>
+            {trainings ? t('mtd_confirm_title').replaceAll('{training}', shortTraining(currentTraining?.label)) : t('confirm_checkin_title')}
+          </strong>
           <div className="field" style={{ marginTop: 8 }}>
             <SignaturePad ref={sigRef} />
           </div>
@@ -303,6 +346,8 @@ export default function PublicSignIn() {
   const [closedNow, setClosedNow] = useState(false);
   // The day this trainer just signed off (multi-day), for the confirmation banner.
   const [signedOffDay, setSignedOffDay] = useState(null);
+  // The training a Multi Training Day's trainer just opened, for the confirmation banner.
+  const [openedTraining, setOpenedTraining] = useState('');
   const sigRef = useRef(null);
 
   // Multi-day session (Keeley's request, 2026-09-21/22): before showing the sign-in form, an
@@ -367,6 +412,30 @@ export default function PublicSignIn() {
       load();
     } catch (err) {
       setFormError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Multi Training Day: between trainings the trainer only enters the PIN to open the next one.
+  const handleNextTraining = async (e) => {
+    e.preventDefault();
+    setFormError('');
+    if (!pin.trim()) return setFormError(t('err_trainer_pin'));
+    const current = shortTraining(info.trainings[info.current_day - 1]?.label);
+    const next = shortTraining(info.trainings[info.current_day]?.label);
+    if (!window.confirm(t('mtd_next_confirm').replaceAll('{current}', current).replaceAll('{next}', next))) return;
+    setSubmitting(true);
+    try {
+      await api.publicNextTraining(token, { pin: pin.trim(), expected_current: info.current_day });
+      setOpenedTraining(next);
+      setPin('');
+      setMode('trainee');
+      setSignInStep('choice');
+      load();
+    } catch (err) {
+      setFormError(err.message);
+      load();
     } finally {
       setSubmitting(false);
     }
@@ -443,7 +512,11 @@ export default function PublicSignIn() {
   }
 
   const isClosed = info.status === 'closed' || closedNow;
+  // Multi-day courses and Multi Training Days both check in once per part with the same QR code.
   const isMultiDay = Number(info.total_days) > 1;
+  const isMultiTraining = Boolean(info.multi_training_day) && Array.isArray(info.trainings);
+  const currentTraining = isMultiTraining ? info.trainings[info.current_day - 1] : null;
+  const nextTraining = isMultiTraining ? info.trainings[info.current_day] : null;
   const isBoth = info.language === 'both';
   const isSpanish = info.language === 'spanish';
   const trainingLabelEs = info.training_type_label_es || info.training_type_label;
@@ -454,7 +527,15 @@ export default function PublicSignIn() {
   // outline below.
   const dayOutlineText = info.day_outlines?.[info.current_day - 1];
   // Before a multi-day course's final day, the trainer tab signs off just today's day.
-  const isSignoffDay = isMultiDay && info.current_day < info.total_days;
+  const isSignoffDay = isMultiDay && !isMultiTraining && info.current_day < info.total_days;
+  // Before a Multi Training Day's last training, the trainer tab opens the next one.
+  const isNextTrainingStep = isMultiTraining && Boolean(nextTraining);
+  const fillTraining = (key) => t(key)
+    .replaceAll('{training}', shortTraining(currentTraining?.label))
+    .replaceAll('{current}', shortTraining(currentTraining?.label))
+    .replaceAll('{next}', shortTraining(nextTraining?.label))
+    .replaceAll('{n}', info.current_day)
+    .replaceAll('{total}', info.total_days);
   const fill = (key) => t(key).replaceAll('{day}', info.current_day).replaceAll('{next}', info.current_day + 1);
   const todaysTrainer = info.days?.[info.current_day - 1]?.assigned_trainer_name;
 
@@ -464,10 +545,14 @@ export default function PublicSignIn() {
         <div className="public-header">
           <img src={esrMark} alt="ESR" style={{ height: 40, margin: '0 auto 10px', display: 'block' }} />
           <h2 style={{ margin: '0 0 4px' }}>
-            {isSpanish ? trainingLabelEs : isBoth ? `${info.training_type_label}/${trainingLabelEs}` : info.training_type_label}
-            {info.additional_training_labels?.map((label) => (
-              <span key={label}> + {label}</span>
-            ))}
+            {isMultiTraining ? t('mtd_title') : (
+              <>
+                {isSpanish ? trainingLabelEs : isBoth ? `${info.training_type_label}/${trainingLabelEs}` : info.training_type_label}
+                {info.additional_training_labels?.map((label) => (
+                  <span key={label}> + {label}</span>
+                ))}
+              </>
+            )}
           </h2>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
             {info.client_name} · {formatDate(info.session_date)}
@@ -525,7 +610,7 @@ export default function PublicSignIn() {
                   setFormError('');
                 }}
               >
-                {isSignoffDay ? fill('trainer_tab_signoff') : t('trainer_tab')}
+                {isNextTrainingStep ? t('mtd_trainer_tab_next') : isSignoffDay ? fill('trainer_tab_signoff') : t('trainer_tab')}
               </button>
             </div>
 
@@ -539,13 +624,58 @@ export default function PublicSignIn() {
             {justSigned && mode === 'trainee' && signInStep === 'new' && (
               <p className="success-banner">{t('signed_in_banner')}</p>
             )}
+            {openedTraining && mode === 'trainee' && (
+              <p className="success-banner">{t('mtd_next_banner').replaceAll('{next}', openedTraining)}</p>
+            )}
             {justCheckedIn && mode === 'trainee' && (
-              <p className="success-banner">{t('checkin_success_banner')}</p>
+              <p className="success-banner">{isMultiTraining ? fillTraining('mtd_checkin_success') : t('checkin_success_banner')}</p>
             )}
 
             {mode === 'trainee' ? (
               <>
-                {isMultiDay && (
+                {isMultiTraining && (
+                  <div className="card" style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: 0.4, textTransform: 'uppercase' }}>
+                        {t('mtd_now_open')}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--esr-green)' }}>{fillTraining('mtd_progress')}</span>
+                    </div>
+                    <div style={{ fontSize: 17, fontWeight: 700, marginTop: 6 }}>
+                      {currentTraining?.label}
+                      {currentTraining?.duration && <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--color-text-muted)' }}> · {currentTraining.duration}</span>}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+                      {info.trainings.map((tr) => {
+                        const isDone = tr.number < info.current_day;
+                        const isActive = tr.number === info.current_day;
+                        return (
+                          <div key={tr.number} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div
+                              style={{
+                                width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 12, fontWeight: 700, boxSizing: 'border-box', flexShrink: 0,
+                                background: isDone ? 'var(--status-current-bg)' : isActive ? 'var(--esr-green)' : 'var(--color-surface)',
+                                color: isDone ? 'var(--status-current-text)' : isActive ? '#fff' : 'var(--color-text-muted)',
+                                border: isDone ? '1px solid var(--status-current-text)' : isActive ? '1px solid var(--esr-green)' : '1px solid var(--color-border)',
+                              }}
+                            >
+                              {isDone ? '✓' : tr.number}
+                            </div>
+                            <span style={{ fontSize: 13, fontWeight: isActive ? 700 : 400, color: isActive ? 'inherit' : 'var(--color-text-muted)' }}>
+                              {shortTraining(tr.label)}{tr.duration ? ` · ${tr.duration}` : ''}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p style={{ fontSize: 12, color: 'var(--status-missing-text)', background: 'var(--status-missing-bg)', borderRadius: 8, padding: '8px 10px', margin: '12px 0 0' }}>
+                      {t('mtd_notice')}
+                    </p>
+                  </div>
+                )}
+
+                {isMultiDay && !isMultiTraining && (
                   <div className="card" style={{ marginBottom: 16 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-muted)', letterSpacing: 0.4, textTransform: 'uppercase' }}>
@@ -589,7 +719,7 @@ export default function PublicSignIn() {
                 {isMultiDay && signInStep === 'choice' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {info.current_day > 1 && (
-                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0, order: -2 }}>{t('choice_hint_later_day')}</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, margin: 0, order: -2 }}>{t(isMultiTraining ? 'mtd_choice_hint' : 'choice_hint_later_day')}</p>
                     )}
                     <button
                       type="button"
@@ -609,9 +739,9 @@ export default function PublicSignIn() {
                         </svg>
                       </span>
                       <span>
-                        <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_first_time_title')}</span>
+                        <span style={{ display: 'block', fontWeight: 600 }}>{t(isMultiTraining ? 'mtd_choice_first_title' : 'choice_first_time_title')}</span>
                         <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                          {t('choice_first_time_sub')}
+                          {t(isMultiTraining ? 'mtd_choice_first_sub' : 'choice_first_time_sub')}
                         </span>
                       </span>
                     </button>
@@ -635,9 +765,9 @@ export default function PublicSignIn() {
                         </svg>
                       </span>
                       <span>
-                        <span style={{ display: 'block', fontWeight: 600 }}>{t('choice_returning_title')}</span>
+                        <span style={{ display: 'block', fontWeight: 600 }}>{t(isMultiTraining ? 'mtd_choice_returning_title' : 'choice_returning_title')}</span>
                         <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                          {t('choice_returning_sub').replaceAll('{day}', info.current_day)}
+                          {isMultiTraining ? fillTraining('mtd_choice_returning_sub') : t('choice_returning_sub').replaceAll('{day}', info.current_day)}
                         </span>
                       </span>
                     </button>
@@ -698,8 +828,11 @@ export default function PublicSignIn() {
                   <ReturningAttendeeFlow
                     token={token}
                     t={t}
+                    trainings={isMultiTraining ? info.trainings : null}
+                    currentDay={info.current_day}
                     onBack={() => setSignInStep('choice')}
                     onDone={() => {
+                      setOpenedTraining('');
                       setJustCheckedIn(true);
                       setSignInStep('choice');
                       load();
@@ -707,6 +840,23 @@ export default function PublicSignIn() {
                   />
                 )}
               </>
+            ) : isNextTrainingStep ? (
+              <form onSubmit={handleNextTraining}>
+                <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{fillTraining('mtd_next_note')}</p>
+                <div className="field">
+                  <label>{t('trainer_pin')}</label>
+                  <input
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    placeholder="PIN"
+                    type="password"
+                    autoComplete="off"
+                  />
+                </div>
+                <button className="btn btn-accent" type="submit" disabled={submitting} style={{ width: '100%' }}>
+                  {submitting ? t('starting_ellipsis') : fillTraining('mtd_next_button')}
+                </button>
+              </form>
             ) : (
               <form onSubmit={handleTrainerClose}>
                 <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{isSignoffDay ? fill('signoff_note') : info.session_kind === 'toolbox_talk' ? t('close_note_toolbox') : t('close_note')}</p>

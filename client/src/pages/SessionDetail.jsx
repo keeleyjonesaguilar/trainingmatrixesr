@@ -141,6 +141,27 @@ function TrainerClosePinEditor() {
   );
 }
 
+// Multi Training Day (Keeley's request, 2026-10-05): the session's trainings in check-in order,
+// with their own durations - 1 is the session's own training, 2+ the additional ones.
+function trainingParts(session) {
+  if (!session.multi_training_day) return null;
+  return [
+    { number: 1, label: session.training_type_label, duration: session.duration },
+    ...(session.additional_trainings || []).map((t, i) => ({ number: i + 2, label: t.training_type_label, duration: t.duration, id: t.id })),
+  ];
+}
+
+function shortTraining(label) {
+  return String(label || '').replace(/^TRN-\d+\s*-\s*/, '');
+}
+
+// How many of a Multi Training Day's trainings an attendee was certified for after close-out.
+function MultiTrainingResult({ attendee, total }) {
+  const certified = (attendee.certificate_path ? 1 : 0) + (attendee.additional_certificates || []).filter((c) => c.certificate_path).length;
+  const cls = certified >= total ? 'badge-current' : certified > 0 ? 'badge-expiringsoon' : 'badge-expired';
+  return <span className={`badge ${cls}`}>{certified >= total ? 'Certified for all' : `Certified ${certified} of ${total}`}</span>;
+}
+
 function RecordStatusBadge({ status }) {
   const labels = {
     linked: 'Added to employee file',
@@ -207,6 +228,11 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
   // Other trainers teaching alongside the lead (migration 074, 2026-10-01).
   const [coTrainerIds, setCoTrainerIds] = useState((session.co_trainers || []).map((t) => t.trainer_employee_id).filter(Boolean));
+  // Each other training's own duration on a Multi Training Day.
+  const isMultiTraining = Boolean(session.multi_training_day);
+  const [extraDurations, setExtraDurations] = useState(
+    Object.fromEntries((session.additional_trainings || []).map((t) => [t.id, t.duration || '']))
+  );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -214,25 +240,39 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const save = async () => {
     setSaving(true);
     setError('');
-    if (form.total_days && dayDates.some((d) => !d)) {
+    if (isMultiTraining && Object.values(extraDurations).some((d) => !String(d).trim())) {
+      setError('Enter a duration for every training.');
+      setSaving(false);
+      return;
+    }
+    if (!isMultiTraining && form.total_days && dayDates.some((d) => !d)) {
       setError('Enter a scheduled date for every day.');
       setSaving(false);
       return;
     }
-    if (form.total_days && dayOutlines.some((o) => !o.trim())) {
+    if (!isMultiTraining && form.total_days && dayOutlines.some((o) => !o.trim())) {
       setError('Enter an outline for every day.');
       setSaving(false);
       return;
     }
     try {
-      const updated = await api.updateTrainingSession(session.session_id, {
-        ...form,
-        trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
-        day_dates: form.total_days ? dayDates : null,
-        day_outlines: form.total_days ? dayOutlines : null,
-        day_trainers: form.total_days ? dayTrainers : null,
-        co_trainer_ids: coTrainerIds,
-      });
+      const { total_days: totalDays, ...rest } = form;
+      const updated = await api.updateTrainingSession(session.session_id, isMultiTraining
+        ? {
+          ...rest,
+          trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+          co_trainer_ids: coTrainerIds,
+          additional_training_durations: Object.entries(extraDurations).map(([id, duration]) => ({ id, duration })),
+        }
+        : {
+          ...form,
+          total_days: totalDays,
+          trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
+          day_dates: form.total_days ? dayDates : null,
+          day_outlines: form.total_days ? dayOutlines : null,
+          day_trainers: form.total_days ? dayTrainers : null,
+          co_trainer_ids: coTrainerIds,
+        });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
       }
@@ -315,9 +355,20 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
         <div className="field">
-          <label>Duration</label>
+          <label>{isMultiTraining ? `Duration – ${shortTraining(session.training_type_label)}` : 'Duration'}</label>
           <input value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="e.g. 4 hours, Half day" required />
         </div>
+        {isMultiTraining && (session.additional_trainings || []).map((t) => (
+          <div className="field" key={t.id}>
+            <label>Duration – {shortTraining(t.training_type_label)}</label>
+            <input
+              value={extraDurations[t.id] || ''}
+              onChange={(e) => setExtraDurations((prev) => ({ ...prev, [t.id]: e.target.value }))}
+              placeholder="e.g. 2 hours"
+              required
+            />
+          </div>
+        ))}
         <div className="field">
           <label>Sign-In Language</label>
           <select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} required>
@@ -326,7 +377,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             <option value="both">Both (English/Spanish)</option>
           </select>
         </div>
-        {!isToolbox && (
+        {!isToolbox && !isMultiTraining && (
         <div className="field">
           <label>Total Days (multi-day training)</label>
           <input
@@ -355,7 +406,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         </div>
         )}
       </div>
-      {form.total_days && dayDates.length > 0 && (
+      {!isMultiTraining && form.total_days && dayDates.length > 0 && (
         <div className="field">
           <label>Scheduled Dates &amp; Trainers</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -390,7 +441,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           </div>
         </div>
       )}
-      {form.total_days && dayOutlines.length > 0 && (
+      {!isMultiTraining && form.total_days && dayOutlines.length > 0 && (
         <div className="field">
           <label>Outline per Day</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -595,11 +646,16 @@ Their certificate and the training record it added to their employee file will b
   // Mark a multi-day attendee present for a day they forgot to sign in for (Keeley's request,
   // 2026-10-01), or undo an office mark. On a closed session, completing their days issues the
   // certificate and training record.
+  const partName = (day) => {
+    const parts = trainingParts(session);
+    return parts ? shortTraining(parts[day - 1]?.label) : `Day ${day}`;
+  };
   const markDay = async (attendee, day) => {
-    const closedNote = session.status === 'closed'
-      ? '\n\nThe session is closed - if this completes their days, their certificate and training record are created now.'
-      : '';
-    if (!window.confirm(`Mark ${attendee.trainee_name} present for Day ${day}? This shows as marked by the office (no signature).${closedNote}`)) return;
+    const closedNote = session.status !== 'closed' ? ''
+      : session.multi_training_day
+        ? '\n\nThe session is closed - their certificate and training record for this training are created now.'
+        : '\n\nThe session is closed - if this completes their days, their certificate and training record are created now.';
+    if (!window.confirm(`Mark ${attendee.trainee_name} present for ${partName(day)}? This shows as marked by the office (no signature).${closedNote}`)) return;
     setMarkingDay(`${attendee.attendee_id}:${day}`);
     try {
       await api.markAttendanceDay(id, attendee.attendee_id, day);
@@ -611,7 +667,7 @@ Their certificate and the training record it added to their employee file will b
     }
   };
   const unmarkDay = async (attendee, day) => {
-    if (!window.confirm(`Undo the office mark for ${attendee.trainee_name} on Day ${day}?`)) return;
+    if (!window.confirm(`Undo the office mark for ${attendee.trainee_name} on ${partName(day)}?`)) return;
     setMarkingDay(`${attendee.attendee_id}:${day}`);
     try {
       await api.unmarkAttendanceDay(id, attendee.attendee_id, day);
@@ -683,7 +739,9 @@ Their certificate and the training record it added to their employee file will b
     const nextDay = session.current_day + 1;
     const nextDate = session.day_dates?.[session.current_day];
     const today = easternToday();
-    if (nextDate && nextDate > today) {
+    if (session.multi_training_day) {
+      if (!window.confirm(`Open ${partName(nextDay)} for check-in now?\n\nOnly do this when ${partName(session.current_day)} is over. Anyone who checks in after this is checked in for ${partName(nextDay)}.`)) return;
+    } else if (nextDate && nextDate > today) {
       const ok = window.confirm(
         `Day ${nextDay} is scheduled for ${formatShortDate(nextDate)}, but today is ${formatShortDate(today)}.\n\n` +
         `Open Day ${nextDay} now anyway? Everyone who signs in after this is recorded for Day ${nextDay}.`
@@ -706,10 +764,10 @@ Their certificate and the training record it added to their employee file will b
     const fromDay = session.current_day;
     const count = session.attendees.filter((a) => (a.days_attended || []).includes(fromDay)).length;
     const ok = window.confirm(
-      `Go back to Day ${fromDay - 1}?\n\n` +
+      `Go back to ${partName(fromDay - 1)}?\n\n` +
       (count
-        ? `${count} sign-in${count === 1 ? '' : 's'} recorded for Day ${fromDay} will move back to Day ${fromDay - 1}.`
-        : `No one has signed in for Day ${fromDay} yet.`)
+        ? `${count} check-in${count === 1 ? '' : 's'} recorded for ${partName(fromDay)} will move back to ${partName(fromDay - 1)}.`
+        : `No one has checked in for ${partName(fromDay)} yet.`)
     );
     if (!ok) return;
     setAdvancingDay(true);
@@ -744,10 +802,14 @@ Their certificate and the training record it added to their employee file will b
         ← All sessions
       </Link>
       <h1 className="page-title" style={{ marginTop: 8 }}>
-        {session.training_type_label}
-        {session.additional_trainings?.map((t) => (
-          <span key={t.id}> + {t.training_type_label}</span>
-        ))}
+        {session.multi_training_day ? 'Multi Training Day' : (
+          <>
+            {session.training_type_label}
+            {session.additional_trainings?.map((t) => (
+              <span key={t.id}> + {t.training_type_label}</span>
+            ))}
+          </>
+        )}
       </h1>
       {/* Labeled details (Keeley's report, 2026-09-22: "I can't see the client" - it was the
           first, unlabeled item in one long grey line). */}
@@ -762,6 +824,18 @@ Their certificate and the training record it added to their employee file will b
           <div className="session-fact-label">Date</div>
           <div className="session-fact-value">{formatLongDate(session.session_date)}</div>
         </div>
+        {session.multi_training_day ? (
+          <div className="session-fact">
+            <div className="session-fact-label">Trainings</div>
+            <div className="session-fact-value">
+              {trainingParts(session).map((t) => (
+                <div key={t.number} style={{ fontSize: 13 }}>
+                  {t.number}. {t.label}{t.duration && <span style={{ color: 'var(--color-text-muted)' }}> · {t.duration}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="session-fact">
           <div className="session-fact-label">{session.co_trainers?.length ? 'Trainers' : 'Trainer'}</div>
           <div className="session-fact-value">
@@ -776,7 +850,7 @@ Their certificate and the training record it added to their employee file will b
             <div className="session-fact-value">{session.location}</div>
           </div>
         )}
-        {session.duration && (
+        {session.duration && !session.multi_training_day && (
           <div className="session-fact">
             <div className="session-fact-label">Duration</div>
             <div className="session-fact-value">{session.duration}</div>
@@ -789,7 +863,9 @@ Their certificate and the training record it added to their employee file will b
           <>
             {' '}·{' '}
             <span className="badge badge-noexpiration">
-              Day {session.current_day} of {session.total_days}
+              {session.multi_training_day
+                ? `Training ${session.current_day} of ${session.total_days}: ${partName(session.current_day)}`
+                : `Day ${session.current_day} of ${session.total_days}`}
               {session.day_dates?.[session.current_day - 1] ? ` (${formatShortDate(session.day_dates[session.current_day - 1])})` : ''}
             </span>
           </>
@@ -833,16 +909,18 @@ Their certificate and the training record it added to their employee file will b
         <div className="card" style={{ marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: 14 }}>Attendance by Day</h3>
+              <h3 style={{ margin: 0, fontSize: 14 }}>{session.multi_training_day ? 'Check-In by Training' : 'Attendance by Day'}</h3>
               <p className="page-subtitle" style={{ margin: '2px 0 0' }}>
-                One QR code covers all {session.total_days} days. Certificates only generate for attendees present every day.
+                {session.multi_training_day
+                  ? `One QR code for all ${session.total_days} trainings - attendees check in again at the start of each one, and get a certificate for each training they check in for.`
+                  : `One QR code covers all ${session.total_days} days. Certificates only generate for attendees present every day.`}
               </p>
             </div>
             {isAdmin && session.status === 'open' && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {session.current_day > 1 && (
                   <button className="btn btn-secondary btn-sm" disabled={advancingDay} onClick={previousDay}>
-                    ← Back to Day {session.current_day - 1}
+                    ← Back to {partName(session.current_day - 1)}
                   </button>
                 )}
                 <button
@@ -853,8 +931,8 @@ Their certificate and the training record it added to their employee file will b
                   {advancingDay
                     ? 'Updating…'
                     : session.current_day >= session.total_days
-                      ? `On Final Day (${session.total_days})`
-                      : `Open Day ${session.current_day + 1} →`}
+                      ? (session.multi_training_day ? 'On the last training' : `On Final Day (${session.total_days})`)
+                      : `Open ${partName(session.current_day + 1)} →`}
                 </button>
               </div>
             )}
@@ -905,7 +983,10 @@ Their certificate and the training record it added to their employee file will b
                 <th>Employee</th>
                 {Array.from({ length: session.total_days }, (_, i) => i + 1).map((d) => (
                   <th key={d} style={{ textAlign: 'center' }}>
-                    Day {d}
+                    {partName(d)}
+                    {session.multi_training_day && trainingParts(session)[d - 1]?.duration && (
+                      <div style={{ fontWeight: 400, fontSize: 11, color: 'var(--color-text-muted)' }}>{trainingParts(session)[d - 1].duration}</div>
+                    )}
                     {session.day_dates?.[d - 1] && (
                       <div style={{ fontWeight: 400, fontSize: 11, color: 'var(--color-text-muted)' }}>
                         {formatShortDate(session.day_dates[d - 1])}
@@ -961,8 +1042,14 @@ Their certificate and the training record it added to their employee file will b
                       );
                     })}
                     <td>
-                      {session.status === 'closed' ? (
+                      {session.status === 'closed' && session.multi_training_day ? (
+                        <MultiTrainingResult attendee={a} total={session.total_days} />
+                      ) : session.status === 'closed' ? (
                         <RecordStatusBadge status={a.processing_status} />
+                      ) : session.multi_training_day ? (
+                        <span className="badge badge-noexpiration">
+                          Checked in {daysAttended.length} of {session.total_days}
+                        </span>
                       ) : (
                         <span className={`badge ${isComplete ? 'badge-current' : 'badge-expired'}`}>
                           {isComplete ? 'On Track' : `Missing ${session.total_days - daysAttended.length} Day(s)`}
@@ -1216,7 +1303,9 @@ Their certificate and the training record it added to their employee file will b
                       )}
                       {session.status === 'closed' && (
                         <td>
-                          <RecordStatusBadge status={a.processing_status} />
+                          {session.multi_training_day
+                            ? <MultiTrainingResult attendee={a} total={session.total_days} />
+                            : <RecordStatusBadge status={a.processing_status} />}
                         </td>
                       )}
                       {session.status === 'open' && isAdmin && (
@@ -1341,6 +1430,12 @@ Their certificate and the training record it added to their employee file will b
                   <div><strong>Understood Material:</strong> {f.understood_material ? f.understood_material[0].toUpperCase() + f.understood_material.slice(1) : '—'}</div>
                   <div><strong>Needs Additional Training:</strong> {f.needs_additional_training ? f.needs_additional_training[0].toUpperCase() + f.needs_additional_training.slice(1) : '—'}</div>
                 </div>
+                {/* Left by trainees who need more training, so the office can reach out (2026-10-05). */}
+                {f.contact_name && (
+                  <p style={{ fontSize: 13, margin: '8px 0 0', color: 'var(--status-expiring-text, #a15c00)' }}>
+                    <strong>Asked for additional training:</strong> {f.contact_name}
+                  </p>
+                )}
                 {(f.trainer_ratings || []).some((r) => r.comment)
                   ? f.trainer_ratings.filter((r) => r.comment).map((r) => (
                     <p key={r.id} style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>

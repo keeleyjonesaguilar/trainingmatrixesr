@@ -75,7 +75,7 @@ export default function PublicSessionEdit() {
     setSavedMessage('');
     if (!draft.first_name.trim() || !draft.last_name.trim()) return setDraftError('Enter their first and last name.');
     if (draft.email.trim() && !EMAIL_PATTERN.test(draft.email.trim())) return setDraftError("That email doesn't look right.");
-    if (details.days && !draft.days.length) return setDraftError('Tick the days they attended.');
+    if (details.days && !draft.days.length) return setDraftError(details.multi_training_day ? 'Tick the trainings they attended.' : 'Tick the days they attended.');
     setToAdd((prev) => [...prev, { ...draft, key: `${Date.now()}-${prev.length}` }]);
     setDraft(blankDraft(details.days));
     return undefined;
@@ -261,7 +261,7 @@ export default function PublicSessionEdit() {
               <h3 style={{ marginTop: 0, fontSize: 14 }}>Add someone who&apos;s missing</h3>
               <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -6 }}>
                 Someone attended but isn&apos;t on the roster? Add them here - they get a certificate and the training on their record
-                {details.days ? ' when every day is ticked' : ''}.
+                {details.multi_training_day ? ' for each training ticked' : details.days ? ' when every day is ticked' : ''}.
               </p>
               {toAdd.map((a) => (
                 <div key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--color-border)' }}>
@@ -269,7 +269,9 @@ export default function PublicSessionEdit() {
                     <div style={{ fontWeight: 600 }}>{a.first_name} {a.last_name} <span className="badge badge-current" style={{ fontSize: 10, marginLeft: 4 }}>To add</span></div>
                     <div style={{ fontSize: 12, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>
                       {[a.phone, a.job_title, a.email].filter(Boolean).join(' · ') || 'No other details'}
-                      {details.days ? ` · Day${a.days.length === 1 ? '' : 's'} ${a.days.join(', ')}` : ''}
+                      {details.multi_training_day
+                        ? ` · ${a.days.map((n) => details.days.find((d) => d.day_number === n)?.label).join(', ')}`
+                        : details.days ? ` · Day${a.days.length === 1 ? '' : 's'} ${a.days.join(', ')}` : ''}
                     </div>
                   </div>
                   <button type="button" className="btn btn-sm btn-secondary" onClick={() => setToAdd((prev) => prev.filter((x) => x.key !== a.key))}>Remove</button>
@@ -300,12 +302,14 @@ export default function PublicSessionEdit() {
               </div>
               {details.days && (
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Days attended</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                    {details.multi_training_day ? 'Trainings attended' : 'Days attended'}
+                  </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
                     {details.days.map((d) => (
                       <label key={d.day_number} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                         <input type="checkbox" checked={draft.days.includes(d.day_number)} onChange={() => toggleDraftDay(d.day_number)} />
-                        Day {d.day_number}{d.date ? ` (${formatDate(d.date)})` : ''}
+                        {d.label || <>Day {d.day_number}{d.date ? ` (${formatDate(d.date)})` : ''}</>}
                       </label>
                     ))}
                   </div>

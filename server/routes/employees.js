@@ -165,7 +165,7 @@ async function multiDayEvents(recordId) {
   );
   if (!link) return null;
   const session = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [link.session_id]);
-  if (!session?.total_days) return null;
+  if (!session?.total_days || Number(session.multi_training_day)) return null;
   const attended = await dbAll('SELECT day_number, signed_at, marked_by FROM session_attendance_days WHERE attendee_id = ?', [link.attendee_id]);
   const signedIn = new Map(attended.map((a) => [a.day_number, a.signed_at]));
   const markedByOffice = new Set(attended.filter((a) => a.marked_by).map((a) => a.day_number));
@@ -268,9 +268,9 @@ router.get('/:id/full-detail', async (req, res) => {
     // Which records came from a multi-day session - only those get the day-by-day lookup.
     for (const row of await dbAll(
       `SELECT sa.training_record_id AS record_id FROM session_attendees sa JOIN training_sessions ts ON ts.session_id = sa.session_id
-         WHERE ts.total_days IS NOT NULL AND sa.training_record_id = ANY(?)
+         WHERE ts.total_days IS NOT NULL AND ts.multi_training_day = 0 AND sa.training_record_id = ANY(?)
        UNION SELECT ac.training_record_id FROM attendee_certificates ac JOIN session_attendees sa ON sa.attendee_id = ac.attendee_id
-         JOIN training_sessions ts ON ts.session_id = sa.session_id WHERE ts.total_days IS NOT NULL AND ac.training_record_id = ANY(?)`,
+         JOIN training_sessions ts ON ts.session_id = sa.session_id WHERE ts.total_days IS NOT NULL AND ts.multi_training_day = 0 AND ac.training_record_id = ANY(?)`,
       [recordIds, recordIds]
     )) multiDayRecordIds.add(row.record_id);
   }

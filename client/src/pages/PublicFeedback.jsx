@@ -39,6 +39,14 @@ const STRINGS = {
     es: 'Por favor califique el desempeño del instructor.',
   },
   err_rate_named: { en: 'Please rate', es: 'Por favor califique a' },
+  day: { en: 'Day', es: 'Día' },
+  days: { en: 'Days', es: 'Días' },
+  // Asked only when they answer "Yes" to needing additional training (Keeley's request, 2026-10-05).
+  contact_name: { en: 'Your name (so we can reach out about additional training)', es: 'Su nombre (para comunicarnos con usted sobre capacitación adicional)' },
+  err_contact_name: {
+    en: 'Please enter your name so we can reach out about additional training.',
+    es: 'Por favor ingrese su nombre para comunicarnos con usted sobre capacitación adicional.',
+  },
 };
 
 // Same shape as PublicSignIn.jsx's makeTranslator: English, Spanish, or "English/Spanish" for
@@ -51,6 +59,17 @@ function makeTranslator(language) {
     if (language === 'both') return `${entry.en}/${entry.es}`;
     return entry.en;
   };
+}
+
+// [1, 2, 4] -> "1-2, 4" - which days a trainer taught on a multi-day course.
+function dayRanges(days) {
+  const ranges = [];
+  for (const d of days) {
+    const last = ranges[ranges.length - 1];
+    if (last && d === last[1] + 1) last[1] = d;
+    else ranges.push([d, d]);
+  }
+  return ranges.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ');
 }
 
 // Picks the right text for one of the admin-editable questions: English, its cached Spanish
@@ -74,6 +93,7 @@ export default function PublicFeedback() {
   const [couldAskQuestions, setCouldAskQuestions] = useState('');
   const [understoodMaterial, setUnderstoodMaterial] = useState('');
   const [needsAdditionalTraining, setNeedsAdditionalTraining] = useState('');
+  const [contactName, setContactName] = useState('');
   const [effectiveness, setEffectiveness] = useState(0);
   // A rating and optional comment for each trainer (Keeley's request, 2026-10-01) - co-trainers
   // and each day's trainer on a multi-day course are rated separately.
@@ -93,6 +113,7 @@ export default function PublicFeedback() {
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
+    if (needsAdditionalTraining === 'yes' && !contactName.trim()) return setFormError(t('err_contact_name'));
     if (!effectiveness) return setFormError(t('err_effectiveness'));
     const unrated = trainers.find((tr) => !trainerAnswers[tr.key]?.rating);
     if (unrated) return setFormError(trainers.length > 1 ? `${t('err_rate_named')} ${unrated.name}.` : t('err_trainer_rating'));
@@ -102,6 +123,7 @@ export default function PublicFeedback() {
         could_ask_questions: couldAskQuestions || null,
         understood_material: understoodMaterial || null,
         needs_additional_training: needsAdditionalTraining || null,
+        contact_name: needsAdditionalTraining === 'yes' ? contactName.trim() : null,
         effectiveness_rating: effectiveness,
         trainer_ratings: trainers.map((tr) => ({
           key: tr.key,
@@ -150,7 +172,7 @@ export default function PublicFeedback() {
           <img src={esrMark} alt="ESR" style={{ height: 40, margin: '0 auto 10px', display: 'block' }} />
           <h2 style={{ margin: '0 0 4px' }}>{t('heading')}</h2>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
-            {trainingLabel} · {info.client_name} · {formatDate(info.session_date)}
+            {[trainingLabel, ...(info.additional_training_labels || [])].join(' + ')} · {info.client_name} · {formatDate(info.session_date)}
           </div>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
             {trainers.length > 1 ? t('trainers_label') : t('trainer_label')} {trainers.map((tr) => tr.name).join(', ')}
@@ -189,6 +211,12 @@ export default function PublicFeedback() {
                   <option value="no">{t('no')}</option>
                 </select>
               </div>
+              {needsAdditionalTraining === 'yes' && (
+                <div className="field">
+                  <label>{t('contact_name')}</label>
+                  <input value={contactName} onChange={(e) => setContactName(e.target.value)} autoComplete="name" required />
+                </div>
+              )}
               <div className="field">
                 <label>{labelText(info.labels, 'effectiveness', language)}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
@@ -198,7 +226,13 @@ export default function PublicFeedback() {
                   key={tr.key}
                   style={trainers.length > 1 ? { border: '1px solid var(--color-border)', borderRadius: 4, padding: '10px 12px', marginBottom: 12 } : undefined}
                 >
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{tr.name}</div>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    {tr.name}
+                    {/* Which days they taught on a multi-day course (2026-10-05). */}
+                    {tr.days?.length > 0 && (
+                      <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', fontSize: 13 }}> · {t(tr.days.length === 1 ? 'day' : 'days')} {dayRanges(tr.days)}</span>
+                    )}
+                  </div>
                   <div className="field">
                     <label>{labelText(info.labels, 'trainer_rating', language)}</label>
                     <StarRating value={trainerAnswers[tr.key]?.rating || 0} onChange={(v) => setAnswer(tr.key, { rating: v })} />

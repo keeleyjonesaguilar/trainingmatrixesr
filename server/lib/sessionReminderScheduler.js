@@ -18,6 +18,7 @@ const { publicSignInUrl } = require('./qr');
 const { easternToday, EASTERN_TZ } = require('./dates');
 const { getSessionDays, getCoTrainers } = require('./sessionDays');
 const { stripTrainingIdPrefix } = require('./certificateFilename');
+const { isMultiDay } = require('./sessionParts');
 
 const REMINDER_WINDOW_DAYS = 3;
 const GREEN = '#026754';
@@ -119,7 +120,8 @@ async function runReminders(mode = 'morning') {
   );
   for (const session of sessions) {
     try {
-      if (!session.total_days) {
+      // A Multi Training Day is one day - reminded like any single-day session.
+      if (!isMultiDay(session)) {
         if (!inWindow(session.session_date)) continue; // eslint-disable-line no-continue
         // eslint-disable-next-line no-await-in-loop
         const claimed = await dbRun(

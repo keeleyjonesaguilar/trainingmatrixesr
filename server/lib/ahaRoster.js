@@ -225,7 +225,8 @@ async function generateAhaRoster(session, attendees, outputPath) {
   setTextSafely(form, 'Course Location', session.location);
   setTextAutoSize(form, 'Course Start', session.hs_course_start);
   setTextAutoSize(form, 'Course End', session.hs_course_end);
-  setTextSafely(form, 'Total Hours', session.hs_total_hours);
+  // Falls back to the session's duration when the trainer left Total Hours blank at close-out.
+  setTextSafely(form, 'Total Hours', session.hs_total_hours || session.duration);
   setTextSafely(form, 'No of Cards', session.hs_no_of_cards_issued);
   setTextSafely(form, 'Student-Manikin Ratio', session.hs_student_manikin_ratio);
   setTextSafely(form, 'Issue Date', session.hs_issue_date_of_cards);

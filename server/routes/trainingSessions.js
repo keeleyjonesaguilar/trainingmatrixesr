@@ -14,7 +14,8 @@ const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
 const { logActivity } = require('../lib/activityLog');
-const { insertManualAttendee, certifyAfterClose } = require('../lib/lateAttendees');
+const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
+const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { isValidPhoneNumber } = require('../lib/phone');
 const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
@@ -102,10 +103,22 @@ const SESSION_WITH_CLIENT_SQL = `
 // Session lists (2026-10-01, speed): the attendee count comes from the same query instead of one
 // extra query per session, and signature images are left out - no list shows them, and they made
 // the list several hundred KB that only grows. The full session page (GET /:id) still has them.
+//
+// Also every trainer who taught (lead, each multi-day day's trainer, co-trainers - Keeley's report,
+// 2026-10-05: an OSHA 30 listed only the trainer who closed it) and every training covered, as
+// names for the list and as ids for its Training/Trainer filters.
 const SESSION_LIST_SQL = `
   SELECT ts.*, c.client_name,
     (SELECT COUNT(*) FROM session_attendees sa WHERE sa.session_id = ts.session_id) AS attendee_count,
-    (SELECT string_agg(ct.trainer_name, ', ' ORDER BY ct.display_order) FROM session_co_trainers ct WHERE ct.session_id = ts.session_id) AS co_trainer_names
+    (SELECT string_agg(ct.trainer_name, ', ' ORDER BY ct.display_order) FROM session_co_trainers ct WHERE ct.session_id = ts.session_id) AS co_trainer_names,
+    (SELECT json_agg(json_build_object('name', ct.trainer_name, 'id', ct.trainer_employee_id) ORDER BY ct.display_order) FROM session_co_trainers ct WHERE ct.session_id = ts.session_id) AS co_trainer_list,
+    (SELECT json_agg(json_build_object(
+        'name', COALESCE(sd.signed_trainer_name, sd.assigned_trainer_name),
+        'id', CASE WHEN sd.signed_trainer_name IS NOT NULL THEN sd.signed_trainer_employee_id ELSE sd.assigned_trainer_employee_id END,
+        'assigned_id', sd.assigned_trainer_employee_id) ORDER BY sd.day_number)
+     FROM session_days sd WHERE sd.session_id = ts.session_id AND sd.day_number <= COALESCE(ts.total_days, 0)) AS day_trainer_list,
+    (SELECT json_agg(json_build_object('label', sat.training_type_label, 'id', sat.master_training_id) ORDER BY sat.display_order)
+     FROM session_additional_trainings sat WHERE sat.session_id = ts.session_id) AS additional_training_list
   FROM training_sessions ts
   JOIN clients c ON c.client_id = ts.client_id
 `;
@@ -113,6 +126,40 @@ function withoutSignatures(row) {
   const out = {};
   for (const [k, v] of Object.entries(row)) if (!k.endsWith('signature')) out[k] = v;
   return out;
+}
+
+const nameKeyOf = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// One list row: the session plus `trainer_names` (everyone who taught, no repeats, in the order
+// they taught), `trainer_ids` and `training_ids` for the filters, and the extra trainings' names.
+function listRow(r) {
+  const out = withoutSignatures(r);
+  delete out.co_trainer_list;
+  delete out.day_trainer_list;
+  delete out.additional_training_list;
+  const days = isMultiDay(r) ? r.day_trainer_list || [] : [];
+  const co = r.co_trainer_list || [];
+  const people = [
+    ...(days.length ? days : [{ name: r.trainer_signed_name || r.trainer_name, id: r.trainer_employee_id }]),
+    ...co,
+  ];
+  const names = [];
+  const seen = new Set();
+  for (const p of people) {
+    const key = nameKeyOf(p.name);
+    if (!key || seen.has(key)) continue; // eslint-disable-line no-continue
+    seen.add(key);
+    names.push(p.name);
+  }
+  const extras = r.additional_training_list || [];
+  return {
+    ...out,
+    attendee_count: Number(r.attendee_count),
+    trainer_names: names.join(', '),
+    trainer_ids: [...new Set([r.trainer_employee_id, ...days.flatMap((d) => [d.id, d.assigned_id]), ...co.map((t) => t.id)].filter(Boolean))],
+    training_ids: [...new Set([r.master_training_id, ...extras.map((t) => t.id)].filter(Boolean))],
+    additional_training_labels: extras.map((t) => t.label),
+  };
 }
 
 // List sessions, optionally filtered by client_id (exact - used for cross-links from a client's
@@ -136,7 +183,7 @@ router.get('/', async (req, res) => {
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = await dbAll(`${SESSION_LIST_SQL} ${where} ORDER BY ts.session_date DESC, ts.created_at DESC`, params);
-  res.json(rows.map((r) => ({ ...withoutSignatures(r), attendee_count: Number(r.attendee_count) })));
+  res.json(rows.map(listRow));
 });
 
 // Training Types directory (the "master page per training type" ask): every training in the
@@ -170,7 +217,7 @@ router.get('/by-training/:trainingId', async (req, res) => {
   const params = [req.params.trainingId, req.params.trainingId];
   if (client_id) { clauses.push('ts.client_id = ?'); params.push(client_id); }
   const rows = await dbAll(`${SESSION_LIST_SQL} WHERE ${clauses.join(' AND ')} ORDER BY ts.session_date DESC`, params);
-  res.json(rows.map((r) => ({ ...withoutSignatures(r), attendee_count: Number(r.attendee_count) })));
+  res.json(rows.map(listRow));
 });
 
 router.get('/:id', async (req, res) => {
@@ -263,19 +310,28 @@ router.post('/', async (req, res) => {
   if (!Array.isArray(additional_trainings) || additional_trainings.some((t) => !t?.training_type_label)) {
     return res.status(400).json({ error: 'additional_trainings must be a list of {master_training_id, training_type_label}' });
   }
+  // 2+ trainings make a Multi Training Day (migration 075, Keeley's request, 2026-10-05): one day,
+  // each training with its own duration and its own check-in.
+  const multiTraining = !isToolbox && additional_trainings.length > 0;
+  if (multiTraining && total_days) {
+    return res.status(400).json({ error: 'A Multi Training Day is a single day - turn off multi-day, or teach one training per session.' });
+  }
+  if (multiTraining && additional_trainings.some((t) => !String(t.duration || '').trim())) {
+    return res.status(400).json({ error: 'Enter a duration for every training on a Multi Training Day.' });
+  }
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
   // A multi-day course - one session, one QR code, used across every day (Keeley's request,
   // 2026-09-21). Left null for the overwhelming majority (single-day) sessions, which behave
   // exactly as before; 1 is treated the same as null (no meaningful "multi-day" below 2).
-  const totalDays = total_days ? Number(total_days) : null;
+  const totalDays = multiTraining ? 1 + additional_trainings.length : (total_days ? Number(total_days) : null);
   if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
     return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
   }
-  const { dayDatesJson, error: dayDatesError } = validateDayDates(day_dates, totalDays);
+  const { dayDatesJson, error: dayDatesError } = multiTraining ? { dayDatesJson: null } : validateDayDates(day_dates, totalDays);
   if (dayDatesError) return res.status(400).json({ error: dayDatesError });
-  const { dayOutlinesJson, error: dayOutlinesError } = validateDayOutlines(day_outlines, totalDays);
+  const { dayOutlinesJson, error: dayOutlinesError } = multiTraining ? { dayOutlinesJson: null } : validateDayOutlines(day_outlines, totalDays);
   if (dayOutlinesError) return res.status(400).json({ error: dayOutlinesError });
   let clientId;
   try {
@@ -293,8 +349,8 @@ router.post('/', async (req, res) => {
   const qr_token = tokenGen();
   await dbRun(
     `INSERT INTO training_sessions
-       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates, day_outlines, session_kind, toolbox_topic)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, qr_token, client_id, master_training_id, training_type_label, trainer_name, trainer_phone, trainer_employee_id, session_date, outline, location, duration, created_by, language, training_type_label_es, outline_es, total_days, day_dates, day_outlines, session_kind, toolbox_topic, multi_training_day)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session_id,
       qr_token,
@@ -317,6 +373,7 @@ router.post('/', async (req, res) => {
       dayOutlinesJson,
       isToolbox ? 'toolbox_talk' : 'training',
       topic,
+      multiTraining ? 1 : 0,
     ]
   );
   // Extra trainings taught in the same session (server/migrations/045_multi_training_sessions.sql)
@@ -326,14 +383,14 @@ router.post('/', async (req, res) => {
     const t = additional_trainings[i];
     // eslint-disable-next-line no-await-in-loop
     await dbRun(
-      `INSERT INTO session_additional_trainings (id, session_id, master_training_id, training_type_label, display_order)
-       VALUES (?, ?, ?, ?, ?)`,
-      [uuidv4(), session_id, t.master_training_id || null, t.training_type_label, i]
+      `INSERT INTO session_additional_trainings (id, session_id, master_training_id, training_type_label, display_order, duration)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [uuidv4(), session_id, t.master_training_id || null, t.training_type_label, i, String(t.duration || '').trim() || null]
     );
   }
 
   // Each day's trainer (lib/sessionDays.js) - a blank entry means the session's own trainer.
-  if (totalDays) {
+  if (totalDays && !multiTraining) {
     await saveDayTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), day_trainers);
   }
   // Other trainers teaching alongside the lead trainer (migration 074, Keeley's request, 2026-10-01).
@@ -345,7 +402,7 @@ router.post('/', async (req, res) => {
   logActivity({
     actor: req.user, action: 'session_created', entityType: 'training_session', entityId: session_id,
     entityLabel: `${effective.training_type_label} · ${client_name}`,
-    details: additional_trainings.length ? `+${additional_trainings.length} additional training(s)` : undefined,
+    details: additional_trainings.length ? `Multi Training Day: ${1 + additional_trainings.length} trainings` : undefined,
     req,
   });
   res.status(201).json({ ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning });
@@ -383,8 +440,10 @@ router.put('/:id', requireAdmin, async (req, res) => {
   // Same total_days rule as creation (POST / above) - null/1 both mean "not multi-day".
   // req.body.total_days is checked directly (not `merged.total_days`) so leaving the field out
   // of the request entirely keeps the session's existing value, matching every other field here.
+  // A Multi Training Day's count is its trainings, set at creation - never edited as days.
+  const multiTraining = isMultiTrainingDay(existing);
   let totalDays = existing.total_days;
-  if (Object.prototype.hasOwnProperty.call(req.body, 'total_days')) {
+  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'total_days')) {
     totalDays = req.body.total_days ? Number(req.body.total_days) : null;
     if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
       return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
@@ -392,13 +451,13 @@ router.put('/:id', requireAdmin, async (req, res) => {
   }
   // Same "leave the field out to keep the existing value" rule as total_days above.
   let dayDatesJson = existing.day_dates;
-  if (Object.prototype.hasOwnProperty.call(req.body, 'day_dates')) {
+  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'day_dates')) {
     const result = validateDayDates(req.body.day_dates, totalDays);
     if (result.error) return res.status(400).json({ error: result.error });
     dayDatesJson = result.dayDatesJson;
   }
   let dayOutlinesJson = existing.day_outlines;
-  if (Object.prototype.hasOwnProperty.call(req.body, 'day_outlines')) {
+  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'day_outlines')) {
     const result = validateDayOutlines(req.body.day_outlines, totalDays);
     if (result.error) return res.status(400).json({ error: result.error });
     dayOutlinesJson = result.dayOutlinesJson;
@@ -453,10 +512,21 @@ router.put('/:id', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
+  // Each other training's own duration on a Multi Training Day: [{ id, duration }].
+  if (multiTraining && Array.isArray(req.body.additional_training_durations)) {
+    for (const t of req.body.additional_training_durations) {
+      const duration = String(t?.duration || '').trim();
+      if (!duration) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      await dbRun('UPDATE session_additional_trainings SET duration = ? WHERE id = ? AND session_id = ?', [duration, String(t.id || ''), req.params.id]);
+    }
+  }
   // Per-day trainers: rewritten from the form when sent, otherwise kept as they were (still
-  // re-saved, so a change to the number of days adds/drops day rows).
+  // re-saved, so a change to the number of days adds/drops day rows). None on a one-day session.
   const savedSession = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
-  if (Object.prototype.hasOwnProperty.call(req.body, 'day_trainers')) {
+  if (multiTraining) {
+    await saveDayTrainers(savedSession, null);
+  } else if (Object.prototype.hasOwnProperty.call(req.body, 'day_trainers')) {
     await saveDayTrainers(savedSession, req.body.day_trainers);
   } else if (savedSession.total_days) {
     const current = await getSessionDays(existing);
@@ -517,9 +587,12 @@ router.post('/:id/advance-day', requireAdmin, async (req, res) => {
   }
   const nextDay = session.current_day + 1;
   await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ?', [nextDay, req.params.id]);
+  const nextLabel = isMultiTrainingDay(session)
+    ? `Training ${nextDay} of ${session.total_days}: ${(await trainingParts(session))[nextDay - 1].label}`
+    : `Day ${nextDay} of ${session.total_days}`;
   logActivity({
     actor: req.user, action: 'session_day_advanced', entityType: 'training_session', entityId: req.params.id,
-    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `Day ${nextDay} of ${session.total_days}`, req,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: nextLabel, req,
   });
   res.json({ current_day: nextDay, total_days: session.total_days });
 });
@@ -851,7 +924,15 @@ router.post('/:sessionId/attendees/:attendeeId/days/:day', requireAdmin, async (
     [uuidv4(), session.session_id, attendee.attendee_id, day, req.user.username]
   );
   let certified = false;
-  if (session.status === 'closed' && attendee.processing_status === 'incomplete_attendance') {
+  // A Multi Training Day certifies just the training marked (lib/lateAttendees.js).
+  if (session.status === 'closed' && isMultiTrainingDay(session)) {
+    certified = (await certifyTrainingParts(session, attendee.attendee_id)) > 0;
+    if (certified) {
+      const allAttendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+      const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]);
+      await regenerateRosters(session, allAttendees, additionalTrainings);
+    }
+  } else if (session.status === 'closed' && attendee.processing_status === 'incomplete_attendance') {
     certified = await certifyAfterClose(session, attendee.attendee_id, 'Still missing a day after the office marked attendance.');
     if (certified) {
       const allAttendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
@@ -862,7 +943,7 @@ router.post('/:sessionId/attendees/:attendeeId/days/:day', requireAdmin, async (
   logActivity({
     actor: req.user, action: 'attendance_marked', entityType: 'training_session', entityId: session.session_id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`,
-    details: `${attendee.trainee_name} – Day ${day}${certified ? ' (attendance complete, certificate issued)' : ''}`, req,
+    details: `${attendee.trainee_name} – ${isMultiTrainingDay(session) ? (await trainingParts(session))[day - 1].label : `Day ${day}`}${certified ? ' (certificate issued)' : ''}`, req,
   });
   res.json({ ...(await attendanceResult(session.session_id, attendee.attendee_id)), certified });
 });

@@ -10,6 +10,7 @@ const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { removeAttendee } = require('../lib/sessionRecords');
 const { insertManualAttendee, markDaysAttended, certifyAfterClose } = require('../lib/lateAttendees');
 const { getSessionDays } = require('../lib/sessionDays');
+const { isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { logActivity } = require('../lib/activityLog');
 const {
   AHA_ROSTER_TRAINING_ID, AHA_FIELDS, ahaColumnsFromBody, getSessionWithClient, regenerateRosters, sendCompletedFormsEmail,
@@ -78,7 +79,11 @@ async function sessionDetails(session) {
     aha,
     attendees,
     // Multi-day: the days a trainer can tick for someone they add (Keeley's request, 2026-10-01).
-    days: session.total_days ? (await getSessionDays(session)).map((d) => ({ day_number: d.day_number, date: d.date })) : null,
+    // A Multi Training Day lists its trainings the same way (`label` instead of a date).
+    multi_training_day: isMultiTrainingDay(session),
+    days: isMultiTrainingDay(session)
+      ? (await trainingParts(session)).map((t) => ({ day_number: t.number, label: t.label }))
+      : session.total_days ? (await getSessionDays(session)).map((d) => ({ day_number: d.day_number, date: d.date })) : null,
   };
 }
 
@@ -141,7 +146,9 @@ router.post('/:editToken/save', async (req, res) => {
     const days = session.total_days
       ? [...new Set((Array.isArray(raw?.days) ? raw.days : []).map(Number))].filter((d) => Number.isInteger(d) && d >= 1 && d <= session.total_days)
       : [];
-    if (session.total_days && !days.length) return res.status(400).json({ error: `Tick at least one day for ${firstName} ${lastName}.` });
+    if (session.total_days && !days.length) {
+      return res.status(400).json({ error: `Tick at least one ${isMultiTrainingDay(session) ? 'training' : 'day'} for ${firstName} ${lastName}.` });
+    }
     cleanAdds.push({ firstName, lastName, phone, jobTitle: String(raw?.job_title || '').trim(), email, days });
   }
   const trainerLabel = `Trainer: ${session.trainer_signed_name || session.trainer_name}`;

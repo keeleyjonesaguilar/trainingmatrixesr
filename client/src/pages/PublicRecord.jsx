@@ -1,12 +1,26 @@
 // The page an employee's QR code opens (Keeley's request, 2026-09-30) - /r/:token, no login,
 // read-only: their name, company, and each training's latest completion and status, for whoever
-// scans a badge or hard-hat sticker on site. Served by server/routes/publicRecord.js.
+// scans a badge or hard-hat sticker on site. Served by server/routes/publicRecord.js. Each training
+// links to its ESR certificate and any card filed under it (Keeley's request, 2026-10-05).
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api';
 import esrMark from '../assets/brand/esr-mark.png';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { easternToday, formatShortDate } from '../lib/dates';
+
+function DocLinks({ links }) {
+  if (!links.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 4, fontSize: 13 }}>
+      {links.map((l) => (
+        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600 }}>
+          {l.label} ↗
+        </a>
+      ))}
+    </div>
+  );
+}
 
 function longDate(d) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
@@ -70,12 +84,27 @@ export default function PublicRecord() {
                     Completed {longDate(t.completion_date)}
                     {t.expiration_date ? ` · Expires ${longDate(t.expiration_date)}` : ' · No expiration'}
                   </div>
+                  <DocLinks links={[
+                    ...(t.certificate_url ? [{ label: 'ESR Certificate', url: t.certificate_url }] : []),
+                    ...(t.documents || []),
+                  ]} />
                 </div>
                 <StatusBadge status={t.status} />
               </div>
             ))
           )}
         </div>
+        {record.other_documents?.length > 0 && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 15 }}>Cards &amp; Documents</h3>
+            {record.other_documents.map((d) => (
+              <div key={d.url} style={{ padding: '8px 0', borderTop: '1px solid var(--color-border)' }}>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{d.training_name}</div>
+                <DocLinks links={[d]} />
+              </div>
+            ))}
+          </div>
+        )}
         <p style={{ fontSize: 11, color: 'var(--color-text-muted)', textAlign: 'center', marginTop: 12 }}>
           Evolution Safety Resources · Safety Training Matrix
         </p>

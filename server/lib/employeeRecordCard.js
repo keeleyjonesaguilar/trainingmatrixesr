@@ -69,15 +69,37 @@ async function latestTrainings(employee) {
   return trainings;
 }
 
-// The public record: name, company, and each training's latest completion and status.
+// Documents shown on the public record (Keeley's call, 2026-10-05): only ones tied to a training
+// (an OSHA or AHA card) - a document filed under no training, like a medical evaluation, stays off
+// this page anyone with the badge can open.
+async function publicDocuments(employeeId) {
+  return dbAll(
+    `SELECT d.document_id, d.label, d.filename, d.training_id, mt.training_name FROM employee_documents d
+     JOIN master_trainings mt ON mt.training_id = d.training_id
+     WHERE d.employee_id = ? AND d.training_id IS NOT NULL ORDER BY d.uploaded_at DESC`,
+    [employeeId]
+  );
+}
+
+// The public record: name, company, and each training's latest completion and status, with links
+// to its ESR certificate and any card filed under that training (Keeley's request, 2026-10-05).
 async function publicRecord(token) {
   const employee = await dbGet('SELECT * FROM employees WHERE record_token = ?', [String(token || '')]);
   if (!employee) return null;
   const client = await dbGet('SELECT client_id, client_name, is_internal FROM clients WHERE client_id = ?', [employee.client_id]);
   const logo = await dbGet('SELECT updated_at FROM client_logos WHERE client_id = ?', [employee.client_id]);
-  const trainings = (await latestTrainings(employee)).map(({ training_id, training_name, completion_date, expiration_date, status }) => ({
+  const base = `/api/public-record/${encodeURIComponent(token)}`;
+  const documents = await publicDocuments(employee.employee_id);
+  const docLink = (d) => ({ label: d.label, url: `${base}/documents/${encodeURIComponent(d.document_id)}` });
+  const latest = await latestTrainings(employee);
+  const listed = new Set(latest.map((t) => t.training_id));
+  const trainings = latest.map(({ record_id, has_certificate, training_id, training_name, completion_date, expiration_date, status }) => ({
     training_id, training_name, completion_date, expiration_date, status,
+    certificate_url: has_certificate ? `${base}/certificates/${encodeURIComponent(record_id)}` : null,
+    documents: documents.filter((d) => d.training_id === training_id).map(docLink),
   }));
+  // A card filed under a training that has no completion on their profile yet.
+  const otherDocuments = documents.filter((d) => !listed.has(d.training_id)).map((d) => ({ ...docLink(d), training_name: d.training_name }));
   return {
     name: displayFirstLast(employee),
     job_title: employee.job_title || null,
@@ -86,7 +108,28 @@ async function publicRecord(token) {
     is_trainer: Boolean(employee.is_trainer) || employee.employee_type === 'trainer',
     active: Boolean(employee.active),
     trainings,
+    other_documents: otherDocuments,
   };
 }
 
-module.exports = { ensureRecordToken, resetRecordToken, recordPath, recordQrPng, publicRecord, latestTrainings };
+// The record/document behind a link on the public page - only what that page lists: the latest
+// completion of each training, and documents tied to a training. Null for anything else.
+async function publicCertificateRecord(token, recordId) {
+  const employee = await dbGet('SELECT * FROM employees WHERE record_token = ?', [String(token || '')]);
+  if (!employee) return null;
+  const shown = (await latestTrainings(employee)).find((t) => t.record_id === recordId && t.has_certificate);
+  return shown ? dbGet('SELECT * FROM employee_training_records WHERE record_id = ?', [recordId]) : null;
+}
+
+async function publicDocument(token, documentId) {
+  const employee = await dbGet('SELECT employee_id FROM employees WHERE record_token = ?', [String(token || '')]);
+  if (!employee) return null;
+  return dbGet(
+    'SELECT * FROM employee_documents WHERE document_id = ? AND employee_id = ? AND training_id IS NOT NULL',
+    [String(documentId || ''), employee.employee_id]
+  );
+}
+
+module.exports = {
+  ensureRecordToken, resetRecordToken, recordPath, recordQrPng, publicRecord, latestTrainings, publicCertificateRecord, publicDocument,
+};

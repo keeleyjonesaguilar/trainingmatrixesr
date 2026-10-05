@@ -263,10 +263,19 @@ function generateRosterPdf(session, attendees) {
   doc.moveDown(0.3);
   doc.fontSize(11).font('Helvetica');
   doc.text(pdfSafeText(`Client: ${session.client_name}`));
-  doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
+  const parts = session.training_parts || null;
+  if (parts) {
+    // Multi Training Day (Keeley's request, 2026-10-05): each training and its own duration.
+    doc.text('Multi Training Day:');
+    parts.forEach((p) => doc.text(pdfSafeText(`   ${p.number}. ${p.label}${p.duration ? ` - ${p.duration}` : ''}`)));
+  } else {
+    doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
+  }
   const trainerNames = session.all_trainer_names || session.trainer_signed_name || session.trainer_name;
   doc.text(pdfSafeText(`Trainer${session.session_days?.length || String(trainerNames || '').includes(',') ? '(s)' : ''}: ${trainerNames}`));
   doc.text(`Date: ${formatDate(session.session_date)}`);
+  // Duration on the printed roster (Keeley's report, 2026-10-05: it was missing).
+  if (!parts && session.duration) doc.text(pdfSafeText(`Duration: ${session.duration}`));
   if (session.outline) {
     doc.moveDown(0.3);
     doc.font('Helvetica-Bold').text('Outline / Topics Covered:');
@@ -285,6 +294,14 @@ function generateRosterPdf(session, attendees) {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(pdfSafeText(`${i + 1}. ${a.trainee_name}`));
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
     doc.text(`Phone: ${pdfSafeText(a.trainee_phone) || '—'}    Email: ${pdfSafeText(a.trainee_email) || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
+    if (parts) {
+      parts.forEach((p) => {
+        const checkin = (a.part_checkins || []).find((c) => c.day_number === p.number);
+        let how = checkin ? `Checked in ${formatDateTime(checkin.signed_at)}` : 'Not checked in';
+        if (checkin?.marked_by) how = /^Trainer:/.test(checkin.marked_by) ? `Added by the trainer (${checkin.marked_by.replace(/^Trainer:\s*/, '')})` : 'Marked present by office';
+        doc.text(pdfSafeText(`   ${checkin ? '[X]' : '[  ]'} ${p.label}: ${how}`));
+      });
+    }
     const imageTop = doc.y + 2;
     const sig = b64ToBuffer(a.signature);
     let bottom = imageTop;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { displayFirstLast } from '../lib/names.js';
@@ -11,12 +11,34 @@ import { easternToday, sequentialDates } from '../lib/dates';
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
   client_name: (s) => (s.client_name || '').toLowerCase(),
-  training_type_label: (s) => (s.training_type_label || '').toLowerCase(),
-  trainer_name: (s) => (s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
+  training_type_label: (s) => (s.multi_training_day ? 'multi training day' : s.training_type_label || '').toLowerCase(),
+  trainer_name: (s) => (s.trainer_names || s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
   attendee_count: (s) => s.attendee_count || 0,
   status: (s) => (s.status || '').toLowerCase(),
   fulfillment: (s) => (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0),
 };
+
+// The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
+// trainings listed underneath; an older session covering 2+ trainings lists the extras.
+function TrainingCell({ session: s }) {
+  const extras = s.additional_training_labels || [];
+  if (s.multi_training_day) {
+    return (
+      <>
+        <strong>Multi Training Day</strong>
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{[s.training_type_label, ...extras].join(' · ')}</div>
+      </>
+    );
+  }
+  return (
+    <>
+      {s.training_type_label}
+      {extras.length > 0 && <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>+ {extras.join(' · ')}</div>}
+    </>
+  );
+}
+
+const EMPTY_LIST_FILTERS = { training_id: '', trainer_id: '', date_from: '', date_to: '' };
 
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
@@ -37,7 +59,16 @@ export default function Sessions() {
   const clientIdFilter = searchParams.get('client_id') || '';
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  const { sortedRows: sortedSessions, toggleSort, sortIndicator } = useSortableRows(sessions, SESSION_SORT_ACCESSORS, 'session_date', 'desc');
+  // Training / trainer / date filters (Keeley's request, 2026-10-05) - applied here to the loaded
+  // list; client and status still go to the server like before.
+  const [listFilters, setListFilters] = useState(EMPTY_LIST_FILTERS);
+  const filteredSessions = useMemo(() => sessions.filter((s) => (
+    (!listFilters.training_id || (s.training_ids || [s.master_training_id]).includes(listFilters.training_id))
+    && (!listFilters.trainer_id || (s.trainer_ids || [s.trainer_employee_id]).includes(listFilters.trainer_id))
+    && (!listFilters.date_from || s.session_date >= listFilters.date_from)
+    && (!listFilters.date_to || s.session_date <= listFilters.date_to)
+  )), [sessions, listFilters]);
+  const { sortedRows: sortedSessions, toggleSort, sortIndicator } = useSortableRows(filteredSessions, SESSION_SORT_ACCESSORS, 'session_date', 'desc');
   const [trainings, setTrainings] = useState([]);
   const [clients, setClients] = useState([]);
   const [trainers, setTrainers] = useState([]);
@@ -72,6 +103,10 @@ export default function Sessions() {
   // per attendee per training. Kept out of `form` since it's a list of ids, not a form field the
   // submit-validation loop needs to touch.
   const [additionalTrainingIds, setAdditionalTrainingIds] = useState([]);
+  // 2+ trainings make a Multi Training Day (Keeley's request, 2026-10-05): each training has its
+  // own duration (seeded from its catalog default) and its own check-in. training_id -> duration.
+  const [additionalDurations, setAdditionalDurations] = useState({});
+  const isMultiTraining = additionalTrainingIds.length > 0;
   // 'training' or 'toolbox_talk' (Keeley's request, 2026-09-30) - a toolbox talk has a Topic
   // instead of a catalog training, no certificates, and is never multi-day.
   const [sessionKind, setSessionKind] = useState('training');
@@ -204,11 +239,15 @@ export default function Sessions() {
       setError('Enter an outline for every day.');
       return;
     }
+    if (isMultiTraining && additionalTrainingIds.some((tid) => !String(additionalDurations[tid] || '').trim())) {
+      setError('Enter a duration for every training on the Multi Training Day.');
+      return;
+    }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
     const training_type_label = `${training.training_id} - ${training.training_name}`;
     const additional_trainings = additionalTrainingIds.map((tid) => {
       const t = trainings.find((x) => x.training_id === tid);
-      return { master_training_id: tid, training_type_label: `${t.training_id} - ${t.training_name}` };
+      return { master_training_id: tid, training_type_label: `${t.training_id} - ${t.training_name}`, duration: String(additionalDurations[tid] || '').trim() };
     });
     setCreating(true);
     try {
@@ -359,17 +398,23 @@ export default function Sessions() {
                   />
                 </div>
                 )}
-                {!isToolbox && (
+                {!isToolbox && !isMultiDay && (
                 <div className="field">
                   <label>Additional Trainings (optional)</label>
                   <TrainingMultiSearchSelect
                     trainings={trainings}
                     value={additionalTrainingIds}
-                    onChange={setAdditionalTrainingIds}
+                    onChange={(ids) => {
+                      setAdditionalTrainingIds(ids);
+                      setAdditionalDurations((prev) => Object.fromEntries(ids.map((tid) => [
+                        tid, prev[tid] ?? (trainings.find((x) => x.training_id === tid)?.default_duration || ''),
+                      ])));
+                    }}
                     excludeIds={form.master_training_id ? [form.master_training_id] : []}
                   />
                   <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
-                    Everyone signs in once, but gets a separate certificate for each training selected here plus the one above.
+                    Adding trainings makes this a <strong>Multi Training Day</strong>: everyone scans the same QR code again to check in at the
+                    start of each training, and gets a certificate for each training they check in for.
                   </p>
                 </div>
                 )}
@@ -517,7 +562,38 @@ export default function Sessions() {
                     </p>
                   )}
                 </div>
-                {!isToolbox && (
+                {!isToolbox && isMultiTraining && (
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>Multi Training Day: trainings in order, each with its own duration</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {[form.master_training_id, ...additionalTrainingIds].map((tid, i) => {
+                      const t = trainings.find((x) => x.training_id === tid);
+                      return (
+                        <div key={tid || 'first'} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 13, minWidth: 260 }}>
+                            <strong>{i + 1}.</strong> {t ? `${t.training_id} - ${t.training_name}` : 'Pick the Training Type above'}
+                          </span>
+                          <input
+                            value={i === 0 ? form.duration : additionalDurations[tid] || ''}
+                            onChange={(e) => (i === 0
+                              ? setForm({ ...form, duration: e.target.value })
+                              : setAdditionalDurations((prev) => ({ ...prev, [tid]: e.target.value })))}
+                            placeholder="Duration, e.g. 2 hours"
+                            aria-label={`Duration for training ${i + 1}`}
+                            style={{ maxWidth: 200 }}
+                            required
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+                    Check-in opens for training 1. When it&apos;s over, the trainer taps &quot;Start next training&quot; on the sign-in page
+                    (trainer PIN), or you can open it from the session page.
+                  </p>
+                </div>
+                )}
+                {!isToolbox && !isMultiTraining && (
                 <div className="field">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
                     <input
@@ -640,25 +716,66 @@ export default function Sessions() {
           )}
       </div>
 
-      <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 10 }}>
+      <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <select
           value={filters.client_id}
           onChange={(e) => setFilters({ ...filters, client_id: e.target.value })}
-          style={{ maxWidth: 260 }}
+          style={{ maxWidth: 220 }}
           aria-label="Filter by client"
         >
           <option value="">All clients</option>
           {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
         </select>
         <select
+          value={listFilters.training_id}
+          onChange={(e) => setListFilters({ ...listFilters, training_id: e.target.value })}
+          style={{ maxWidth: 240 }}
+          aria-label="Filter by training type"
+        >
+          <option value="">All training types</option>
+          {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+        </select>
+        <select
+          value={listFilters.trainer_id}
+          onChange={(e) => setListFilters({ ...listFilters, trainer_id: e.target.value })}
+          style={{ maxWidth: 200 }}
+          aria-label="Filter by trainer"
+        >
+          <option value="">All trainers</option>
+          {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+        </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          From
+          <input type="date" value={listFilters.date_from} onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })} aria-label="From date" />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          To
+          <input type="date" value={listFilters.date_to} onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })} aria-label="To date" />
+        </label>
+        <select
           value={filters.status}
           onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          style={{ maxWidth: 160 }}
+          style={{ maxWidth: 150 }}
+          aria-label="Filter by status"
         >
           <option value="">All statuses</option>
           <option value="open">Open</option>
           <option value="closed">Closed</option>
         </select>
+        {(filters.client_id || filters.status || Object.values(listFilters).some(Boolean)) && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => { setFilters({ client_id: '', status: '' }); setListFilters(EMPTY_LIST_FILTERS); }}
+          >
+            Clear filters
+          </button>
+        )}
+        {!sessionsLoading && (
+          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
+            {filteredSessions.length} session{filteredSessions.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       <div className="card">
@@ -680,8 +797,8 @@ export default function Sessions() {
               <tr key={s.session_id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/sessions/${s.session_id}`)}>
                 <td>{s.session_date}</td>
                 <td>{s.client_name}</td>
-                <td>{s.training_type_label}</td>
-                <td>{[s.trainer_signed_name || s.trainer_name, s.co_trainer_names].filter(Boolean).join(', ')}</td>
+                <td><TrainingCell session={s} /></td>
+                <td>{s.trainer_names || [s.trainer_signed_name || s.trainer_name, s.co_trainer_names].filter(Boolean).join(', ')}</td>
                 <td>{s.attendee_count}</td>
                 <td>
                   <StatusBadge status={s.status} />
@@ -691,10 +808,10 @@ export default function Sessions() {
                 </td>
               </tr>
             ))}
-            {sessions.length === 0 && (
+            {filteredSessions.length === 0 && (
               <tr>
                 <td colSpan={7} className="empty-state">
-                  No sessions yet.
+                  {sessions.length ? 'No sessions match these filters.' : 'No sessions yet.'}
                 </td>
               </tr>
             )}

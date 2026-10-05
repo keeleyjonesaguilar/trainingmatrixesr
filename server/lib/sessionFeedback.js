@@ -8,7 +8,9 @@
 // multi-day course only get the ratings meant for them. Feedback from before that has no
 // per-trainer rows and is read the old way - one rating and comment for the whole session,
 // credited to everyone who taught it.
-const { dbAll, dbGet } = require('../db');
+const { v4: uuidv4 } = require('uuid');
+const { dbAll, dbGet, dbRun } = require('../db');
+const { EASTERN_TZ, parseTimestamp } = require('./dates');
 
 // Every session a trainer taught: as lead, as a multi-day course's day trainer (assigned or
 // signed), or as a co-trainer. `$1` is the trainer's employee_id.
@@ -72,6 +74,8 @@ async function sessionFeedbackSummary(sessionId) {
       no: rows.filter((r) => r[q.key] === 'no').length,
     })),
     comments,
+    // Names left by trainees who said they need additional training (2026-10-05).
+    followUps: rows.filter((r) => r.contact_name && r.contact_name.trim()).map((r) => r.contact_name.trim()),
   };
 }
 
@@ -121,4 +125,45 @@ async function trainerFeedbackComments(employeeId) {
   );
 }
 
-module.exports = { TAUGHT_SESSIONS_SQL, sessionFeedbackSummary, trainerRatingSummary, trainerFeedbackComments };
+// Feedback left on a multi-day course before trainers were rated separately counted for every
+// trainer on it. Keeley's call (2026-10-05): credit each of those responses to whoever taught the
+// day it was submitted (Eastern date; after the last scheduled day, the last day's trainer), so
+// "John taught Day 1, Mary Day 2" shows up on the right profiles. Only courses with more than one
+// day trainer change. Returns what it did (or would do, with dryRun).
+async function creditOldMultiDayFeedback({ dryRun = false } = {}) {
+  const { getSessionDays } = require('./sessionDays'); // eslint-disable-line global-require
+  const easternDate = new Intl.DateTimeFormat('en-CA', { timeZone: EASTERN_TZ });
+  const rows = await dbAll(
+    `SELECT sf.*, ts.training_type_label FROM session_feedback sf JOIN training_sessions ts ON ts.session_id = sf.session_id
+     WHERE ts.total_days IS NOT NULL AND ts.multi_training_day = 0 AND ${NO_TRAINER_ROWS} AND sf.trainer_rating IS NOT NULL
+     ORDER BY sf.submitted_at`,
+    []
+  );
+  const daysBySession = new Map();
+  const results = [];
+  for (const f of rows) {
+    if (!daysBySession.has(f.session_id)) {
+      // eslint-disable-next-line no-await-in-loop
+      const session = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [f.session_id]);
+      // eslint-disable-next-line no-await-in-loop
+      daysBySession.set(f.session_id, await getSessionDays(session));
+    }
+    const days = daysBySession.get(f.session_id).filter((d) => d.date);
+    const trainerOf = (d) => ({ name: d.signed_trainer_name || d.assigned_trainer_name, id: d.signed_trainer_name ? d.signed_trainer_employee_id : d.assigned_trainer_employee_id });
+    if (new Set(days.map((d) => trainerOf(d).name)).size < 2) continue; // eslint-disable-line no-continue
+    const submitted = easternDate.format(parseTimestamp(f.submitted_at));
+    const day = days.find((d) => d.date === submitted) || [...days].reverse().find((d) => d.date <= submitted) || days[0];
+    const trainer = trainerOf(day);
+    results.push({ feedback_id: f.feedback_id, session: f.training_type_label, submitted, day: day.day_number, trainer: trainer.name, rating: f.trainer_rating });
+    if (!dryRun) {
+      // eslint-disable-next-line no-await-in-loop
+      await dbRun(
+        'INSERT INTO session_feedback_trainers (id, feedback_id, trainer_name, trainer_employee_id, rating, comment) VALUES (?, ?, ?, ?, ?, ?)',
+        [uuidv4(), f.feedback_id, trainer.name, trainer.id || null, f.trainer_rating, f.trainer_comment || null]
+      );
+    }
+  }
+  return results;
+}
+
+module.exports = { TAUGHT_SESSIONS_SQL, sessionFeedbackSummary, trainerRatingSummary, trainerFeedbackComments, creditOldMultiDayFeedback };
