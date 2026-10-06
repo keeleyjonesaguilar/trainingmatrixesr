@@ -156,6 +156,7 @@ function listRow(r) {
     ...out,
     attendee_count: Number(r.attendee_count),
     trainer_names: names.join(', '),
+    trainer_name_list: names,
     trainer_ids: [...new Set([r.trainer_employee_id, ...days.flatMap((d) => [d.id, d.assigned_id]), ...co.map((t) => t.id)].filter(Boolean))],
     training_ids: [...new Set([r.master_training_id, ...extras.map((t) => t.id)].filter(Boolean))],
     additional_training_labels: extras.map((t) => t.label),

@@ -19,23 +19,31 @@ const SESSION_SORT_ACCESSORS = {
 };
 
 // The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
-// trainings listed underneath; an older session covering 2+ trainings lists the extras.
+// trainings listed underneath; an older session covering 2+ trainings lists the extras. One
+// training per line (Keeley, 2026-10-06) - joined on one line they stretched the whole table.
+const SUB_LINE = { fontSize: 12, color: 'var(--color-text-muted)' };
 function TrainingCell({ session: s }) {
   const extras = s.additional_training_labels || [];
   if (s.multi_training_day) {
     return (
       <>
         <strong>Multi Training Day</strong>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{[s.training_type_label, ...extras].join(' · ')}</div>
+        {[s.training_type_label, ...extras].map((label, i) => <div key={i} style={SUB_LINE}>{label}</div>)}
       </>
     );
   }
   return (
     <>
       {s.training_type_label}
-      {extras.length > 0 && <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>+ {extras.join(' · ')}</div>}
+      {extras.map((label, i) => <div key={i} style={SUB_LINE}>+ {label}</div>)}
     </>
   );
+}
+
+// One trainer per line, for the same reason.
+function TrainerCell({ session: s }) {
+  const names = s.trainer_name_list || [s.trainer_signed_name || s.trainer_name, s.co_trainer_names].filter(Boolean);
+  return names.map((name, i) => <div key={i}>{name}</div>);
 }
 
 const EMPTY_LIST_FILTERS = { training_id: '', trainer_id: '', date_from: '', date_to: '' };
@@ -716,67 +724,59 @@ export default function Sessions() {
           )}
       </div>
 
-      <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select
-          value={filters.client_id}
-          onChange={(e) => setFilters({ ...filters, client_id: e.target.value })}
-          style={{ maxWidth: 220 }}
-          aria-label="Filter by client"
+      {/* Same labeled filter bar as the Matrix page (Keeley's report, 2026-10-05: the first version
+          of these filters looked off next to the rest of the app). */}
+      <div className="filter-bar" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-client">Client</label>
+          <select id="sessions-filter-client" value={filters.client_id} onChange={(e) => setFilters({ ...filters, client_id: e.target.value })}>
+            <option value="">All clients</option>
+            {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-training">Training Type</label>
+          <select id="sessions-filter-training" value={listFilters.training_id} onChange={(e) => setListFilters({ ...listFilters, training_id: e.target.value })}>
+            <option value="">All training types</option>
+            {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-trainer">Trainer</label>
+          <select id="sessions-filter-trainer" value={listFilters.trainer_id} onChange={(e) => setListFilters({ ...listFilters, trainer_id: e.target.value })}>
+            <option value="">All trainers</option>
+            {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+          </select>
+        </div>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-from">From</label>
+          <input id="sessions-filter-from" type="date" value={listFilters.date_from} onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })} />
+        </div>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-to">To</label>
+          <input id="sessions-filter-to" type="date" value={listFilters.date_to} onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })} />
+        </div>
+        <div className="field-row">
+          <label htmlFor="sessions-filter-status">Status</label>
+          <select id="sessions-filter-status" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => { setFilters({ client_id: '', status: '' }); setListFilters(EMPTY_LIST_FILTERS); }}
         >
-          <option value="">All clients</option>
-          {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
-        </select>
-        <select
-          value={listFilters.training_id}
-          onChange={(e) => setListFilters({ ...listFilters, training_id: e.target.value })}
-          style={{ maxWidth: 240 }}
-          aria-label="Filter by training type"
-        >
-          <option value="">All training types</option>
-          {trainings.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
-        </select>
-        <select
-          value={listFilters.trainer_id}
-          onChange={(e) => setListFilters({ ...listFilters, trainer_id: e.target.value })}
-          style={{ maxWidth: 200 }}
-          aria-label="Filter by trainer"
-        >
-          <option value="">All trainers</option>
-          {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
-        </select>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-          From
-          <input type="date" value={listFilters.date_from} onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })} aria-label="From date" />
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-          To
-          <input type="date" value={listFilters.date_to} onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })} aria-label="To date" />
-        </label>
-        <select
-          value={filters.status}
-          onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          style={{ maxWidth: 150 }}
-          aria-label="Filter by status"
-        >
-          <option value="">All statuses</option>
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-        </select>
-        {(filters.client_id || filters.status || Object.values(listFilters).some(Boolean)) && (
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => { setFilters({ client_id: '', status: '' }); setListFilters(EMPTY_LIST_FILTERS); }}
-          >
-            Clear filters
-          </button>
-        )}
-        {!sessionsLoading && (
-          <span style={{ fontSize: 12, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
-            {filteredSessions.length} session{filteredSessions.length === 1 ? '' : 's'}
-          </span>
-        )}
+          Reset Filters
+        </button>
       </div>
+      {!sessionsLoading && (filters.client_id || filters.status || Object.values(listFilters).some(Boolean)) && (
+        <p className="page-subtitle" style={{ marginTop: -8 }}>
+          {filteredSessions.length} session{filteredSessions.length === 1 ? '' : 's'} match these filters.
+        </p>
+      )}
 
       <div className="card">
         {sessionsLoading ? <LoadingState label="Loading sessions..." /> : (
@@ -798,7 +798,7 @@ export default function Sessions() {
                 <td>{s.session_date}</td>
                 <td>{s.client_name}</td>
                 <td><TrainingCell session={s} /></td>
-                <td>{s.trainer_names || [s.trainer_signed_name || s.trainer_name, s.co_trainer_names].filter(Boolean).join(', ')}</td>
+                <td><TrainerCell session={s} /></td>
                 <td>{s.attendee_count}</td>
                 <td>
                   <StatusBadge status={s.status} />
