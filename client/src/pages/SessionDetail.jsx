@@ -228,8 +228,15 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
   // Other trainers teaching alongside the lead (migration 074, 2026-10-01).
   const [coTrainerIds, setCoTrainerIds] = useState((session.co_trainers || []).map((t) => t.trainer_employee_id).filter(Boolean));
-  // Each other training's own duration on a Multi Training Day.
-  const isMultiTraining = Boolean(session.multi_training_day);
+  // 2+ trainings: whether attendees check in separately for each one (a Multi Training Day) is a
+  // choice (Keeley's request, 2026-10-06) that can change until someone signs in.
+  const hasExtras = (session.additional_trainings || []).length > 0;
+  const [separateCheckins, setSeparateCheckins] = useState(Boolean(session.multi_training_day));
+  const canSwitchCheckins = hasExtras && !isToolbox && session.status === 'open' && (session.attendees || []).length === 0;
+  const isMultiTraining = separateCheckins;
+  // Each training's own duration - always on a Multi Training Day; on a one-sign-in session only
+  // when it was created with them (older ones have a single duration for the whole day).
+  const showTrainingDurations = isMultiTraining || (session.additional_trainings || []).some((t) => t.duration);
   const [extraDurations, setExtraDurations] = useState(
     Object.fromEntries((session.additional_trainings || []).map((t) => [t.id, t.duration || '']))
   );
@@ -257,21 +264,28 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     }
     try {
       const { total_days: totalDays, ...rest } = form;
+      const checkinFields = hasExtras ? { separate_checkins: separateCheckins } : {};
+      const durationFields = showTrainingDurations
+        ? { additional_training_durations: Object.entries(extraDurations).map(([id, duration]) => ({ id, duration })) }
+        : {};
       const updated = await api.updateTrainingSession(session.session_id, isMultiTraining
         ? {
           ...rest,
           trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
           co_trainer_ids: coTrainerIds,
-          additional_training_durations: Object.entries(extraDurations).map(([id, duration]) => ({ id, duration })),
+          ...checkinFields,
+          ...durationFields,
         }
         : {
           ...form,
-          total_days: totalDays,
+          total_days: session.multi_training_day ? null : totalDays,
           trainer_name: `${form.trainer_first_name.trim()} ${form.trainer_last_name.trim()}`.trim(),
-          day_dates: form.total_days ? dayDates : null,
-          day_outlines: form.total_days ? dayOutlines : null,
-          day_trainers: form.total_days ? dayTrainers : null,
+          day_dates: form.total_days && !session.multi_training_day ? dayDates : null,
+          day_outlines: form.total_days && !session.multi_training_day ? dayOutlines : null,
+          day_trainers: form.total_days && !session.multi_training_day ? dayTrainers : null,
           co_trainer_ids: coTrainerIds,
+          ...checkinFields,
+          ...durationFields,
         });
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
@@ -355,10 +369,10 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
         <div className="field">
-          <label>{isMultiTraining ? `Duration – ${shortTraining(session.training_type_label)}` : 'Duration'}</label>
+          <label>{showTrainingDurations ? `Duration – ${shortTraining(session.training_type_label)}` : 'Duration'}</label>
           <input value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="e.g. 4 hours, Half day" required />
         </div>
-        {isMultiTraining && (session.additional_trainings || []).map((t) => (
+        {showTrainingDurations && (session.additional_trainings || []).map((t) => (
           <div className="field" key={t.id}>
             <label>Duration – {shortTraining(t.training_type_label)}</label>
             <input
@@ -369,6 +383,25 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             />
           </div>
         ))}
+        {hasExtras && !isToolbox && (
+          <div className="field">
+            <label>Check-In</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
+              <input
+                type="checkbox"
+                checked={separateCheckins}
+                disabled={!canSwitchCheckins}
+                onChange={(e) => setSeparateCheckins(e.target.checked)}
+              />
+              Check in separately for each training
+            </label>
+            <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
+              {canSwitchCheckins
+                ? 'Off: one sign-in covers every training.'
+                : "Can't be changed once someone has signed in."}
+            </p>
+          </div>
+        )}
         <div className="field">
           <label>Sign-In Language</label>
           <select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} required>

@@ -266,7 +266,7 @@ function generateRosterPdf(session, attendees) {
   const parts = session.training_parts || null;
   if (parts) {
     // Multi Training Day (Keeley's request, 2026-10-05): each training and its own duration.
-    doc.text('Multi Training Day:');
+    doc.text(session.training_part_checkins ? 'Multi Training Day:' : 'Trainings:');
     parts.forEach((p) => doc.text(pdfSafeText(`   ${p.number}. ${p.label}${p.duration ? ` - ${p.duration}` : ''}`)));
   } else {
     doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
@@ -294,7 +294,7 @@ function generateRosterPdf(session, attendees) {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(pdfSafeText(`${i + 1}. ${a.trainee_name}`));
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
     doc.text(`Phone: ${pdfSafeText(a.trainee_phone) || '—'}    Email: ${pdfSafeText(a.trainee_email) || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
-    if (parts) {
+    if (parts && session.training_part_checkins) {
       parts.forEach((p) => {
         const checkin = (a.part_checkins || []).find((c) => c.day_number === p.number);
         let how = checkin ? `Checked in ${formatDateTime(checkin.signed_at)}` : 'Not checked in';

@@ -113,6 +113,10 @@ export default function Sessions() {
   // own duration (seeded from its catalog default) and its own check-in. training_id -> duration.
   const [additionalDurations, setAdditionalDurations] = useState({});
   const isMultiTraining = additionalTrainingIds.length > 0;
+  // Separate check-in for each training is optional (Keeley's request, 2026-10-06: "sometimes they
+  // aren't necessary") - starts unticked (one sign-in covers every training); ticking it makes a
+  // Multi Training Day.
+  const [separateCheckins, setSeparateCheckins] = useState(false);
   // 'training' or 'toolbox_talk' (Keeley's request, 2026-09-30) - a toolbox talk has a Topic
   // instead of a catalog training, no certificates, and is never multi-day.
   const [sessionKind, setSessionKind] = useState('training');
@@ -246,7 +250,7 @@ export default function Sessions() {
       return;
     }
     if (isMultiTraining && additionalTrainingIds.some((tid) => !String(additionalDurations[tid] || '').trim())) {
-      setError('Enter a duration for every training on the Multi Training Day.');
+      setError('Enter a duration for every training.');
       return;
     }
     const training = trainings.find((t) => t.training_id === form.master_training_id);
@@ -262,6 +266,7 @@ export default function Sessions() {
         master_training_id: form.master_training_id,
         training_type_label,
         additional_trainings,
+        separate_checkins: separateCheckins,
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -419,8 +424,8 @@ export default function Sessions() {
                     excludeIds={form.master_training_id ? [form.master_training_id] : []}
                   />
                   <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
-                    Adding trainings makes this a <strong>Multi Training Day</strong>: everyone scans the same QR code again to check in at the
-                    start of each training, and gets a certificate for each training they check in for.
+                    Everyone gets a separate certificate for each training. Below, choose whether they also check in separately
+                    for each one.
                   </p>
                 </div>
                 )}
@@ -570,7 +575,7 @@ export default function Sessions() {
                 </div>
                 {!isToolbox && isMultiTraining && (
                 <div className="field" style={{ gridColumn: '1 / -1' }}>
-                  <label>Multi Training Day: trainings in order, each with its own duration</label>
+                  <label>{separateCheckins ? 'Multi Training Day' : 'Trainings'}: in order, each with its own duration</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {[form.master_training_id, ...additionalTrainingIds].map((tid, i) => {
                       const t = trainings.find((x) => x.training_id === tid);
@@ -593,9 +598,14 @@ export default function Sessions() {
                       );
                     })}
                   </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, marginTop: 10 }}>
+                    <input type="checkbox" checked={separateCheckins} onChange={(e) => setSeparateCheckins(e.target.checked)} />
+                    Check in separately for each training (scan the QR code again at the start of each one)
+                  </label>
                   <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
-                    Check-in opens for training 1. When it&apos;s over, the trainer taps &quot;Start next training&quot; on the sign-in page
-                    (trainer PIN), or you can open it from the session page.
+                    {separateCheckins
+                      ? <>Check-in opens for training 1. When it&apos;s over, the trainer taps &quot;Start next training&quot; on the sign-in page (trainer PIN), or you can open it from the session page. Attendees only get certificates for the trainings they check in for.</>
+                      : 'One sign-in covers every training - everyone who signs in gets a certificate for each one.'}
                   </p>
                 </div>
                 )}

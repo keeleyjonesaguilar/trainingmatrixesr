@@ -278,7 +278,7 @@ router.post('/', async (req, res) => {
   const {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
-    total_days = null, day_dates = null, day_outlines = null, day_trainers = null,
+    total_days = null, day_dates = null, day_outlines = null, day_trainers = null, separate_checkins = false,
     session_kind = 'training', toolbox_topic = null, co_trainer_ids = [],
   } = req.body || {};
   // A toolbox talk (Keeley's request, 2026-09-30): a Topic instead of a catalog training, filed
@@ -311,14 +311,17 @@ router.post('/', async (req, res) => {
   if (!Array.isArray(additional_trainings) || additional_trainings.some((t) => !t?.training_type_label)) {
     return res.status(400).json({ error: 'additional_trainings must be a list of {master_training_id, training_type_label}' });
   }
-  // 2+ trainings make a Multi Training Day (migration 075, Keeley's request, 2026-10-05): one day,
-  // each training with its own duration and its own check-in.
-  const multiTraining = !isToolbox && additional_trainings.length > 0;
+  // 2+ trainings: each has its own duration (Keeley's request, 2026-10-05). Only when the office
+  // ticks "check in separately for each training" (Keeley's request, 2026-10-06 - off unless
+  // ticked) is it a Multi Training Day (migration 075), where attendees scan the QR code again for
+  // each training; otherwise one sign-in covers every training, as it did before.
+  const hasExtras = !isToolbox && additional_trainings.length > 0;
+  const multiTraining = hasExtras && separate_checkins === true;
   if (multiTraining && total_days) {
     return res.status(400).json({ error: 'A Multi Training Day is a single day - turn off multi-day, or teach one training per session.' });
   }
-  if (multiTraining && additional_trainings.some((t) => !String(t.duration || '').trim())) {
-    return res.status(400).json({ error: 'Enter a duration for every training on a Multi Training Day.' });
+  if (hasExtras && additional_trainings.some((t) => !String(t.duration || '').trim())) {
+    return res.status(400).json({ error: 'Enter a duration for every training.' });
   }
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
@@ -403,7 +406,9 @@ router.post('/', async (req, res) => {
   logActivity({
     actor: req.user, action: 'session_created', entityType: 'training_session', entityId: session_id,
     entityLabel: `${effective.training_type_label} · ${client_name}`,
-    details: additional_trainings.length ? `Multi Training Day: ${1 + additional_trainings.length} trainings` : undefined,
+    details: additional_trainings.length
+      ? `${multiTraining ? 'Multi Training Day' : 'One sign-in'}: ${1 + additional_trainings.length} trainings`
+      : undefined,
     req,
   });
   res.status(201).json({ ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning });
@@ -441,24 +446,36 @@ router.put('/:id', requireAdmin, async (req, res) => {
   // Same total_days rule as creation (POST / above) - null/1 both mean "not multi-day".
   // req.body.total_days is checked directly (not `merged.total_days`) so leaving the field out
   // of the request entirely keeps the session's existing value, matching every other field here.
-  // A Multi Training Day's count is its trainings, set at creation - never edited as days.
-  const multiTraining = isMultiTrainingDay(existing);
-  let totalDays = existing.total_days;
-  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'total_days')) {
+  // A Multi Training Day's count is its trainings - never edited as days. Whether a session with 2+
+  // trainings checks in per training can be switched until someone signs in (2026-10-06).
+  const { n: extrasCount } = await dbGet('SELECT COUNT(*) AS n FROM session_additional_trainings WHERE session_id = ?', [existing.session_id]);
+  let multiTraining = isMultiTrainingDay(existing);
+  let switchedCheckins = false;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'separate_checkins') && extrasCount > 0 && existing.session_kind !== 'toolbox_talk'
+    && Boolean(req.body.separate_checkins) !== multiTraining) {
+    const { n: signedIn } = await dbGet('SELECT COUNT(*) AS n FROM session_attendees WHERE session_id = ?', [existing.session_id]);
+    if (existing.status !== 'open' || signedIn > 0) {
+      return res.status(400).json({ error: 'Separate check-ins can only be turned on or off before anyone signs in.' });
+    }
+    multiTraining = Boolean(req.body.separate_checkins);
+    switchedCheckins = true;
+  }
+  let totalDays = switchedCheckins ? (multiTraining ? 1 + extrasCount : null) : existing.total_days;
+  if (!multiTraining && !switchedCheckins && Object.prototype.hasOwnProperty.call(req.body, 'total_days')) {
     totalDays = req.body.total_days ? Number(req.body.total_days) : null;
     if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2)) {
       return res.status(400).json({ error: 'total_days must be a whole number of 2 or more.' });
     }
   }
   // Same "leave the field out to keep the existing value" rule as total_days above.
-  let dayDatesJson = existing.day_dates;
-  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'day_dates')) {
+  let dayDatesJson = switchedCheckins ? null : existing.day_dates;
+  if (!multiTraining && !switchedCheckins && Object.prototype.hasOwnProperty.call(req.body, 'day_dates')) {
     const result = validateDayDates(req.body.day_dates, totalDays);
     if (result.error) return res.status(400).json({ error: result.error });
     dayDatesJson = result.dayDatesJson;
   }
-  let dayOutlinesJson = existing.day_outlines;
-  if (!multiTraining && Object.prototype.hasOwnProperty.call(req.body, 'day_outlines')) {
+  let dayOutlinesJson = switchedCheckins ? null : existing.day_outlines;
+  if (!multiTraining && !switchedCheckins && Object.prototype.hasOwnProperty.call(req.body, 'day_outlines')) {
     const result = validateDayOutlines(req.body.day_outlines, totalDays);
     if (result.error) return res.status(400).json({ error: result.error });
     dayOutlinesJson = result.dayOutlinesJson;
@@ -513,8 +530,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
-  // Each other training's own duration on a Multi Training Day: [{ id, duration }].
-  if (multiTraining && Array.isArray(req.body.additional_training_durations)) {
+  if (switchedCheckins) {
+    await dbRun('UPDATE training_sessions SET multi_training_day = ?, current_day = 1 WHERE session_id = ?', [multiTraining ? 1 : 0, req.params.id]);
+  }
+  // Each other training's own duration: [{ id, duration }].
+  if (extrasCount > 0 && Array.isArray(req.body.additional_training_durations)) {
     for (const t of req.body.additional_training_durations) {
       const duration = String(t?.duration || '').trim();
       if (!duration) continue; // eslint-disable-line no-continue

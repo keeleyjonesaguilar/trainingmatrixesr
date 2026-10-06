@@ -82,9 +82,14 @@ async function regenerateRosters(sessionRow, attendees, additionalTrainings) {
       training_type_label: [session.training_type_label, ...additionalTrainings.map((t) => t.training_type_label)].join(', '),
     };
     let rosterAttendees = attendees;
-    // Multi Training Day: each training with its own duration, and which ones each person checked in for.
-    if (isMultiTrainingDay(session)) {
+    // 2+ trainings with their own durations (sessions since 2026-10-05): each listed with its
+    // duration; on a Multi Training Day, also which ones each person checked in for. Older sessions
+    // have one duration for the whole day and keep the single Training/Duration lines.
+    if (isMultiTrainingDay(session) || additionalTrainings.some((t) => t.duration)) {
       rosterSession.training_parts = await trainingParts(session, additionalTrainings);
+    }
+    if (isMultiTrainingDay(session)) {
+      rosterSession.training_part_checkins = true;
       const checkins = await dbAll('SELECT attendee_id, day_number, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
       rosterAttendees = attendees.map((a) => ({ ...a, part_checkins: checkins.filter((c) => c.attendee_id === a.attendee_id) }));
     }
