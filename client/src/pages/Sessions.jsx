@@ -20,22 +20,18 @@ const SESSION_SORT_ACCESSORS = {
 
 // The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
 // trainings listed underneath; an older session covering 2+ trainings lists the extras. One
-// training per line (Keeley, 2026-10-06) - joined on one line they stretched the whole table.
-const SUB_LINE = { fontSize: 12, color: 'var(--color-text-muted)' };
+// session with 2+ trainings stacks them as bullets that wrap (Keeley, 2026-10-06) - on one line
+// they stretched the whole table.
+const TRAINING_LIST = { margin: '2px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--color-text-muted)', whiteSpace: 'normal', minWidth: 220 };
 function TrainingCell({ session: s }) {
   const extras = s.additional_training_labels || [];
-  if (s.multi_training_day) {
-    return (
-      <>
-        <strong>Multi Training Day</strong>
-        {[s.training_type_label, ...extras].map((label, i) => <div key={i} style={SUB_LINE}>{label}</div>)}
-      </>
-    );
-  }
+  if (!extras.length) return s.training_type_label;
   return (
     <>
-      {s.training_type_label}
-      {extras.map((label, i) => <div key={i} style={SUB_LINE}>+ {label}</div>)}
+      {s.multi_training_day ? <strong>Multi Training Day</strong> : <span>{1 + extras.length} trainings</span>}
+      <ul style={TRAINING_LIST}>
+        {[s.training_type_label, ...extras].map((label, i) => <li key={i}>{label}</li>)}
+      </ul>
     </>
   );
 }
@@ -99,7 +95,9 @@ export default function Sessions() {
   const [durationOverride, setDurationOverride] = useState(false);
   // Client is picked from a list (Keeley's report, 2026-09-30: the free-text filter missed on
   // capitalization/spelling); a ?client_id= link from a client's page pre-selects it.
-  const [filters, setFilters] = useState({ client_id: clientIdFilter, status: '' });
+  // Opens on Open sessions (Keeley, 2026-10-06: the closed ones make the list overwhelming) -
+  // "All statuses" or "Closed" is one pick away, and Reset Filters comes back here.
+  const [filters, setFilters] = useState({ client_id: clientIdFilter, status: 'open' });
   // Auto-opens the create form when linked here from the Dashboard's "Create New Training
   // Session" button (?new=1).
   const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
@@ -767,12 +765,12 @@ export default function Sessions() {
         <button
           type="button"
           className="secondary"
-          onClick={() => { setFilters({ client_id: '', status: '' }); setListFilters(EMPTY_LIST_FILTERS); }}
+          onClick={() => { setFilters({ client_id: '', status: 'open' }); setListFilters(EMPTY_LIST_FILTERS); }}
         >
           Reset Filters
         </button>
       </div>
-      {!sessionsLoading && (filters.client_id || filters.status || Object.values(listFilters).some(Boolean)) && (
+      {!sessionsLoading && (filters.client_id || filters.status !== 'open' || Object.values(listFilters).some(Boolean)) && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
           {filteredSessions.length} session{filteredSessions.length === 1 ? '' : 's'} match these filters.
         </p>
