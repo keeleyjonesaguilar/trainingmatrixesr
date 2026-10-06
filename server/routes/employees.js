@@ -452,10 +452,11 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (!names.full_name) return res.status(400).json({ error: 'A first and last name are required.' });
   merged.full_name = names.full_name;
   await dbRun(
-    `UPDATE employees SET employee_number=?, full_name=?, first_name=?, last_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=? WHERE employee_id=?`,
+    `UPDATE employees SET employee_number=?, full_name=?, first_name=?, last_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=?, is_trainer=? WHERE employee_id=?`,
     [
       formatPhoneNumber(merged.employee_number), names.full_name, names.first_name || null, names.last_name || null, merged.job_title, merged.department,
-      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, req.params.id,
+      // "Trainer" checkbox on the profile (admin only, Keeley's request, 2026-10-06).
+      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, merged.is_trainer ? 1 : 0, req.params.id,
     ]
   );
   logActivity({ actor: req.user, action: 'employee_updated', entityType: 'employee', entityId: req.params.id, entityLabel: merged.full_name, req });

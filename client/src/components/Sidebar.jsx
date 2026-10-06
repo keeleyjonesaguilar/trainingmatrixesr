@@ -26,7 +26,7 @@ const NAV_ITEMS = [
 
 // Username/role/log-out live in TopBar.jsx now (Keeley's request, 2026-09-17), alongside the
 // notification bell - the sidebar is nav-only.
-export default function Sidebar({ role }) {
+export default function Sidebar({ role, isTrainer = false }) {
   const isAdmin = role === 'admin' || role === 'super_admin';
   const visibleItems = NAV_ITEMS.filter((item) => (!item.adminOnly || isAdmin) && (!item.superAdminOnly || role === 'super_admin'));
   return (
@@ -39,6 +39,10 @@ export default function Sidebar({ role }) {
         {visibleItems.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end}>{item.label}</NavLink>
         ))}
+        {/* Trainers only (Keeley's request, 2026-10-06) - the office account's email is on an
+            employee profile with "This person is a trainer" ticked. Opens the ESR Training Portal
+            (its own sign-in) in a new tab. */}
+        {isTrainer && <a href="/portal" target="_blank" rel="noopener noreferrer">Trainer Portal ↗</a>}
       </nav>
     </aside>
   );

@@ -28,6 +28,7 @@ function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }
     email: employee.email || '',
     active: employee.active,
     aha_instructor_id: employee.aha_instructor_id || '',
+    is_trainer: Boolean(employee.is_trainer) || employee.employee_type === 'trainer',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -102,6 +103,23 @@ function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }
             <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
               Only needed for trainers who teach First Aid/CPR/AED - printed on the AHA Course Roster.
             </p>
+          </div>
+        )}
+        {/* Marks them as a trainer (Keeley's request, 2026-10-06): they can be picked to teach a
+            session, get the trainer view in the ESR Training Portal, and - if they also have an
+            office login with this same email - see the Trainer Portal link in the nav. */}
+        {isAdmin && (
+          <div className="field-row">
+            <label>Trainer</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, height: 'var(--control-height)' }}>
+              <input
+                type="checkbox"
+                checked={form.is_trainer}
+                disabled={employee.employee_type === 'trainer'}
+                onChange={(e) => setForm({ ...form, is_trainer: e.target.checked })}
+              />
+              This person is a trainer
+            </label>
           </div>
         )}
         {isAdmin && (

@@ -31,7 +31,7 @@ export default function Login({ onLogin }) {
       if (result.mfaRequired) {
         setMfaToken(result.mfaToken);
       } else {
-        onLogin(result.username, result.role, result.full_name);
+        onLogin(result.username, result.role, result.full_name, result.is_trainer);
       }
     } catch (err) {
       setError(err.message || 'Login failed.');
@@ -46,7 +46,7 @@ export default function Login({ onLogin }) {
     setSubmitting(true);
     try {
       const result = await api.verifyMfaLogin(mfaToken, mfaCode.trim(), trustThisDevice);
-      onLogin(result.username, result.role, result.full_name);
+      onLogin(result.username, result.role, result.full_name, result.is_trainer);
     } catch (err) {
       setError(err.message || 'Verification failed.');
     } finally {

@@ -53,8 +53,19 @@ async function isTrustedDevice(req, user) {
 // session never unexpectedly logs out early. Omitting `maxAge` makes it a browser session cookie
 // (cleared when the browser fully closes); defaults to true so existing behavior (always
 // persistent) doesn't change for anyone who doesn't interact with the new checkbox.
+// An office account belongs to a trainer when its email is on an employee profile marked as a
+// trainer (Keeley's request, 2026-10-06) - they get a "Trainer Portal" link in the nav.
+async function isTrainerAccount(userId) {
+  const row = await dbGet(
+    `SELECT 1 AS x FROM app_users u JOIN employees e ON LOWER(e.email) = LOWER(u.email)
+     WHERE u.user_id = ? AND u.email IS NOT NULL AND (e.is_trainer = 1 OR e.employee_type = 'trainer') LIMIT 1`,
+    [userId]
+  );
+  return Boolean(row);
+}
+
 function issueSessionCookie(req, res, user, rememberMe = true) {
-  return getOrCreateSessionSecret().then((secret) => {
+  return getOrCreateSessionSecret().then(async (secret) => {
     // lastActivity/rememberMe ride along in the token itself so the idle-timeout check and
     // sliding refresh in server/middleware/auth.js's attachUser can enforce/extend it without a
     // database lookup - rememberMe is carried here (not re-derived) so a refreshed cookie knows
@@ -67,7 +78,7 @@ function issueSessionCookie(req, res, user, rememberMe = true) {
     };
     if (rememberMe) cookieOptions.maxAge = SESSION_MS;
     res.cookie(COOKIE_NAME, token, cookieOptions);
-    res.json({ ok: true, username: user.username, role: user.role, full_name: user.full_name });
+    res.json({ ok: true, username: user.username, role: user.role, full_name: user.full_name, is_trainer: await isTrainerAccount(user.user_id) });
   });
 }
 
@@ -159,7 +170,7 @@ router.post('/logout', async (req, res) => {
 
 router.get('/me', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not logged in.' });
-  res.json({ username: req.user.username, role: req.user.role, full_name: req.user.full_name });
+  res.json({ username: req.user.username, role: req.user.role, full_name: req.user.full_name, is_trainer: await isTrainerAccount(req.user.user_id) });
 });
 
 // --- Self-service MFA enrollment (any logged-in user, for their own account only) ---

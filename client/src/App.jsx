@@ -46,11 +46,12 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('user');
+  const [isTrainer, setIsTrainer] = useState(false);
 
   useEffect(() => {
     if (isPublicSignIn) return;
     api.me()
-      .then((res) => { setUsername(res.username); setFullName(res.full_name || ''); setRole(res.role || 'user'); setStatus('signed-in'); })
+      .then((res) => { setUsername(res.username); setFullName(res.full_name || ''); setRole(res.role || 'user'); setIsTrainer(Boolean(res.is_trainer)); setStatus('signed-in'); })
       .catch(() => setStatus('signed-out'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPublicSignIn]);
@@ -73,10 +74,11 @@ export default function App() {
   if (status === 'signed-out') {
     return (
       <Login
-        onLogin={(name, userRole, userFullName) => {
+        onLogin={(name, userRole, userFullName, userIsTrainer) => {
           setUsername(name);
           setRole(userRole || 'user');
           setFullName(userFullName || '');
+          setIsTrainer(Boolean(userIsTrainer));
           setStatus('signed-in');
         }}
       />
@@ -89,12 +91,13 @@ export default function App() {
     setUsername('');
     setFullName('');
     setRole('user');
+    setIsTrainer(false);
   };
 
   return (
     <AuthContext.Provider value={{ username, fullName, role }}>
       <div className="shell">
-        <Sidebar role={role} />
+        <Sidebar role={role} isTrainer={isTrainer} />
         <div className="main-content">
           <TopBar username={username} fullName={fullName} role={role} onLogout={logout} />
           <main className="app-body">
