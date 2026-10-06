@@ -33,7 +33,7 @@ export const api = {
   me: () => request('/auth/me'),
 
   // Two-factor authentication (self-service enrollment + the second login step)
-  verifyMfaLogin: (mfaToken, code) => request('/auth/mfa/verify-login', { method: 'POST', body: JSON.stringify({ mfaToken, code }) }),
+  verifyMfaLogin: (mfaToken, code, trustDevice = true) => request('/auth/mfa/verify-login', { method: 'POST', body: JSON.stringify({ mfaToken, code, trustDevice }) }),
   getMfaStatus: () => request('/auth/mfa/status'),
   startMfaSetup: () => request('/auth/mfa/setup', { method: 'POST' }),
   enableMfa: (setupToken, code) => request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ setupToken, code }) }),

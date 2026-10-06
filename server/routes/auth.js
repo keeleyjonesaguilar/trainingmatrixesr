@@ -18,6 +18,36 @@ const MFA_SETUP_TTL_MS = 10 * 60 * 1000;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// "Trust this device" (Keeley's request, 2026-10-05: don't make me enter the code every time) -
+// after a correct MFA code the browser gets a signed cookie, and for the next 7 days the password
+// alone signs that user in on that device. The cookie names the user and a fingerprint of their
+// MFA secret, so resetting or turning off MFA (which clears/replaces the secret) cancels every
+// trusted device at once. Signing out keeps it - it vouches for the device, not the session.
+const MFA_TRUST_COOKIE = 'tm_mfa_trust';
+const MFA_TRUST_MS = 7 * 24 * 60 * 60 * 1000;
+
+function mfaFingerprint(user) {
+  return crypto.createHash('sha256').update(String(user.mfa_secret || '')).digest('hex').slice(0, 16);
+}
+
+async function trustDevice(req, res, user) {
+  const secret = await getOrCreateSessionSecret();
+  const token = signToken({ sub: user.user_id, stage: 'mfa_trust', fp: mfaFingerprint(user) }, secret, MFA_TRUST_MS);
+  res.cookie(MFA_TRUST_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+    maxAge: MFA_TRUST_MS,
+  });
+}
+
+async function isTrustedDevice(req, user) {
+  const token = req.cookies?.[MFA_TRUST_COOKIE];
+  if (!token || !user.mfa_secret) return false;
+  const payload = verifyToken(token, await getOrCreateSessionSecret());
+  return Boolean(payload && payload.stage === 'mfa_trust' && payload.sub === user.user_id && payload.fp === mfaFingerprint(user));
+}
+
 // rememberMe controls only the cookie's persistence, not the session's actual validity window -
 // the signed token itself is always good for SESSION_MS either way, so a "remembered" browser
 // session never unexpectedly logs out early. Omitting `maxAge` makes it a browser session cookie
@@ -67,7 +97,7 @@ router.post('/login', async (req, res) => {
   // Password alone isn't enough for an account with MFA turned on - hand back a short-lived
   // token identifying who passed the password check, and require /mfa/verify-login before a
   // real session cookie is issued. Accounts without MFA enabled are unaffected (existing flow).
-  if (user.mfa_enabled) {
+  if (user.mfa_enabled && !(await isTrustedDevice(req, user))) {
     const secret = await getOrCreateSessionSecret();
     // rememberMe travels inside this signed token (rather than being re-collected on the MFA
     // screen) so the eventual session cookie still respects the choice made on the password step.
@@ -82,7 +112,7 @@ router.post('/login', async (req, res) => {
 // session yet) - protected instead by the signed, short-lived mfaToken from /login plus the same
 // per-username lockout used for password attempts, so this can't be brute-forced either.
 router.post('/mfa/verify-login', async (req, res) => {
-  const { mfaToken, code } = req.body || {};
+  const { mfaToken, code, trustDevice: trust = true } = req.body || {};
   if (!mfaToken || !code) return res.status(400).json({ error: 'Your 6-digit code is required.' });
 
   const secret = await getOrCreateSessionSecret();
@@ -118,6 +148,7 @@ router.post('/mfa/verify-login', async (req, res) => {
     await dbRun('UPDATE app_users SET mfa_backup_codes = ? WHERE user_id = ?', [remaining, user.user_id]);
   }
 
+  if (trust) await trustDevice(req, res, user);
   await issueSessionCookie(req, res, user, payload.rememberMe);
 });
 

@@ -14,6 +14,8 @@ export default function Login({ onLogin }) {
   // the code-entry step instead of logging in immediately.
   const [mfaToken, setMfaToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
+  // Skip the code on this device for 7 days (Keeley's request, 2026-10-05) - on by default.
+  const [trustThisDevice, setTrustThisDevice] = useState(true);
 
   // Forgot-password sub-view.
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -43,7 +45,7 @@ export default function Login({ onLogin }) {
     setError('');
     setSubmitting(true);
     try {
-      const result = await api.verifyMfaLogin(mfaToken, mfaCode.trim());
+      const result = await api.verifyMfaLogin(mfaToken, mfaCode.trim(), trustThisDevice);
       onLogin(result.username, result.role, result.full_name);
     } catch (err) {
       setError(err.message || 'Verification failed.');
@@ -139,6 +141,15 @@ export default function Login({ onLogin }) {
           <p className="login-footnote">
             Enter the code from your authenticator app, or one of your backup recovery codes.
           </p>
+          <div className="field-row" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <input
+              id="login-trust-device"
+              type="checkbox"
+              checked={trustThisDevice}
+              onChange={(e) => setTrustThisDevice(e.target.checked)}
+            />
+            <label htmlFor="login-trust-device" style={{ fontWeight: 400 }}>Don&apos;t ask for a code on this device for 7 days</label>
+          </div>
 
           <button type="submit" disabled={submitting || !mfaCode}>
             {submitting ? 'Verifying...' : 'Verify'}
