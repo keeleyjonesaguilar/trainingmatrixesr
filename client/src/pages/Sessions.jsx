@@ -15,7 +15,9 @@ const SESSION_SORT_ACCESSORS = {
   trainer_name: (s) => (s.trainer_names || s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
   attendee_count: (s) => s.attendee_count || 0,
   status: (s) => (s.status || '').toLowerCase(),
-  fulfillment: (s) => (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0),
+  prep: (s) => (s.status === 'closed'
+    ? 10 + (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0)
+    : { info_needed: 1, ready_to_send: 2, sent: 3 }[s.prep_status] || 0),
 };
 
 // The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
@@ -51,6 +53,19 @@ function StatusBadge({ status }) {
 // Whether this session's roster/certs were sent to the client and/or saved to the server
 // (Keeley's request, 2026-09-21) - two independent checkboxes on the session's own page,
 // summarized here as a single badge so the list stays scannable.
+// Session prep (Keeley's request, 2026-10-07) - replaces the Fulfillment column for upcoming
+// sessions: where the class details stand. Closed sessions still show what was sent/saved.
+const PREP_BADGES = {
+  info_needed: ['badge-expiringsoon', 'Additional info needed'],
+  ready_to_send: ['badge-pendingreview', 'Ready to send'],
+  sent: ['badge-current', 'Sent to trainer'],
+};
+function PrepStatusBadge({ session: s }) {
+  if (s.status === 'closed') return <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />;
+  const badge = PREP_BADGES[s.prep_status];
+  return badge ? <span className={`badge ${badge[0]}`}>{badge[1]}</span> : <span className="page-subtitle" style={{ margin: 0 }}>—</span>;
+}
+
 function FulfillmentBadge({ sentToClient, savedToServer }) {
   if (sentToClient && savedToServer) return <span className="badge badge-current">Sent & Saved</span>;
   if (sentToClient) return <span className="badge badge-noexpiration">Sent to Client</span>;
@@ -130,6 +145,8 @@ export default function Sessions() {
     trainer_phone: '',
     session_date: easternToday(),
     location: '',
+    // The class files for the trainer - required for a training session (Keeley's request, 2026-10-07).
+    wetransfer_link: '',
     duration: '',
     outline: '',
     language: 'english',
@@ -232,7 +249,7 @@ export default function Sessions() {
     // fill in.
     if (
       !form.client_name || !form.master_training_id || !form.trainer_name ||
-      !form.session_date || !form.location || !form.duration || !form.outline
+      !form.session_date || !form.location || !form.duration || !form.outline || !form.wetransfer_link.trim()
     ) {
       setError('Every field is required to create a session.');
       return;
@@ -267,6 +284,7 @@ export default function Sessions() {
         training_type_label,
         additional_trainings,
         separate_checkins: separateCheckins,
+        wetransfer_link: form.wetransfer_link.trim(),
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -527,6 +545,18 @@ export default function Sessions() {
                     required
                   />
                 </div>
+                {!isToolbox && (
+                  <div className="field">
+                    <label>WeTransfer Link</label>
+                    <input
+                      type="text"
+                      value={form.wetransfer_link}
+                      onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })}
+                      placeholder="https://we.tl/..."
+                      required
+                    />
+                  </div>
+                )}
                 <div className="field">
                   <label>Duration</label>
                   {(() => {
@@ -797,7 +827,7 @@ export default function Sessions() {
               <th className="sortable" onClick={() => toggleSort('trainer_name')}>Trainer{sortIndicator('trainer_name')}</th>
               <th className="sortable" onClick={() => toggleSort('attendee_count')}>Attendees{sortIndicator('attendee_count')}</th>
               <th className="sortable" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</th>
-              <th className="sortable" onClick={() => toggleSort('fulfillment')}>Fulfillment{sortIndicator('fulfillment')}</th>
+              <th className="sortable" onClick={() => toggleSort('prep')}>Prep Status{sortIndicator('prep')}</th>
             </tr>
           </thead>
           <tbody>
@@ -812,7 +842,7 @@ export default function Sessions() {
                   <StatusBadge status={s.status} />
                 </td>
                 <td>
-                  <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />
+                  <PrepStatusBadge session={s} />
                 </td>
               </tr>
             ))}

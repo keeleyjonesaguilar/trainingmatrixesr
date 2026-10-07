@@ -23,6 +23,8 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
   const [jobTitle, setJobTitle] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [email, setEmail] = useState('');
+  // Internal (one of ours) or External (Keeley's request, 2026-10-07).
+  const [trainerType, setTrainerType] = useState('internal');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [possibleMatches, setPossibleMatches] = useState(null);
@@ -31,7 +33,7 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
     setSaving(true);
     setError('');
     try {
-      await api.createTrainer({ first_name: firstName.trim(), last_name: lastName.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null, email: email.trim() || null });
+      await api.createTrainer({ first_name: firstName.trim(), last_name: lastName.trim(), job_title: jobTitle.trim() || null, employee_number: employeeId.trim() || null, email: email.trim() || null, trainer_type: trainerType });
       onAdded();
     } catch (e2) {
       setError(e2.message);
@@ -77,6 +79,13 @@ function AddTrainerForm({ trainers, onAdded, onCancel }) {
           <label>Email (optional)</label>
           <input type="email" placeholder="trainer@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
           <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Session documents are emailed here when this trainer closes out a session.</p>
+        </div>
+        <div className="field-row">
+          <label>Trainer Type</label>
+          <select value={trainerType} onChange={(e) => setTrainerType(e.target.value)}>
+            <option value="internal">Internal</option>
+            <option value="external">External</option>
+          </select>
         </div>
         <div className="field-row">
           <label>Role / Trade (optional)</label>
@@ -158,7 +167,7 @@ export default function Trainers() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Client</th>
+                <th>Type</th>
                 <th>Role / Trade</th>
                 <th>Phone Number</th>
                 <th>Email</th>
@@ -169,7 +178,7 @@ export default function Trainers() {
               {visibleTrainers.map((t) => (
                 <tr key={t.employee_id}>
                   <td><Link to={`/employees/${t.employee_id}`}>{t.full_name}</Link></td>
-                  <td>{t.client_name}</td>
+                  <td>{t.trainer_type_effective === 'external' ? 'External' : 'Internal'}</td>
                   <td>{t.job_title || '—'}</td>
                   <td>{t.employee_number || '—'}</td>
                   <td>{t.email || '—'}</td>

@@ -16,6 +16,24 @@ const { listCertificateFiles, certificateZipName, createCertificateZip } = requi
 const { logActivity } = require('../lib/activityLog');
 const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
+const { startPrep, savePrep, sendTrainerSummary, PREP_LABELS } = require('../lib/sessionPrep');
+
+// The WeTransfer link typed on the session form (Keeley's request, 2026-10-07): a web address or blank.
+function cleanWetransferLink(value) {
+  const link = String(value || '').trim();
+  if (!link) return { link: null };
+  return /^https?:\/\/\S+$/i.test(link) ? { link } : { error: 'The WeTransfer link should start with https://' };
+}
+
+// Session prep (lib/sessionPrep.js) never blocks saving a session - a failure is only logged.
+async function startPrepSafely(sessionRow, opts) {
+  try {
+    return await startPrep(sessionRow, opts);
+  } catch (err) {
+    console.error(`Session prep could not start for ${sessionRow.session_id}:`, err); // eslint-disable-line no-console
+    return false;
+  }
+}
 const { isValidPhoneNumber } = require('../lib/phone');
 const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
@@ -279,7 +297,7 @@ router.post('/', async (req, res) => {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
     total_days = null, day_dates = null, day_outlines = null, day_trainers = null, separate_checkins = false,
-    session_kind = 'training', toolbox_topic = null, co_trainer_ids = [],
+    session_kind = 'training', toolbox_topic = null, co_trainer_ids = [], wetransfer_link = null,
   } = req.body || {};
   // A toolbox talk (Keeley's request, 2026-09-30): a Topic instead of a catalog training, filed
   // under the catalog's "Toolbox Talk" entry; outline/duration optional; never multi-day.
@@ -326,6 +344,10 @@ router.post('/', async (req, res) => {
   if (!SESSION_LANGUAGES.includes(language)) {
     return res.status(400).json({ error: `language must be one of: ${SESSION_LANGUAGES.join(', ')}` });
   }
+  const wetransfer = cleanWetransferLink(wetransfer_link);
+  if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });
+  // Required for every training session (Keeley's call, 2026-10-07) - not toolbox talks.
+  if (!isToolbox && !wetransfer.link) return res.status(400).json({ error: 'A WeTransfer link is required.' });
   // A multi-day course - one session, one QR code, used across every day (Keeley's request,
   // 2026-09-21). Left null for the overwhelming majority (single-day) sessions, which behave
   // exactly as before; 1 is treated the same as null (no meaningful "multi-day" below 2).
@@ -401,6 +423,9 @@ router.post('/', async (req, res) => {
   if (Array.isArray(co_trainer_ids) && co_trainer_ids.length) {
     await saveCoTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), co_trainer_ids);
   }
+  if (wetransfer.link) await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, session_id]);
+  // One of our own trainers -> the prep team is emailed to add the class details (lib/sessionPrep.js).
+  await startPrepSafely(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]));
 
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [session_id]);
   logActivity({
@@ -533,6 +558,15 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (switchedCheckins) {
     await dbRun('UPDATE training_sessions SET multi_training_day = ?, current_day = 1 WHERE session_id = ?', [multiTraining ? 1 : 0, req.params.id]);
   }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'wetransfer_link')) {
+    const wetransfer = cleanWetransferLink(req.body.wetransfer_link);
+    if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });
+    // Can't be cleared once a session has prep or a link (older sessions without one still save).
+    if (!wetransfer.link && (existing.prep_status || existing.wetransfer_link)) {
+      return res.status(400).json({ error: 'A WeTransfer link is required.' });
+    }
+    await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, req.params.id]);
+  }
   // Each other training's own duration: [{ id, duration }].
   if (extrasCount > 0 && Array.isArray(req.body.additional_training_durations)) {
     for (const t of req.body.additional_training_durations) {
@@ -562,12 +596,59 @@ router.put('/:id', requireAdmin, async (req, res) => {
   } else {
     await saveCoTrainers(savedSession, (await getCoTrainers(savedSession.session_id)).map((t) => t.trainer_employee_id));
   }
+  // An edit that puts one of our own trainers on it starts prep, same as creating it would.
+  await startPrepSafely(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]));
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   logActivity({
     actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
   });
   res.json({ ...withParsedDayDates(session), translation_warning: warning });
+});
+
+// Session prep (lib/sessionPrep.js, Keeley's request, 2026-10-07). The prep team saves the class
+// details here; the first save (or a change after the summary went out) emails the reviewers.
+router.put('/:id/prep', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session.prep_status) return res.status(400).json({ error: "This session doesn't have a prep step." });
+  const result = await savePrep(session, req.body || {}, req.user.full_name || req.user.username);
+  if (result.error) return res.status(400).json({ error: result.error });
+  logActivity({
+    actor: req.user, action: 'session_prep_saved', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: result.notified ? 'Reviewers notified' : undefined, req,
+  });
+  res.json({ ...result, prep_status: (await dbGet('SELECT prep_status FROM training_sessions WHERE session_id = ?', [session.session_id])).prep_status });
+});
+
+// A reviewer sends the trainer(s) the class summary (again, after a change).
+router.post('/:id/prep/send', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const result = await sendTrainerSummary(session, req.user.full_name || req.user.username);
+  if (result.error) return res.status(400).json({ error: result.error });
+  logActivity({
+    actor: req.user, action: 'session_prep_sent', entityType: 'training_session', entityId: session.session_id,
+    entityLabel: `${session.training_type_label} · ${session.client_name}`, details: `Summary sent to ${result.sent_to.join(', ')}`, req,
+  });
+  res.json(result);
+});
+
+// Ask for prep on a session that didn't get it automatically (created before this existed, or an
+// outside trainer the office wants it for anyway).
+router.post('/:id/prep/start', requireAdmin, async (req, res) => {
+  const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status === 'closed' || session.session_kind === 'toolbox_talk') return res.status(400).json({ error: 'Prep is only for upcoming training sessions.' });
+  if (session.prep_status) return res.json({ prep_status: session.prep_status });
+  const started = await startPrep(session, { force: true });
+  if (started) {
+    logActivity({
+      actor: req.user, action: 'session_prep_requested', entityType: 'training_session', entityId: session.session_id,
+      entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
+    });
+  }
+  res.json({ prep_status: started ? 'info_needed' : session.prep_status, label: PREP_LABELS.info_needed });
 });
 
 // Two independent fulfillment checkboxes (Keeley's request, 2026-09-21) - whether this

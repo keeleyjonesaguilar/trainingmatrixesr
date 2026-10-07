@@ -43,6 +43,19 @@ export default function AdminUsers({ currentUsername }) {
       setTogglingEmailId(null);
     }
   };
+  // Session prep emails (2026-10-07): 'prep_requests' (fill in a new session's class details) and
+  // 'prep_review' (check them and send the trainer summary).
+  const togglePrepEmails = async (u, setting, enabled) => {
+    setTogglingEmailId(u.user_id);
+    try {
+      await api.setUserPrepEmails(u.user_id, setting, enabled);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTogglingEmailId(null);
+    }
+  };
   // Loading only gates the very first fetch - a later refresh (after adding/removing someone)
   // updates the table in place rather than hiding it again, since it's no longer really "loading."
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -243,6 +256,20 @@ export default function AdminUsers({ currentUsername }) {
                         {u.gets_session_emails ? 'Turn off' : 'Turn on'}
                       </button>
                     </>
+                  )}
+                  {u.email && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 6, fontSize: 12 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5 }} title="Emailed to fill in the class details when a session with one of our trainers is created">
+                        <input type="checkbox" checked={Boolean(u.gets_prep_requests)} disabled={!isAdmin || togglingEmailId === u.user_id}
+                          onChange={(e) => togglePrepEmails(u, 'prep_requests', e.target.checked)} />
+                        Session prep requests
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5 }} title="Emailed when the class details are filled in, to check them and send the trainer summary">
+                        <input type="checkbox" checked={Boolean(u.gets_prep_review)} disabled={!isAdmin || togglingEmailId === u.user_id}
+                          onChange={(e) => togglePrepEmails(u, 'prep_review', e.target.checked)} />
+                        Session prep review
+                      </label>
+                    </div>
                   )}
                 </td>
                 <td>

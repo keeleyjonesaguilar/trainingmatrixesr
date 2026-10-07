@@ -2,6 +2,7 @@
 // rows) so trainers are browsed/managed on their own dedicated page, never mixed into a real
 // client's roster or the org-wide employee list.
 const express = require('express');
+const { TRAINER_TYPE_SQL } = require('../lib/sessionPrep');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
@@ -56,7 +57,7 @@ router.post('/cross-matches/ignore', requireAdmin, async (req, res) => {
 // trainings history intact.
 router.get('/', async (req, res) => {
   const rows = await dbAll(
-    `SELECT e.*, c.client_name FROM employees e JOIN clients c ON c.client_id = e.client_id
+    `SELECT e.*, c.client_name, ${TRAINER_TYPE_SQL} AS trainer_type_effective FROM employees e JOIN clients c ON c.client_id = e.client_id
      WHERE (e.client_id = ? AND e.employee_type = 'trainer')
         OR e.is_trainer = 1
         OR e.employee_id IN (SELECT DISTINCT trainer_employee_id FROM training_sessions WHERE trainer_employee_id IS NOT NULL)
@@ -90,9 +91,10 @@ router.post('/', async (req, res) => {
   }
   const employee_id = uuidv4();
   await dbRun(
-    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, job_title, employee_number, email, active, employee_type, is_trainer)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'trainer', 1)`,
-    [employee_id, INTERNAL_CLIENT_ID, names.full_name, names.first_name || null, names.last_name || null, job_title, formatPhoneNumber(employee_number), email]
+    `INSERT INTO employees (employee_id, client_id, full_name, first_name, last_name, job_title, employee_number, email, active, employee_type, is_trainer, trainer_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'trainer', 1, ?)`,
+    [employee_id, INTERNAL_CLIENT_ID, names.full_name, names.first_name || null, names.last_name || null, job_title, formatPhoneNumber(employee_number), email,
+      req.body?.trainer_type === 'external' ? 'external' : 'internal']
   );
   logActivity({ actor: req.user, action: 'trainer_created', entityType: 'trainer', entityId: employee_id, entityLabel: names.full_name, req });
   res.status(201).json(await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employee_id]));

@@ -302,6 +302,12 @@ export const api = {
   updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
   getTrainerClosePinSettings: () => request('/trainer-close-pin-settings'),
   setUserSessionEmails: (userId, enabled) => request(`/users/${userId}/session-emails`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  // Session prep emails on/off per user: setting is 'prep_requests' or 'prep_review' (2026-10-07).
+  setUserPrepEmails: (userId, setting, enabled) => request(`/users/${userId}/prep-emails`, { method: 'PUT', body: JSON.stringify({ setting, enabled }) }),
+  // Session prep (2026-10-07): the class details, the trainer summary, and asking for prep by hand.
+  saveSessionPrep: (sessionId, payload) => request(`/training-sessions/${sessionId}/prep`, { method: 'PUT', body: JSON.stringify(payload) }),
+  sendSessionPrepSummary: (sessionId) => request(`/training-sessions/${sessionId}/prep/send`, { method: 'POST' }),
+  startSessionPrep: (sessionId) => request(`/training-sessions/${sessionId}/prep/start`, { method: 'POST' }),
   updateTrainerClosePinSettings: (data) => request('/trainer-close-pin-settings', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Notification bell (top bar) - broadcast to every account, e.g. when a training session closes.

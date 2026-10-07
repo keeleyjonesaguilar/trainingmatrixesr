@@ -207,6 +207,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     trainer_phone: session.trainer_phone || '',
     session_date: session.session_date,
     location: session.location || '',
+    wetransfer_link: session.wetransfer_link || '',
     duration: session.duration || '',
     outline: session.outline || '',
     language: session.language || 'english',
@@ -368,6 +369,12 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <label>Location / Address</label>
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
+        {!isToolbox && (
+          <div className="field">
+            <label>WeTransfer Link</label>
+            <input value={form.wetransfer_link} onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })} placeholder="https://we.tl/..." />
+          </div>
+        )}
         <div className="field">
           <label>{showTrainingDurations ? `Duration – ${shortTraining(session.training_type_label)}` : 'Duration'}</label>
           <input value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} placeholder="e.g. 4 hours, Half day" required />
@@ -512,6 +519,142 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           {deleting ? 'Deleting…' : 'Delete Session'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// Session prep (Keeley's request, 2026-10-07) - a session with one of our own trainers. The prep
+// team (emailed when the session is created) fills in the class details here; saving emails the
+// reviewers, who then send the trainer(s) a summary with everything, QR code attached. See
+// server/lib/sessionPrep.js.
+const PREP_STATUS = {
+  info_needed: ['badge-expiringsoon', 'Additional info needed'],
+  ready_to_send: ['badge-pendingreview', 'Ready to send'],
+  sent: ['badge-current', 'Sent to trainer'],
+};
+
+function SessionPrepCard({ session, isAdmin, onChanged }) {
+  const cardRef = useRef(null);
+  const [trainerOptions, setTrainerOptions] = useState([]);
+  const [form, setForm] = useState({
+    student_count: session.prep_student_count ?? '',
+    room_layout: session.prep_room_layout || '',
+    av_connection: session.prep_av_connection || '',
+    wetransfer_link: session.wetransfer_link || '',
+  });
+  const [assistantIds, setAssistantIds] = useState((session.co_trainers || []).map((t) => t.trainer_employee_id).filter(Boolean));
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => { if (isAdmin) api.listTrainers().then(setTrainerOptions).catch(() => {}); }, [isAdmin]);
+  // The emails link here with ?prep=1.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('prep') === '1') cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  const trainings = [
+    { label: session.training_type_label, duration: session.duration },
+    ...(session.additional_trainings || []).map((t) => ({ label: t.training_type_label, duration: t.duration })),
+  ];
+  const status = PREP_STATUS[session.prep_status];
+  const canSend = ['ready_to_send', 'sent'].includes(session.prep_status);
+
+  const save = async () => {
+    setBusy('save'); setError(''); setMessage('');
+    try {
+      const result = await api.saveSessionPrep(session.session_id, { ...form, co_trainer_ids: assistantIds });
+      setMessage(result.notified ? 'Saved - the reviewers were emailed to check it and send the summary.' : 'Saved.');
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const send = async () => {
+    if (!window.confirm(`${session.prep_status === 'sent' ? 'Send the updated' : 'Send the'} class summary (with the QR code) to the trainer(s) now?`)) return;
+    setBusy('send'); setError(''); setMessage('');
+    try {
+      const result = await api.sendSessionPrepSummary(session.session_id);
+      setMessage(`Summary sent to ${result.sent_to.join(', ')}.${result.missing?.length ? ` No email on file for ${result.missing.join(', ')}.` : ''}${result.failed?.length ? ` Didn't go through to ${result.failed.join(', ')}.` : ''}`);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <div className="card" ref={cardRef} style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <h3 style={{ margin: 0, fontSize: 14 }}>Session Prep</h3>
+        {status && <span className={`badge ${status[0]}`}>{status[1]}</span>}
+      </div>
+      <p className="page-subtitle" style={{ margin: '4px 0 12px' }}>
+        {session.prep_completed_at ? `Details added by ${session.prep_completed_by} ${formatEasternDateTime(session.prep_completed_at)}. ` : ''}
+        {session.prep_sent_at ? `Summary sent to the trainer(s) by ${session.prep_sent_by} ${formatEasternDateTime(session.prep_sent_at)}.` : ''}
+      </p>
+      {error && <p className="error-banner">{error}</p>}
+      {message && <p className="success-banner">{message}</p>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 20, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Class Type</label>
+            <div style={{ fontSize: 14 }}>
+              {trainings.map((t) => (
+                <div key={t.label}>{t.label}{t.duration && <span style={{ color: 'var(--color-text-muted)' }}> · {t.duration}</span>}</div>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label># of Students</label>
+            <input type="number" min={1} value={form.student_count} disabled={!isAdmin} onChange={(e) => setForm({ ...form, student_count: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>AV Connection</label>
+            <select value={form.av_connection} disabled={!isAdmin} onChange={(e) => setForm({ ...form, av_connection: e.target.value })}>
+              <option value="">Select…</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Room Layout</label>
+            <textarea rows={2} value={form.room_layout} disabled={!isAdmin} onChange={(e) => setForm({ ...form, room_layout: e.target.value })} placeholder="e.g. Classroom style, 4 tables of 6, projector at the front" />
+          </div>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>WeTransfer Link</label>
+            <input value={form.wetransfer_link} disabled={!isAdmin} onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })} placeholder="https://we.tl/..." />
+          </div>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Assistant Instructor (if applicable)</label>
+            {isAdmin
+              ? <CoTrainersPicker trainers={trainerOptions} value={assistantIds} onChange={setAssistantIds} leadId={session.trainer_employee_id} />
+              : <div style={{ fontSize: 14 }}>{(session.co_trainers || []).map((t) => t.trainer_name).join(', ') || 'None'}</div>}
+            <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Added as a co-trainer: their name goes on the certificates and they get the session emails.</p>
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>QR Code</div>
+          <img src={`/api/training-sessions/${session.session_id}/qrcode.png`} alt="Sign-in QR code" style={{ width: 130, height: 130 }} />
+          <div><a href={`/api/training-sessions/${session.session_id}/qrcode.png`} download style={{ fontSize: 12 }}>Download</a></div>
+        </div>
+      </div>
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
+          <button type="button" className="btn btn-accent" disabled={Boolean(busy)} onClick={save}>
+            {busy === 'save' ? 'Saving…' : session.prep_status === 'info_needed' ? 'Save & Send for Review' : 'Save Changes'}
+          </button>
+          {canSend && (
+            <button type="button" className="btn" disabled={Boolean(busy)} onClick={send}>
+              {busy === 'send' ? 'Sending…' : session.prep_status === 'sent' ? 'Resend Summary to Trainer(s)' : 'Send Summary to Trainer(s)'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -932,6 +1075,23 @@ Their certificate and the training record it added to their employee file will b
             Saved to Server
           </label>
         </div>
+      )}
+
+      {session.prep_status && <SessionPrepCard key={session.session_id} session={session} isAdmin={isAdmin} onChanged={load} />}
+      {!session.prep_status && isAdmin && session.status === 'open' && session.session_kind !== 'toolbox_talk' && (
+        <p className="page-subtitle" style={{ marginTop: -8 }}>
+          No session prep for this session.{' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={async () => {
+              if (!window.confirm('Email the prep team to add the class details for this session?')) return;
+              try { await api.startSessionPrep(session.session_id); load(); } catch (e) { setError(e.message); }
+            }}
+          >
+            Request session prep
+          </button>
+        </p>
       )}
 
       {/* Multi-day training (Keeley's request, 2026-09-21/22) - the day advance is manual

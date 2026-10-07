@@ -357,7 +357,9 @@ router.get('/:id/full-detail', async (req, res) => {
     };
   }
 
-  res.json({ employee, client, trainings, completedRecords, trainerFeedbackSummary, teaches });
+  // Internal / External (migration 077) - what's set, or what it falls back to when not set yet.
+  const trainerTypeNow = teaches ? await require('../lib/sessionPrep').trainerType(employee.employee_id) : null; // eslint-disable-line global-require
+  res.json({ employee: { ...employee, trainer_type_effective: trainerTypeNow }, client, trainings, completedRecords, trainerFeedbackSummary, teaches });
 });
 
 // Trainer profiles are created via the dedicated /api/trainers route, not here - this route
@@ -452,11 +454,15 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (!names.full_name) return res.status(400).json({ error: 'A first and last name are required.' });
   merged.full_name = names.full_name;
   await dbRun(
-    `UPDATE employees SET employee_number=?, full_name=?, first_name=?, last_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=?, is_trainer=? WHERE employee_id=?`,
+    `UPDATE employees SET employee_number=?, full_name=?, first_name=?, last_name=?, job_title=?, department=?, active=?, notes=?, aha_instructor_id=?, email=?, is_trainer=?, trainer_type=? WHERE employee_id=?`,
     [
       formatPhoneNumber(merged.employee_number), names.full_name, names.first_name || null, names.last_name || null, merged.job_title, merged.department,
       // "Trainer" checkbox on the profile (admin only, Keeley's request, 2026-10-06).
-      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, merged.is_trainer ? 1 : 0, req.params.id,
+      merged.active ? 1 : 0, merged.notes, merged.aha_instructor_id, merged.email, merged.is_trainer ? 1 : 0,
+      // Trainer Type: Internal / External (admin only, Keeley's request, 2026-10-07).
+      (merged.is_trainer || merged.employee_type === 'trainer') && ['internal', 'external'].includes(merged.trainer_type)
+        ? merged.trainer_type : existing.trainer_type || null,
+      req.params.id,
     ]
   );
   logActivity({ actor: req.user, action: 'employee_updated', entityType: 'employee', entityId: req.params.id, entityLabel: merged.full_name, req });

@@ -29,6 +29,7 @@ function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }
     active: employee.active,
     aha_instructor_id: employee.aha_instructor_id || '',
     is_trainer: Boolean(employee.is_trainer) || employee.employee_type === 'trainer',
+    trainer_type: employee.trainer_type || employee.trainer_type_effective || 'internal',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -120,6 +121,17 @@ function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }
               />
               This person is a trainer
             </label>
+          </div>
+        )}
+        {/* Internal (one of ours) or External (Keeley's request, 2026-10-07) - only Internal
+            trainers' sessions get the session prep step. */}
+        {isAdmin && form.is_trainer && (
+          <div className="field-row">
+            <label>Trainer Type</label>
+            <select value={form.trainer_type} onChange={(e) => setForm({ ...form, trainer_type: e.target.value })}>
+              <option value="internal">Internal</option>
+              <option value="external">External</option>
+            </select>
           </div>
         )}
         {isAdmin && (
@@ -628,7 +640,7 @@ export default function EmployeeDetail() {
 
       {showMergeModal && (
         <MergeWithProfileModal
-          employee={{ ...employee, client_name: isTrainer ? 'Internal / Trainers' : client?.client_name }}
+          employee={{ ...employee, client_name: isTrainer ? `${employee.trainer_type_effective === 'external' ? 'External' : 'Internal'} Trainer` : client?.client_name }}
           onMerged={(winnerId) => {
             setShowMergeModal(false);
             // This profile may have been the one that got merged away - its own id is gone, so
@@ -695,7 +707,15 @@ export default function EmployeeDetail() {
             <div className="detail-avatar">{employee.full_name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}</div>
             <div>
               <div className="detail-name">{employee.full_name}</div>
-              <div className="detail-sub">{employee.job_title || 'Role not set'} · {client?.client_name}</div>
+              {/* A trainer profile shows Internal/External Trainer instead of a client (Keeley's request,
+                  2026-10-07); someone who's also an employee keeps their company too. */}
+              <div className="detail-sub">
+                {[
+                  employee.job_title || 'Role not set',
+                  isTrainer ? null : client?.client_name,
+                  teaches && employee.trainer_type_effective ? `${employee.trainer_type_effective === 'external' ? 'External' : 'Internal'} Trainer` : null,
+                ].filter(Boolean).join(' · ')}
+              </div>
             </div>
           </div>
           <div className="detail-meta">
