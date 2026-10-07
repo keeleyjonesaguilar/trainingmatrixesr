@@ -210,6 +210,56 @@ router.post('/:token/next-training', async (req, res) => {
   res.json({ ok: true, current_day: next, total_days: parts.length, training: parts[next - 1].label });
 });
 
+// The trainer's live roster (Keeley's request, 2026-10-07: trainers kept asking the office who had
+// signed in). Behind the trainer PIN, since anyone with the class QR code can open this page -
+// names and sign-in times only, never contact details or signatures. Phone numbers are only used
+// here to flag likely double sign-ins, the same way the trainer edit page does.
+router.post('/:token/roster', async (req, res) => {
+  const session = await getSessionByToken(req.params.token);
+  if (!session) return res.status(404).json({ error: "This sign-in link isn't valid." });
+  const pinSetting = await dbGet('SELECT pin FROM trainer_close_pin_settings WHERE id = ?', ['default']);
+  if (String(req.body?.pin || '').trim().toUpperCase() !== String(pinSetting?.pin || '').trim().toUpperCase()) {
+    return res.status(400).json({ error: 'Incorrect PIN.' });
+  }
+  // A-Z by last name, so a trainer can find someone quickly and double sign-ins sit together.
+  const rows = await dbAll(
+    `SELECT attendee_id, trainee_name, trainee_phone, signed_at FROM session_attendees WHERE session_id = ?
+     ORDER BY LOWER(COALESCE(NULLIF(trainee_last_name, ''), trainee_name)), LOWER(trainee_name), signed_at`,
+    [session.session_id]
+  );
+  const days = session.total_days
+    ? await dbAll('SELECT attendee_id, day_number FROM session_attendance_days WHERE session_id = ?', [session.session_id])
+    : [];
+
+  // Same name or same phone as another sign-in - the usual sign of someone signing in twice.
+  const groups = new Map();
+  for (const r of rows) {
+    const keys = [`name:${nameKey(r.trainee_name)}`];
+    const phone = String(r.trainee_phone || '').replace(/\D/g, '');
+    if (phone) keys.push(`phone:${phone}`);
+    for (const key of keys) groups.set(key, [...(groups.get(key) || []), r.attendee_id]);
+  }
+  const duplicates = new Set([...groups.values()].filter((g) => g.length > 1).flat());
+
+  res.json({
+    status: session.status,
+    total_days: session.total_days,
+    current_day: session.current_day,
+    multi_training_day: isMultiTrainingDay(session),
+    attendees: rows.map((r) => {
+      const daysAttended = days.filter((d) => d.attendee_id === r.attendee_id).map((d) => d.day_number).sort((a, b) => a - b);
+      return {
+        attendee_id: r.attendee_id,
+        trainee_name: r.trainee_name,
+        signed_at: r.signed_at,
+        days_attended: daysAttended,
+        here_now: !session.total_days || daysAttended.includes(session.current_day),
+        possible_duplicate: duplicates.has(r.attendee_id),
+      };
+    }),
+  });
+});
+
 // A trainee signs in.
 router.post('/:token/attendees', async (req, res) => {
   const session = await getSessionByToken(req.params.token);

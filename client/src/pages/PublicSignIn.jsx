@@ -4,7 +4,7 @@ import { api } from '../api';
 import esrMark from '../assets/brand/esr-mark.png';
 import SignaturePad from '../components/SignaturePad';
 import AhaRosterFields, { AHA_ROSTER_TRAINING_ID, EMPTY_AHA_FIELDS, ahaFieldsPayload } from '../components/AhaRosterFields';
-import { formatShortDate } from '../lib/dates';
+import { formatShortDate, parseTimestamp, EASTERN_TZ } from '../lib/dates';
 
 function formatDate(d) {
   if (!d) return '';
@@ -165,6 +165,27 @@ const STRINGS = {
   },
   mtd_next_banner: { en: '{next} is open - everyone can scan the QR code to check in for it.', es: '{next} está abierta - todos pueden escanear el código QR para registrarse.' },
   starting_ellipsis: { en: 'Starting…', es: 'Iniciando…' },
+  // The trainer's live roster (Keeley's request, 2026-10-07).
+  roster_title: { en: "Who's signed in", es: 'Quién se ha registrado' },
+  roster_pin_hint: { en: 'Enter the trainer PIN to see the list.', es: 'Ingrese el PIN del instructor para ver la lista.' },
+  roster_show: { en: 'Show List', es: 'Ver lista' },
+  roster_loading: { en: 'Loading…', es: 'Cargando…' },
+  roster_refresh: { en: 'Refresh', es: 'Actualizar' },
+  roster_hide: { en: 'Hide', es: 'Ocultar' },
+  roster_empty: { en: 'No one has signed in yet.', es: 'Nadie se ha registrado todavía.' },
+  roster_signed_at: { en: 'Signed in', es: 'Registrado' },
+  roster_here_today: { en: 'Here today', es: 'Presente hoy' },
+  roster_not_today: { en: 'Not signed in today', es: 'No registrado hoy' },
+  roster_here_training: { en: 'Checked in', es: 'Registrado' },
+  roster_not_training: { en: 'Not checked in yet', es: 'Aún no registrado' },
+  roster_today_count: { en: '{n} of {total} signed in for today', es: '{n} de {total} registrados hoy' },
+  roster_training_count: { en: '{n} of {total} checked in for {training}', es: '{n} de {total} registrados para {training}' },
+  roster_days: { en: 'Days', es: 'Días' },
+  roster_duplicate: { en: 'Possible duplicate', es: 'Posible duplicado' },
+  roster_duplicate_note: {
+    en: 'Flagged names may have signed in twice. Close out as normal - then remove the extra entry from the Edit Close-Out Details link in your email.',
+    es: 'Los nombres marcados pueden haberse registrado dos veces. Cierre como siempre - luego elimine la entrada extra desde el enlace "Edit Close-Out Details" de su correo.',
+  },
 };
 
 // "TRN-016 - Fall Protection" -> "Fall Protection" for the small step labels.
@@ -320,6 +341,122 @@ function ReturningAttendeeFlow({ token, t, onBack, onDone, trainings = null, cur
           <button className="btn btn-accent" type="button" disabled={submitting} style={{ width: '100%' }} onClick={confirmCheckIn}>
             {submitting ? t('checking_in_ellipsis') : t('confirm_checkin_button')}
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The trainer's live roster (Keeley's request, 2026-10-07: trainers kept asking the office who had
+// signed in) - shown on the trainer tab behind the trainer PIN. It shares the close-out form's
+// `pin`, so the PIN typed here is already filled in when they close out. Refreshes itself every
+// 20 seconds while open; names and sign-in times only (server/routes/publicSessions.js /roster).
+function LiveRoster({ token, t, pin, setPin, info, trainings }) {
+  const [roster, setRoster] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async (quiet = false) => {
+    if (!quiet) {
+      setError('');
+      if (!pin.trim()) return setError(t('err_trainer_pin'));
+      setBusy(true);
+    }
+    try {
+      setRoster(await api.publicRoster(token, pin.trim()));
+    } catch (err) {
+      if (!quiet) setError(err.message);
+    } finally {
+      if (!quiet) setBusy(false);
+    }
+    return undefined;
+  };
+
+  useEffect(() => {
+    if (!roster) return undefined;
+    const handle = setInterval(() => load(true), 20000);
+    return () => clearInterval(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(roster), pin]);
+
+  const isMultiPart = Number(info.total_days) > 1;
+  const isMtd = Boolean(info.multi_training_day) && Array.isArray(trainings);
+  const list = roster?.attendees || [];
+  const hereNow = list.filter((a) => a.here_now).length;
+  const timeOf = (value) => {
+    const d = parseTimestamp(value);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: EASTERN_TZ, hour: 'numeric', minute: '2-digit' });
+  };
+  const detail = (a) => {
+    if (isMtd) return a.days_attended.map((d) => shortTraining(trainings[d - 1]?.label)).join(', ');
+    if (isMultiPart) return `${t('roster_days')} ${a.days_attended.join(', ') || '—'}`;
+    return `${t('roster_signed_at')} ${timeOf(a.signed_at)}`;
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <strong style={{ fontSize: 14 }}>{t('roster_title')} ({roster ? list.length : info.attendee_count})</strong>
+        {roster && (
+          <span style={{ display: 'flex', gap: 12 }}>
+            <button type="button" className="link-button" disabled={busy} onClick={() => load()}>{busy ? t('roster_loading') : t('roster_refresh')}</button>
+            <button type="button" className="link-button" onClick={() => setRoster(null)}>{t('roster_hide')}</button>
+          </span>
+        )}
+      </div>
+      {error && <p className="error-banner" style={{ margin: '10px 0 0' }}>{error}</p>}
+      {!roster ? (
+        <>
+          <p style={{ fontSize: 13, color: 'var(--color-text-muted)', margin: '6px 0 10px' }}>{t('roster_pin_hint')}</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); load(); } }}
+              placeholder="PIN"
+              type="password"
+              autoComplete="off"
+              aria-label={t('trainer_pin')}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => load()}>
+              {busy ? t('roster_loading') : t('roster_show')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div style={{ marginTop: 8 }}>
+          {isMultiPart && list.length > 0 && (
+            <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--esr-green)', margin: '0 0 6px' }}>
+              {(isMtd ? t('roster_training_count') : t('roster_today_count'))
+                .replaceAll('{n}', hereNow)
+                .replaceAll('{total}', list.length)
+                .replaceAll('{training}', isMtd ? shortTraining(trainings[info.current_day - 1]?.label) : '')}
+            </p>
+          )}
+          {list.length === 0 && <p style={{ fontSize: 13, color: 'var(--color-text-muted)', margin: 0 }}>{t('roster_empty')}</p>}
+          {list.map((a, i) => (
+            <div key={a.attendee_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--color-border)' }}>
+              <span style={{ width: 20, fontSize: 12, color: 'var(--color-text-muted)', flexShrink: 0 }}>{i + 1}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
+                  {a.trainee_name}
+                  {a.possible_duplicate && (
+                    <span className="badge badge-expiringsoon" style={{ marginLeft: 6, fontSize: 10 }}>{t('roster_duplicate')}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{detail(a)}</div>
+              </div>
+              {isMultiPart && (
+                <span className={`badge ${a.here_now ? 'badge-current' : 'badge-missing'}`} style={{ fontSize: 10, flexShrink: 0 }}>
+                  {isMtd ? t(a.here_now ? 'roster_here_training' : 'roster_not_training') : t(a.here_now ? 'roster_here_today' : 'roster_not_today')}
+                </span>
+              )}
+            </div>
+          ))}
+          {list.some((a) => a.possible_duplicate) && (
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '8px 0 0' }}>{t('roster_duplicate_note')}</p>
+          )}
         </div>
       )}
     </div>
@@ -629,6 +766,10 @@ export default function PublicSignIn() {
             )}
             {justCheckedIn && mode === 'trainee' && (
               <p className="success-banner">{isMultiTraining ? fillTraining('mtd_checkin_success') : t('checkin_success_banner')}</p>
+            )}
+
+            {mode === 'trainer' && (
+              <LiveRoster token={token} t={t} pin={pin} setPin={setPin} info={info} trainings={isMultiTraining ? info.trainings : null} />
             )}
 
             {mode === 'trainee' ? (

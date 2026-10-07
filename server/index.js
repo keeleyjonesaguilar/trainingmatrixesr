@@ -175,6 +175,17 @@ async function start() {
   // login as everything else above. /api/public is the trainee-facing side and is deliberately
   // NOT behind requireAuth - a trainee scanning a QR code never has a login.
   app.use('/api/training-sessions', requireAuth, require('./routes/trainingSessions'));
+  // The trainer's live roster shows attendee names behind the trainer PIN - only wrong PINs
+  // count toward this limit, so a trainer refreshing the list never hits it.
+  const rosterRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts from this network. Please try again later.' },
+  });
+  app.post('/api/public/:token/roster', rosterRateLimiter);
   app.use('/api/public', require('./routes/publicSessions'));
   // Trainer's post-close edit link - public (trainers have no login) but PIN-gated, so it gets
   // its own limit against someone guessing PINs from a leaked link.
