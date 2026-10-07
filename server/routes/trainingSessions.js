@@ -16,7 +16,7 @@ const { listCertificateFiles, certificateZipName, createCertificateZip } = requi
 const { logActivity } = require('../lib/activityLog');
 const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
-const { startPrep, savePrep, sendTrainerSummary, PREP_LABELS } = require('../lib/sessionPrep');
+const { startPrep, savePrep, sendTrainerSummary, PREP_LABELS, isInternalTrainer } = require('../lib/sessionPrep');
 
 // The WeTransfer link typed on the session form (Keeley's request, 2026-10-07): a web address or blank.
 function cleanWetransferLink(value) {
@@ -346,8 +346,6 @@ router.post('/', async (req, res) => {
   }
   const wetransfer = cleanWetransferLink(wetransfer_link);
   if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });
-  // Required for every training session (Keeley's call, 2026-10-07) - not toolbox talks.
-  if (!isToolbox && !wetransfer.link) return res.status(400).json({ error: 'A WeTransfer link is required.' });
   // A multi-day course - one session, one QR code, used across every day (Keeley's request,
   // 2026-09-21). Left null for the overwhelming majority (single-day) sessions, which behave
   // exactly as before; 1 is treated the same as null (no meaningful "multi-day" below 2).
@@ -370,6 +368,15 @@ router.post('/', async (req, res) => {
   // trainer_phone are kept as-typed on the session too, a frozen display fallback (matches
   // how client_name works above).
   const trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_name, trainer_phone);
+  // Required when an Internal trainer is on it - lead, co-trainer, or a day's trainer (Keeley's
+  // call, 2026-10-07); optional for outside trainers and toolbox talks.
+  if (!isToolbox && !wetransfer.link) {
+    const trainerIds = [trainerEmployeeId, ...(Array.isArray(co_trainer_ids) ? co_trainer_ids : []), ...(Array.isArray(day_trainers) ? day_trainers : [])];
+    for (const id of trainerIds.filter(Boolean)) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isInternalTrainer(id)) return res.status(400).json({ error: 'A WeTransfer link is required when an internal trainer is assigned.' });
+    }
+  }
   const { training_type_label_es, outline_es, warning } = await translateSessionFields(effective.training_type_label, effective.outline, language);
   const session_id = uuidv4();
   const qr_token = tokenGen();
@@ -561,8 +568,8 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'wetransfer_link')) {
     const wetransfer = cleanWetransferLink(req.body.wetransfer_link);
     if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });
-    // Can't be cleared once a session has prep or a link (older sessions without one still save).
-    if (!wetransfer.link && (existing.prep_status || existing.wetransfer_link)) {
+    // Can't be cleared on a session with the prep step (an Internal trainer).
+    if (!wetransfer.link && existing.prep_status) {
       return res.status(400).json({ error: 'A WeTransfer link is required.' });
     }
     await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, req.params.id]);

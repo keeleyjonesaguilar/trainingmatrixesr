@@ -128,6 +128,7 @@ export default function Sessions() {
   // own duration (seeded from its catalog default) and its own check-in. training_id -> duration.
   const [additionalDurations, setAdditionalDurations] = useState({});
   const isMultiTraining = additionalTrainingIds.length > 0;
+
   // Separate check-in for each training is optional (Keeley's request, 2026-10-06: "sometimes they
   // aren't necessary") - starts unticked (one sign-in covers every training); ticking it makes a
   // Multi Training Day.
@@ -168,6 +169,15 @@ export default function Sessions() {
   // Who teaches each day (Keeley's request, 2026-09-29) - a trainer's employee_id, or '' for the
   // session's main trainer, so a one-trainer course needs nothing extra here.
   const [dayTrainers, setDayTrainers] = useState([]);
+  // The WeTransfer link is required when any trainer on it is Internal (Keeley's call, 2026-10-07):
+  // the lead (a newly typed name is a new Internal trainer), a co-trainer, or a day's trainer.
+  const isInternalId = (id) => trainers.find((t) => t.employee_id === id)?.trainer_type_effective !== 'external';
+  const needsWetransfer = !isToolbox && (
+    (trainerMode === 'new' && Boolean(form.trainer_name.trim()))
+    || (Boolean(selectedTrainerId) && isInternalId(selectedTrainerId))
+    || coTrainerIds.some(isInternalId)
+    || (isMultiDay && dayTrainers.filter(Boolean).some(isInternalId))
+  );
   const [creating, setCreating] = useState(false);
   // Upcoming-count badge (Keeley's request, 2026-09-22): open sessions dated today or later,
   // same definition Dashboard.jsx's "Upcoming Trainings Scheduled" box already uses. Fetched on
@@ -249,9 +259,13 @@ export default function Sessions() {
     // fill in.
     if (
       !form.client_name || !form.master_training_id || !form.trainer_name ||
-      !form.session_date || !form.location || !form.duration || !form.outline || !form.wetransfer_link.trim()
+      !form.session_date || !form.location || !form.duration || !form.outline
     ) {
       setError('Every field is required to create a session.');
+      return;
+    }
+    if (needsWetransfer && !form.wetransfer_link.trim()) {
+      setError('A WeTransfer link is required when an internal trainer is assigned.');
       return;
     }
     if (isMultiDay && (!form.total_days || Number(form.total_days) < 2)) {
@@ -547,16 +561,23 @@ export default function Sessions() {
                 </div>
                 {!isToolbox && (
                   <div className="field">
-                    <label>WeTransfer Link</label>
+                    <label>WeTransfer Link{needsWetransfer ? '' : ' (optional)'}</label>
                     <input
                       type="text"
                       value={form.wetransfer_link}
                       onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })}
                       placeholder="https://we.tl/..."
-                      required
+                      required={needsWetransfer}
                     />
+                    {needsWetransfer && (
+                      <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Required - an internal trainer is assigned.</p>
+                    )}
                   </div>
                 )}
+                {/* With 2+ trainings each one's duration is entered in the trainings list below (the
+                    first training's is this same value) - a separate box up here read like the whole
+                    day's length and got applied to the first training (Keeley's report, 2026-10-07). */}
+                {!(isMultiTraining && !isToolbox) && (
                 <div className="field">
                   <label>Duration</label>
                   {(() => {
@@ -586,6 +607,7 @@ export default function Sessions() {
                     );
                   })()}
                 </div>
+                )}
                 <div className="field">
                   <label>Sign-In Language</label>
                   <select
@@ -605,7 +627,7 @@ export default function Sessions() {
                 </div>
                 {!isToolbox && isMultiTraining && (
                 <div className="field" style={{ gridColumn: '1 / -1' }}>
-                  <label>{separateCheckins ? 'Multi Training Day' : 'Trainings'}: in order, each with its own duration</label>
+                  <label>{separateCheckins ? 'Multi Training Day' : 'Trainings'}: in order - enter each training&apos;s own duration (not the whole day)</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {[form.master_training_id, ...additionalTrainingIds].map((tid, i) => {
                       const t = trainings.find((x) => x.training_id === tid);
