@@ -269,7 +269,7 @@ async function sendTrainerSummary(sessionRow, actor) {
       intro: `<p style="margin:0;">Hi ${esc(String(r.name || '').split(' ')[0])}, here's everything for your upcoming class. The sign-in QR code is attached - display it at the start of class so attendees can sign in.</p>`,
       rows: [
         ...baseRows(d),
-        s.duration && d.trainings.length === 1 ? ['Duration', esc(s.duration)] : null,
+        s.duration ? [d.trainings.length === 1 ? 'Duration' : 'Total duration', esc(s.duration)] : null,
         ...prepRows(s, d.coTrainers),
         ['Sign-in link', `<a href="${esc(signInUrl)}">${esc(signInUrl)}</a>`],
         s.outline ? ['Outline', esc(s.outline).replace(/\n/g, '<br>')] : null,

@@ -7,6 +7,7 @@ import LoadingState from '../components/LoadingState.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
+import { totalDuration } from '../lib/durations';
 
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
@@ -153,6 +154,9 @@ export default function Sessions() {
     language: 'english',
     total_days: '',
   });
+  // The session total: every training's duration added up (Keeley's report, 2026-10-07 - 1 hour +
+  // 1 hour shows 2 hours, whatever the catalog default says).
+  const sessionTotal = totalDuration([form.duration, ...additionalTrainingIds.map((tid) => additionalDurations[tid])]);
   // Multi-day training (Keeley's request, 2026-09-21/22) - one session, one QR code, used across
   // every day (e.g. OSHA 30 over 4 days). Kept as its own toggle rather than always showing the
   // day-count field, since the overwhelming majority of sessions are still single-day.
@@ -308,7 +312,9 @@ export default function Sessions() {
         co_trainer_ids: coTrainerIds,
         session_date: form.session_date,
         location: form.location,
-        duration: form.duration,
+        // 2+ trainings: each has its own duration and the session's is their total (2026-10-07).
+        duration: isMultiTraining ? sessionTotal : form.duration,
+        first_training_duration: isMultiTraining ? form.duration : undefined,
         outline: form.outline,
         language: form.language,
         total_days: isMultiDay ? Number(form.total_days) : null,
@@ -649,6 +655,9 @@ export default function Sessions() {
                         </div>
                       );
                     })}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 14 }}>
+                    <strong>Total duration:</strong> {sessionTotal || '—'}
                   </div>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400, marginTop: 10 }}>
                     <input type="checkbox" checked={separateCheckins} onChange={(e) => setSeparateCheckins(e.target.checked)} />

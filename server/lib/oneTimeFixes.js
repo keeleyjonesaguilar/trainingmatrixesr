@@ -137,6 +137,25 @@ async function runOneTimeFixes() {
       console.log(`On-demand certificates: removed ${removed} saved file(s); ${missing.length} record(s) without a certificate now get one on download.`);
     });
 
+    // Sessions saved with per-training durations before the total was worked out (migration 078,
+    // Keeley's report, 2026-10-07): `duration` becomes the sum of every training's duration.
+    await runOnce('fix_recalc_multi_training_totals_v1', 'recalculated total durations of sessions with 2+ trainings', async () => {
+      const { totalDuration } = require('./durations'); // eslint-disable-line global-require
+      const rows = await dbAll('SELECT session_id, first_training_duration, duration FROM training_sessions WHERE first_training_duration IS NOT NULL');
+      let changed = 0;
+      for (const s of rows) {
+        // eslint-disable-next-line no-await-in-loop
+        const extras = await dbAll('SELECT duration FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [s.session_id]);
+        const total = totalDuration([s.first_training_duration, ...extras.map((t) => t.duration)]);
+        if (total && total !== s.duration) {
+          // eslint-disable-next-line no-await-in-loop
+          await dbRun('UPDATE training_sessions SET duration = ? WHERE session_id = ?', [total, s.session_id]);
+          changed += 1;
+        }
+      }
+      console.log(`Multi-training totals: ${changed} of ${rows.length} session(s) updated.`);
+    });
+
     // Older multi-day feedback goes to the trainer of the day it was submitted (Keeley's call,
     // 2026-10-05) - lib/sessionFeedback.js. Live server only, so it lands with the deploy.
     await runOnce('fix_credit_old_multiday_feedback_v1', "credited older multi-day feedback to the day's trainer", async () => {

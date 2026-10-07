@@ -268,6 +268,7 @@ function generateRosterPdf(session, attendees) {
     // Multi Training Day (Keeley's request, 2026-10-05): each training and its own duration.
     doc.text(session.training_part_checkins ? 'Multi Training Day:' : 'Trainings:');
     parts.forEach((p) => doc.text(pdfSafeText(`   ${p.number}. ${p.label}${p.duration ? ` - ${p.duration}` : ''}`)));
+    if (session.duration) doc.text(pdfSafeText(`Total duration: ${session.duration}`));
   } else {
     doc.text(pdfSafeText(`Training: ${session.training_type_label}`));
   }

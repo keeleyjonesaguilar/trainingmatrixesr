@@ -4,6 +4,7 @@ import { api } from '../api';
 import { parseName } from '../lib/names.js';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
+import { totalDuration } from '../lib/durations';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
@@ -146,7 +147,7 @@ function TrainerClosePinEditor() {
 function trainingParts(session) {
   if (!session.multi_training_day) return null;
   return [
-    { number: 1, label: session.training_type_label, duration: session.duration },
+    { number: 1, label: session.training_type_label, duration: session.first_training_duration || session.duration },
     ...(session.additional_trainings || []).map((t, i) => ({ number: i + 2, label: t.training_type_label, duration: t.duration, id: t.id })),
   ];
 }
@@ -208,7 +209,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     session_date: session.session_date,
     location: session.location || '',
     wetransfer_link: session.wetransfer_link || '',
-    duration: session.duration || '',
+    // With per-training durations this box is the first training's own (the total is worked out).
+    duration: ((session.additional_trainings || []).some((t) => t.duration) ? session.first_training_duration : null) || session.duration || '',
     outline: session.outline || '',
     language: session.language || 'english',
     total_days: session.total_days || '',
@@ -241,6 +243,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const [extraDurations, setExtraDurations] = useState(
     Object.fromEntries((session.additional_trainings || []).map((t) => [t.id, t.duration || '']))
   );
+  // The session total - every training's duration added up (2026-10-07).
+  const editTotal = totalDuration([form.duration, ...Object.values(extraDurations)]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -267,7 +271,11 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       const { total_days: totalDays, ...rest } = form;
       const checkinFields = hasExtras ? { separate_checkins: separateCheckins } : {};
       const durationFields = showTrainingDurations
-        ? { additional_training_durations: Object.entries(extraDurations).map(([id, duration]) => ({ id, duration })) }
+        ? {
+          additional_training_durations: Object.entries(extraDurations).map(([id, duration]) => ({ id, duration })),
+          first_training_duration: form.duration,
+          duration: editTotal,
+        }
         : {};
       const updated = await api.updateTrainingSession(session.session_id, isMultiTraining
         ? {
@@ -390,6 +398,12 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
             />
           </div>
         ))}
+        {showTrainingDurations && (
+          <div className="field">
+            <label>Total Duration</label>
+            <div style={{ fontSize: 14, paddingTop: 8 }}>{editTotal || '—'}</div>
+          </div>
+        )}
         {hasExtras && !isToolbox && (
           <div className="field">
             <label>Check-In</label>
@@ -554,7 +568,7 @@ function SessionPrepCard({ session, isAdmin, onChanged }) {
   }, []);
 
   const trainings = [
-    { label: session.training_type_label, duration: session.duration },
+    { label: session.training_type_label, duration: session.first_training_duration || session.duration },
     ...(session.additional_trainings || []).map((t) => ({ label: t.training_type_label, duration: t.duration })),
   ];
   const status = PREP_STATUS[session.prep_status];
@@ -1026,9 +1040,9 @@ Their certificate and the training record it added to their employee file will b
             <div className="session-fact-value">{session.location}</div>
           </div>
         )}
-        {session.duration && !session.multi_training_day && (
+        {session.duration && (
           <div className="session-fact">
-            <div className="session-fact-label">Duration</div>
+            <div className="session-fact-label">{session.additional_trainings?.length ? 'Total Duration' : 'Duration'}</div>
             <div className="session-fact-value">{session.duration}</div>
           </div>
         )}

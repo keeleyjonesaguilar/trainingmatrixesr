@@ -17,6 +17,17 @@ const { logActivity } = require('../lib/activityLog');
 const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { startPrep, savePrep, sendTrainerSummary, PREP_LABELS, isInternalTrainer } = require('../lib/sessionPrep');
+const { totalDuration } = require('../lib/durations');
+
+// A session with per-training durations: `duration` is the total of them all (migration 078,
+// Keeley's report, 2026-10-07) - recalculated whenever any of them changes.
+async function recalcTotalDuration(sessionId) {
+  const s = await dbGet('SELECT first_training_duration, duration FROM training_sessions WHERE session_id = ?', [sessionId]);
+  if (!s || !s.first_training_duration) return;
+  const extras = await dbAll('SELECT duration FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [sessionId]);
+  const total = totalDuration([s.first_training_duration, ...extras.map((t) => t.duration)]);
+  if (total && total !== s.duration) await dbRun('UPDATE training_sessions SET duration = ? WHERE session_id = ?', [total, sessionId]);
+}
 
 // The WeTransfer link typed on the session form (Keeley's request, 2026-10-07): a web address or blank.
 function cleanWetransferLink(value) {
@@ -431,6 +442,12 @@ router.post('/', async (req, res) => {
     await saveCoTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), co_trainer_ids);
   }
   if (wetransfer.link) await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, session_id]);
+  // 2+ trainings with their own durations: keep the first training's own, and the total as `duration`.
+  if (hasExtras) {
+    const first = String(req.body.first_training_duration || effective.duration || '').trim();
+    await dbRun('UPDATE training_sessions SET first_training_duration = ? WHERE session_id = ?', [first, session_id]);
+    await recalcTotalDuration(session_id);
+  }
   // One of our own trainers -> the prep team is emailed to add the class details (lib/sessionPrep.js).
   await startPrepSafely(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]));
 
@@ -574,6 +591,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
     }
     await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, req.params.id]);
   }
+  // The first training's own duration (the edit form's "Duration - <first training>" box) - and
+  // `duration` becomes the total again below.
+  if (extrasCount > 0 && String(req.body.first_training_duration || '').trim()) {
+    await dbRun('UPDATE training_sessions SET first_training_duration = ? WHERE session_id = ?', [String(req.body.first_training_duration).trim(), req.params.id]);
+  }
   // Each other training's own duration: [{ id, duration }].
   if (extrasCount > 0 && Array.isArray(req.body.additional_training_durations)) {
     for (const t of req.body.additional_training_durations) {
@@ -583,6 +605,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       await dbRun('UPDATE session_additional_trainings SET duration = ? WHERE id = ? AND session_id = ?', [duration, String(t.id || ''), req.params.id]);
     }
   }
+  if (extrasCount > 0) await recalcTotalDuration(req.params.id);
   // Per-day trainers: rewritten from the form when sent, otherwise kept as they were (still
   // re-saved, so a change to the number of days adds/drops day rows). None on a one-day session.
   const savedSession = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);

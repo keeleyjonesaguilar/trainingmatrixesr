@@ -24,7 +24,8 @@ async function trainingParts(session, additionalTrainings = null) {
     {
       number: 1,
       label: session.training_type_label,
-      duration: session.duration || null,
+      // Its own duration (migration 078); `duration` is the session total once there are 2+.
+      duration: session.first_training_duration || session.duration || null,
       master_training_id: session.master_training_id || null,
       additional_training: null,
     },
