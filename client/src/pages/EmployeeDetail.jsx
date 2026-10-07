@@ -123,8 +123,8 @@ function EmployeeProfileEditor({ employee, isAdmin, teaches, onSaved, onCancel }
             </label>
           </div>
         )}
-        {/* Internal (one of ours) or External (Keeley's request, 2026-10-07) - only Internal
-            trainers' sessions get the session prep step. */}
+        {/* Internal (one of ours) or External (Keeley's request, 2026-10-07) - shown on the Trainers
+            page and this profile. */}
         {isAdmin && form.is_trainer && (
           <div className="field-row">
             <label>Trainer Type</label>

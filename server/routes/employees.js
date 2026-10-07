@@ -358,7 +358,7 @@ router.get('/:id/full-detail', async (req, res) => {
   }
 
   // Internal / External (migration 077) - what's set, or what it falls back to when not set yet.
-  const trainerTypeNow = teaches ? await require('../lib/sessionPrep').trainerType(employee.employee_id) : null; // eslint-disable-line global-require
+  const trainerTypeNow = teaches ? await require('../lib/trainerType').trainerType(employee.employee_id) : null; // eslint-disable-line global-require
   res.json({ employee: { ...employee, trainer_type_effective: trainerTypeNow }, client, trainings, completedRecords, trainerFeedbackSummary, teaches });
 });
 

@@ -16,9 +16,7 @@ const SESSION_SORT_ACCESSORS = {
   trainer_name: (s) => (s.trainer_names || s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
   attendee_count: (s) => s.attendee_count || 0,
   status: (s) => (s.status || '').toLowerCase(),
-  prep: (s) => (s.status === 'closed'
-    ? 10 + (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0)
-    : { info_needed: 1, ready_to_send: 2, sent: 3 }[s.prep_status] || 0),
+  fulfillment: (s) => (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0),
 };
 
 // The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
@@ -54,19 +52,6 @@ function StatusBadge({ status }) {
 // Whether this session's roster/certs were sent to the client and/or saved to the server
 // (Keeley's request, 2026-09-21) - two independent checkboxes on the session's own page,
 // summarized here as a single badge so the list stays scannable.
-// Session prep (Keeley's request, 2026-10-07) - replaces the Fulfillment column for upcoming
-// sessions: where the class details stand. Closed sessions still show what was sent/saved.
-const PREP_BADGES = {
-  info_needed: ['badge-expiringsoon', 'Additional info needed'],
-  ready_to_send: ['badge-pendingreview', 'Ready to send'],
-  sent: ['badge-current', 'Sent to trainer'],
-};
-function PrepStatusBadge({ session: s }) {
-  if (s.status === 'closed') return <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />;
-  const badge = PREP_BADGES[s.prep_status];
-  return badge ? <span className={`badge ${badge[0]}`}>{badge[1]}</span> : <span className="page-subtitle" style={{ margin: 0 }}>—</span>;
-}
-
 function FulfillmentBadge({ sentToClient, savedToServer }) {
   if (sentToClient && savedToServer) return <span className="badge badge-current">Sent & Saved</span>;
   if (sentToClient) return <span className="badge badge-noexpiration">Sent to Client</span>;
@@ -147,7 +132,7 @@ export default function Sessions() {
     trainer_phone: '',
     session_date: easternToday(),
     location: '',
-    // The class files for the trainer - required for a training session (Keeley's request, 2026-10-07).
+    // Optional - the class files for the trainer (Keeley's request, 2026-10-07).
     wetransfer_link: '',
     duration: '',
     outline: '',
@@ -173,15 +158,6 @@ export default function Sessions() {
   // Who teaches each day (Keeley's request, 2026-09-29) - a trainer's employee_id, or '' for the
   // session's main trainer, so a one-trainer course needs nothing extra here.
   const [dayTrainers, setDayTrainers] = useState([]);
-  // The WeTransfer link is required when any trainer on it is Internal (Keeley's call, 2026-10-07):
-  // the lead (a newly typed name is a new Internal trainer), a co-trainer, or a day's trainer.
-  const isInternalId = (id) => trainers.find((t) => t.employee_id === id)?.trainer_type_effective !== 'external';
-  const needsWetransfer = !isToolbox && (
-    (trainerMode === 'new' && Boolean(form.trainer_name.trim()))
-    || (Boolean(selectedTrainerId) && isInternalId(selectedTrainerId))
-    || coTrainerIds.some(isInternalId)
-    || (isMultiDay && dayTrainers.filter(Boolean).some(isInternalId))
-  );
   const [creating, setCreating] = useState(false);
   // Upcoming-count badge (Keeley's request, 2026-09-22): open sessions dated today or later,
   // same definition Dashboard.jsx's "Upcoming Trainings Scheduled" box already uses. Fetched on
@@ -266,10 +242,6 @@ export default function Sessions() {
       !form.session_date || !form.location || !form.duration || !form.outline
     ) {
       setError('Every field is required to create a session.');
-      return;
-    }
-    if (needsWetransfer && !form.wetransfer_link.trim()) {
-      setError('A WeTransfer link is required when an internal trainer is assigned.');
       return;
     }
     if (isMultiDay && (!form.total_days || Number(form.total_days) < 2)) {
@@ -567,17 +539,13 @@ export default function Sessions() {
                 </div>
                 {!isToolbox && (
                   <div className="field">
-                    <label>WeTransfer Link{needsWetransfer ? '' : ' (optional)'}</label>
+                    <label>WeTransfer Link (optional)</label>
                     <input
                       type="text"
                       value={form.wetransfer_link}
                       onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })}
                       placeholder="https://we.tl/..."
-                      required={needsWetransfer}
                     />
-                    {needsWetransfer && (
-                      <p className="page-subtitle" style={{ margin: '4px 0 0' }}>Required - an internal trainer is assigned.</p>
-                    )}
                   </div>
                 )}
                 {/* With 2+ trainings each one's duration is entered in the trainings list below (the
@@ -858,7 +826,7 @@ export default function Sessions() {
               <th className="sortable" onClick={() => toggleSort('trainer_name')}>Trainer{sortIndicator('trainer_name')}</th>
               <th className="sortable" onClick={() => toggleSort('attendee_count')}>Attendees{sortIndicator('attendee_count')}</th>
               <th className="sortable" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</th>
-              <th className="sortable" onClick={() => toggleSort('prep')}>Prep Status{sortIndicator('prep')}</th>
+              <th className="sortable" onClick={() => toggleSort('fulfillment')}>Fulfillment{sortIndicator('fulfillment')}</th>
             </tr>
           </thead>
           <tbody>
@@ -873,7 +841,7 @@ export default function Sessions() {
                   <StatusBadge status={s.status} />
                 </td>
                 <td>
-                  <PrepStatusBadge session={s} />
+                  <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />
                 </td>
               </tr>
             ))}

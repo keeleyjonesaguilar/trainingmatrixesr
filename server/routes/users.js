@@ -27,7 +27,7 @@ function isPendingUsername(username) {
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
-  const users = await dbAll('SELECT user_id, username, full_name, email, role, created_at, mfa_enabled, gets_session_emails, gets_prep_requests, gets_prep_review FROM app_users ORDER BY created_at ASC', []);
+  const users = await dbAll('SELECT user_id, username, full_name, email, role, created_at, mfa_enabled, gets_session_emails FROM app_users ORDER BY created_at ASC', []);
   res.json(users.map((u) => ({ ...u, pending: isPendingUsername(u.username) })));
 });
 
@@ -154,24 +154,6 @@ router.put('/:userId/full-name', requireAdmin, async (req, res) => {
     details: `new full_name=${cleanFullName}`, req,
   });
   res.json({ ok: true, full_name: cleanFullName });
-});
-
-// Session prep emails (lib/sessionPrep.js, Keeley's request, 2026-10-07): "Prep requests" = asked to
-// fill in a new session's class details; "Prep review" = told when they're filled in, to check and
-// send the trainer summary.
-const PREP_EMAIL_SETTINGS = { prep_requests: 'gets_prep_requests', prep_review: 'gets_prep_review' };
-router.put('/:userId/prep-emails', requireAdmin, async (req, res) => {
-  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
-  if (!user) return res.status(404).json({ error: 'User not found.' });
-  const column = PREP_EMAIL_SETTINGS[req.body?.setting];
-  if (!column) return res.status(400).json({ error: 'Unknown email setting.' });
-  const enabled = req.body?.enabled ? 1 : 0;
-  await dbRun(`UPDATE app_users SET ${column} = ? WHERE user_id = ?`, [enabled, user.user_id]);
-  await logAdminAction({
-    actor: req.user, action: 'session_emails_changed', targetUserId: user.user_id, targetUsername: user.username,
-    details: `${req.body.setting === 'prep_requests' ? 'session prep request' : 'session prep review'} emails ${enabled ? 'on' : 'off'}`, req,
-  });
-  res.json({ ok: true, [column]: Boolean(enabled) });
 });
 
 // Whether this user gets the completed-training email (certificates + rosters) at close-out

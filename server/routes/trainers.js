@@ -2,7 +2,7 @@
 // rows) so trainers are browsed/managed on their own dedicated page, never mixed into a real
 // client's roster or the org-wide employee list.
 const express = require('express');
-const { TRAINER_TYPE_SQL } = require('../lib/sessionPrep');
+const { TRAINER_TYPE_SQL } = require('../lib/trainerType');
 const { v4: uuidv4 } = require('uuid');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
