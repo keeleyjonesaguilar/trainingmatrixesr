@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal.jsx';
 import { api } from '../api';
 import { splitPdfIntoCards } from '../lib/pdfPages.js';
+import { personNamedIn, readCard } from '../lib/cardReader.js';
 import {
   dismissScan, scanFolderSupported, startWatching, stopWatching, subscribeToScans,
 } from '../lib/scanFolderWatcher.js';
@@ -42,13 +43,18 @@ function defaultLabel(filename, attendee) {
   return parts.join(' - ') || base;
 }
 
+const previewBox = { width: 240, height: 152, border: '1px solid var(--color-border)', borderRadius: 4 };
+
 function CardPreview({ item }) {
-  const isPdf = /\.pdf$/i.test(item.file.name);
   return (
     <a href={item.url} target="_blank" rel="noreferrer" title="Open full size" style={{ display: 'block', width: 240 }}>
-      {isPdf
-        ? <iframe src={`${item.url}#toolbar=0&navpanes=0&view=Fit`} title={item.file.name} loading="lazy" style={{ width: 240, height: 152, border: '1px solid var(--color-border)', borderRadius: 4, pointerEvents: 'none' }} />
-        : <img src={item.url} alt={item.file.name} loading="lazy" style={{ width: 240, height: 152, objectFit: 'contain', border: '1px solid var(--color-border)', borderRadius: 4 }} />}
+      {item.preview
+        ? <img src={item.preview} alt={item.file.name} style={{ ...previewBox, objectFit: 'contain', background: '#fff' }} />
+        : (
+          <div style={{ ...previewBox, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>
+            {item.preview === undefined ? 'Loading preview…' : 'No preview - click to open'}
+          </div>
+        )}
     </a>
   );
 }
@@ -93,9 +99,21 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
         });
       }
       setItems((prev) => [...prev, ...added]);
+      setReading(false);
+      // Then, one card at a time: draw its preview and, if nobody's picked yet, look for an
+      // attendee's name in the card's text (searchable scans only).
+      for (const it of added) {
+        let card = { preview: null, text: '' };
+        try { card = await readCard(it.file); } catch { /* no preview - the file still uploads */ } // eslint-disable-line no-await-in-loop
+        const named = personNamedIn(card.text, attendees);
+        setItems((prev) => prev.map((x) => {
+          if (x.key !== it.key) return x;
+          const autoPick = !x.attendee_id && named;
+          return { ...x, preview: card.preview, attendee_id: autoPick ? named.attendee_id : x.attendee_id, readFromCard: Boolean(autoPick) };
+        }));
+      }
     } catch (e) {
       setError(`Couldn't read that file: ${e.message}`);
-    } finally {
       setReading(false);
     }
   };
@@ -156,7 +174,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
           <>
             <p className="page-subtitle" style={{ marginTop: 0 }}>
               Choose files (PDF, JPG or PNG) or scan the cards. A PDF with several cards in it is split into one card per page.
-              Files with a name in the file name are matched for you - pick who each card belongs to, then upload.
+              A name in the file name, or printed on a searchable scan, is matched for you - check or pick who each card belongs to, then upload.
               They&apos;re filed under each person&apos;s Documents{session.master_training_id ? `, linked to ${session.training_type_label}` : ''}.
             </p>
             {error && <div className="error-banner">{error}</div>}
@@ -192,7 +210,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                           <div style={{ fontSize: 11, color: 'var(--color-text-muted)', maxWidth: 240, overflowWrap: 'anywhere' }}>{it.file.name}</div>
                         </td>
                         <td>
-                          <select value={it.attendee_id} onChange={(e) => update(it.key, { attendee_id: e.target.value })}>
+                          <select value={it.attendee_id} onChange={(e) => update(it.key, { attendee_id: e.target.value, readFromCard: false })}>
                             <option value="">- Skip this file -</option>
                             {attendees.map((a) => (
                               <option key={a.attendee_id} value={a.attendee_id}>
@@ -200,6 +218,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                               </option>
                             ))}
                           </select>
+                          {it.readFromCard && <div style={{ fontSize: 11, color: 'var(--status-current-text)', marginTop: 4 }}>Name read from the card - check it</div>}
                         </td>
                         <td><input value={it.label} onChange={(e) => update(it.key, { label: e.target.value })} /></td>
                         <td><button type="button" className="link-button" onClick={() => remove(it.key)}>Remove</button></td>

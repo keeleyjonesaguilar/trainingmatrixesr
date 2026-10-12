@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { nameAppearsIn, readCard } from '../lib/cardReader.js';
 import {
   dismissScan, scanFolderSupported, startWatching, stopWatching, subscribeToScans,
 } from '../lib/scanFolderWatcher.js';
@@ -19,7 +20,17 @@ function PendingScan({ scan, employeeId, employeeName, trainingOptions, onSaved 
   const [labelEdited, setLabelEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const isPdf = /\.pdf$/i.test(scan.name);
+  // undefined while loading; the preview is drawn as an image (see lib/cardReader.js).
+  const [card, setCard] = useState(undefined);
+
+  useEffect(() => {
+    let live = true;
+    readCard(scan.file).then((c) => live && setCard(c)).catch(() => live && setCard({ preview: null, text: '' }));
+    return () => { live = false; };
+  }, [scan.file]);
+
+  // Only when the scan has text to check (a searchable PDF) and this employee's name isn't in it.
+  const nameMissing = card?.text?.trim() && !nameAppearsIn(employeeName, card.text);
 
   const pickTraining = (id) => {
     setTrainingId(id);
@@ -45,13 +56,22 @@ function PendingScan({ scan, employeeId, employeeName, trainingOptions, onSaved 
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: 12, border: '1px solid var(--color-border)', borderRadius: 8, marginBottom: 10 }}>
       <a href={scan.url} target="_blank" rel="noreferrer" title="Open full size" style={{ flex: '0 0 220px', maxWidth: '100%' }}>
-        {isPdf
-          ? <iframe src={`${scan.url}#toolbar=0&navpanes=0`} title={scan.name} style={{ width: '100%', height: 160, border: '1px solid var(--color-border)', borderRadius: 4, pointerEvents: 'none' }} />
-          : <img src={scan.url} alt={scan.name} style={{ width: '100%', maxHeight: 160, objectFit: 'contain', border: '1px solid var(--color-border)', borderRadius: 4 }} />}
+        {card?.preview
+          ? <img src={card.preview} alt={scan.name} style={{ width: '100%', maxHeight: 160, objectFit: 'contain', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff' }} />
+          : (
+            <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: 4 }}>
+              {card === undefined ? 'Loading preview…' : 'No preview - click to open'}
+            </div>
+          )}
       </a>
       <div style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 13, color: 'var(--color-text-muted)', overflowWrap: 'anywhere' }}>New scan: {scan.name}</div>
-        {error && <div className="error-banner" style={{ margin: 0 }}>{error}</div>}
+        {nameMissing && (
+          <div style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, background: 'var(--status-missing-bg)', color: 'var(--status-missing-text)' }}>
+            Couldn&apos;t find {employeeName}&apos;s name on this card - make sure it&apos;s theirs.
+          </div>
+        )}
+        {error &&<div className="error-banner" style={{ margin: 0 }}>{error}</div>}
         <select value={trainingId} onChange={(e) => pickTraining(e.target.value)}>
           <option value="">{trainingOptions.length ? 'Which training is this card for?' : 'No trainings on their profile yet - add the training first'}</option>
           {trainingOptions.map((t) => <option key={t.training_id} value={t.training_id}>{t.training_id} - {t.training_name}</option>)}
