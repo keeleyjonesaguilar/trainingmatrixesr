@@ -10,13 +10,16 @@ const { notifyAllUsers } = require('./notifications');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('./qr');
 const { sessionTrainers, getSessionDays } = require('./sessionDays');
 const { trainingParts, isMultiTrainingDay } = require('./sessionParts');
-const { stripTrainingIdPrefix, buildQrFilename } = require('./certificateFilename');
+const { stripTrainingIdPrefix } = require('./certificateFilename');
+const { labeledQrPng } = require('./qrLabel');
 
 const GREEN = '#026754';
 const GOLD = '#c49b0d';
 const MUTED = '#62676f';
 const BORDER = '#e2e5e9';
 const FONT = "font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;";
+const SIGN_IN_COLOR = GREEN;
+const FEEDBACK_COLOR = '#8a6c05'; // gold ink - the theme gold is too light for text
 const LANGUAGES = { english: 'English', spanish: 'Spanish', both: 'English and Spanish' };
 
 function esc(value) {
@@ -91,6 +94,13 @@ function emailShell({ kicker, title, intro, panels, button }) {
   </td></tr></table></body></html>`;
 }
 
+// "Sign-In QR Code - Fall Protection - 2026-10-14.png" - what it is first, so the two attachments
+// can't be mixed up even when the email client cuts the name short.
+function qrFilename(session, kind) {
+  const training = stripTrainingIdPrefix(session.training_type_label).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return `${kind} - ${training} - ${session.session_date}.png`;
+}
+
 // Every trainer on the session with the email on their profile (the lead falls back to the email
 // they last closed out with). `missing` = trainers with no email anywhere.
 async function trainerRecipients(session, onlyEmployeeIds = null) {
@@ -141,8 +151,8 @@ function buildEmail(d, r, { added }) {
     s.outline && !d.days.length ? ['Outline', esc(s.outline).replace(/\n/g, '<br>')] : null,
   ];
   const linkRows = [
-    ['Sign-in page', `${link(signInUrl)}${note('Attendees scan the attached Sign-In QR code (or open this link) to sign in. Use the Trainer tab on the same page, with the trainer PIN, to see who has signed in and to close out the session at the end of class.')}`],
-    ['Feedback form', `${link(feedbackUrl)}${note('Attendees can rate the class here - the Feedback QR code is attached too.')}`],
+    ['Sign-in page', `${link(signInUrl)}${note('Show the attached <strong>green SIGN-IN</strong> QR code at the start of class - attendees scan it (or open this link) to sign in. Use the Trainer tab on the same page, with the trainer PIN, to see who has signed in and to close out the session at the end of class.')}`],
+    ['Feedback form', `${link(feedbackUrl)}${note('Show the attached <strong>gold FEEDBACK</strong> QR code at the end of class so attendees can rate it.')}`],
     s.wetransfer_link ? ['Class files', `${link(s.wetransfer_link)}${note('WeTransfer - download these before class.')}`] : null,
     r.portal ? ['Live roster', `${link(`${publicBaseUrl()}/portal`)}${note('On class day, sign in to the ESR Training Portal and click View roster to see who has signed in.')}`] : null,
   ];
@@ -153,7 +163,12 @@ function buildEmail(d, r, { added }) {
       kicker: 'Class Summary',
       title,
       intro: `<p style="margin:0;">Hi ${esc(first)},</p>
-        <p style="margin:8px 0 0;">${added ? "You've been added as a trainer on this class" : "You're scheduled to teach this class"}. Here's everything you need. The sign-in and feedback QR codes are attached - show the sign-in code at the start of class.</p>`,
+        <p style="margin:8px 0 0;">${added ? "You've been added as a trainer on this class" : "You're scheduled to teach this class"}. Here's everything you need.</p>
+        <p style="margin:8px 0 0;">Two QR codes are attached, each labeled across the top:</p>
+        <ul style="margin:6px 0 0;padding-left:20px;">
+          <li><strong style="color:${SIGN_IN_COLOR};">SIGN-IN</strong> (green) - show it at the <strong>start</strong> of class so attendees can sign in.</li>
+          <li><strong style="color:${FEEDBACK_COLOR};">FEEDBACK</strong> (gold) - show it at the <strong>end</strong> of class so attendees can rate it.</li>
+        </ul>`,
       button: { label: 'Open the Sign-In Page', url: signInUrl },
       panels: [panel('Class details', classRows), panel('Links', linkRows)],
     }),
@@ -170,8 +185,14 @@ async function sendTrainerSummary(sessionId, { onlyEmployeeIds = null, added = f
   if (s.status === 'closed') return { error: 'This session is already closed.' };
   const { recipients, missing } = await trainerRecipients(s, onlyEmployeeIds);
   const attachments = recipients.length ? [
-    { filename: buildQrFilename(s, 'Sign-In QR'), content: (await qrPngBuffer(s.qr_token)).toString('base64') },
-    { filename: buildQrFilename(s, 'Feedback QR'), content: (await feedbackQrPngBuffer(s.qr_token)).toString('base64') },
+    {
+      filename: qrFilename(s, 'Sign-In QR Code'),
+      content: labeledQrPng(await qrPngBuffer(s.qr_token), 'signin').toString('base64'),
+    },
+    {
+      filename: qrFilename(s, 'Feedback QR Code'),
+      content: labeledQrPng(await feedbackQrPngBuffer(s.qr_token), 'feedback').toString('base64'),
+    },
   ] : [];
   const failed = [];
   for (const r of recipients) {
