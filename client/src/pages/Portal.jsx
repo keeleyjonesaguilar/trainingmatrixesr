@@ -2,11 +2,11 @@
 // trainers. Sign in with the email on your profile and a one-time code (no password); then see
 // your trainings and certificates, keep your phone/email current, and - for trainers - what you
 // teach and your rating averages. Backed by server/routes/portal.js.
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api';
 import esrLogo from '../assets/brand/esr-logo-full.png';
 import StatusBadge from '../components/StatusBadge.jsx';
-import { formatShortDate } from '../lib/dates';
+import { formatShortDate, parseTimestamp, EASTERN_TZ } from '../lib/dates';
 
 function longDate(d) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
@@ -18,6 +18,96 @@ function longDate(d) {
 function sessionDates(s) {
   if (s.day_dates?.length > 1) return `${formatShortDate(s.day_dates[0])} – ${formatShortDate(s.day_dates[s.day_dates.length - 1])} (${s.day_dates.length} days)`;
   return longDate(s.date);
+}
+
+// "TRN-016 - Fall Protection" -> "Fall Protection".
+function shortTraining(label) {
+  return String(label || '').replace(/^TRN-d+s*-s*/, '');
+}
+
+// The live roster of a session the trainer is teaching today (Keeley's request, 2026-10-12) - the
+// sign-in page's "Who's signed in" list (server/lib/liveRoster.js) without the trainer PIN.
+// Refreshes itself every 20 seconds while open.
+function SessionRoster({ sessionId }) {
+  const [roster, setRoster] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = async (quiet = false) => {
+    if (!quiet) { setBusy(true); setError(''); }
+    try {
+      setRoster(await api.portalSessionRoster(sessionId));
+    } catch (err) {
+      if (!quiet) setError(err.message);
+    } finally {
+      if (!quiet) setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const handle = setInterval(() => load(true), 20000);
+    return () => clearInterval(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  if (error) return <p className="error-banner" style={{ margin: 0 }}>{error}</p>;
+  if (!roster) return <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-muted)' }}>Loading…</p>;
+
+  const list = roster.attendees;
+  const isMultiPart = Number(roster.total_days) > 1;
+  const isMtd = Boolean(roster.multi_training_day) && Array.isArray(roster.trainings);
+  const hereNow = list.filter((a) => a.here_now).length;
+  const timeOf = (value) => {
+    const d = parseTimestamp(value);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: EASTERN_TZ, hour: 'numeric', minute: '2-digit' });
+  };
+  const detail = (a) => {
+    if (isMtd) return a.days_attended.map((d) => shortTraining(roster.trainings[d - 1])).join(', ');
+    if (isMultiPart) return `Days ${a.days_attended.join(', ') || '—'}`;
+    return `Signed in ${timeOf(a.signed_at)}`;
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 14 }}>
+          Who&apos;s signed in ({list.length})
+          {isMultiPart && list.length > 0 && (
+            <span style={{ fontWeight: 600, color: 'var(--esr-green)', marginLeft: 8, fontSize: 13 }}>
+              {isMtd
+                ? `${hereNow} of ${list.length} checked in for ${shortTraining(roster.trainings[roster.current_day - 1])}`
+                : `${hereNow} of ${list.length} signed in for today`}
+            </span>
+          )}
+        </strong>
+        <button type="button" className="link-button" disabled={busy} onClick={() => load()}>{busy ? 'Loading…' : 'Refresh'}</button>
+      </div>
+      {list.length === 0 && <p style={{ fontSize: 13, color: 'var(--color-text-muted)', margin: '6px 0 0' }}>No one has signed in yet.</p>}
+      {list.map((a, i) => (
+        <div key={a.attendee_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--color-border)' }}>
+          <span style={{ width: 20, fontSize: 12, color: 'var(--color-text-muted)', flexShrink: 0 }}>{i + 1}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
+              {a.trainee_name}
+              {a.possible_duplicate && <span className="badge badge-expiringsoon" style={{ marginLeft: 6, fontSize: 10 }}>Possible duplicate</span>}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{detail(a)}</div>
+          </div>
+          {isMultiPart && (
+            <span className={`badge ${a.here_now ? 'badge-current' : 'badge-missing'}`} style={{ fontSize: 10, flexShrink: 0 }}>
+              {isMtd ? (a.here_now ? 'Checked in' : 'Not checked in yet') : (a.here_now ? 'Here today' : 'Not signed in today')}
+            </span>
+          )}
+        </div>
+      ))}
+      {list.some((a) => a.possible_duplicate) && (
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '8px 0 0' }}>
+          Flagged names may have signed in twice. Close out as normal - then remove the extra entry from the Edit Close-Out Details link in your email.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function Shell({ onLogout, children }) {
@@ -188,6 +278,7 @@ function ContactCard({ profile, accountEmail, onChanged }) {
 
 function Profile({ profile, accountEmail, onChanged }) {
   const t = profile.trainer;
+  const [rosterFor, setRosterFor] = useState(null);
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <div>
@@ -204,10 +295,24 @@ function Profile({ profile, accountEmail, onChanged }) {
           {t.upcoming.length === 0 ? <p className="empty-state" style={{ padding: 8, textAlign: 'left' }}>Nothing scheduled right now.</p> : (
             <div className="table-scroll" style={{ maxHeight: 'none' }}>
               <table>
-                <thead><tr><th>Date</th><th>Training</th><th>Client</th><th>Location</th><th>Signed in</th></tr></thead>
+                <thead><tr><th>Date</th><th>Training</th><th>Client</th><th>Location</th><th>Signed in</th><th aria-label="Roster" /></tr></thead>
                 <tbody>
                   {t.upcoming.map((s) => (
-                    <tr key={s.session_id}><td>{sessionDates(s)}</td><td>{s.training}</td><td>{s.client}</td><td style={{ whiteSpace: 'normal' }}>{s.location || '—'}</td><td>{s.attendees}</td></tr>
+                    <Fragment key={s.session_id}>
+                      <tr>
+                        <td>{sessionDates(s)}</td><td>{s.training}</td><td>{s.client}</td><td style={{ whiteSpace: 'normal' }}>{s.location || '—'}</td><td>{s.attendees}</td>
+                        <td>
+                          {s.teaching_today && (
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRosterFor(rosterFor === s.session_id ? null : s.session_id)}>
+                              {rosterFor === s.session_id ? 'Hide roster' : 'View roster'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {rosterFor === s.session_id && (
+                        <tr><td colSpan={6} style={{ whiteSpace: 'normal', background: 'var(--color-bg)' }}><SessionRoster sessionId={s.session_id} /></td></tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

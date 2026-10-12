@@ -209,6 +209,27 @@ async function confirmEmailChange(session, code) {
 // Lead, day trainer or co-trainer (lib/sessionFeedback.js).
 const TAUGHT_SQL = TAUGHT_SESSIONS_SQL;
 
+// On a multi-day course, any of its days; otherwise the session date.
+function isTodaySession(s, today) {
+  const dayDates = s.day_dates ? JSON.parse(s.day_dates) : null;
+  return Array.isArray(dayDates) && dayDates.length ? dayDates.includes(today) : s.session_date === today;
+}
+
+// An open session one of the signed-in profiles is a trainer on (lead, day trainer or co-trainer)
+// that runs today - the only sessions whose live roster the portal shows. Null otherwise.
+async function teachingTodaySession(session, sessionId) {
+  const ts = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [sessionId]);
+  if (!ts || ts.status !== 'open' || !isTodaySession(ts, easternToday())) return null;
+  for (const e of session.profiles) {
+    if (e.employee_type !== 'trainer' && !e.is_trainer) continue;
+    // Spelled-out $2: db.js numbers plain ? from $1, which TAUGHT_SQL already uses.
+    // eslint-disable-next-line no-await-in-loop
+    const teaches = await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SQL}) t WHERE t.session_id = $2`, [e.employee_id, sessionId]);
+    if (teaches) return ts;
+  }
+  return null;
+}
+
 async function trainerView(employeeId) {
   const sessions = await dbAll(
     `SELECT ts.session_id, ts.training_type_label, ts.session_date, ts.status, ts.location, ts.total_days, ts.day_dates, c.client_name,
@@ -225,7 +246,7 @@ async function trainerView(employeeId) {
     attendees: Number(s.attendee_count), status: s.status,
   });
   const upcoming = sessions.filter((s) => s.status === 'open' && (JSON.parse(s.day_dates || 'null')?.slice(-1)[0] || s.session_date) >= today)
-    .map(shape).sort((a, b) => a.date.localeCompare(b.date));
+    .map((s) => ({ ...shape(s), teaching_today: isTodaySession(s, today) })).sort((a, b) => a.date.localeCompare(b.date));
   const taught = sessions.filter((s) => s.status === 'closed').map(shape);
   // Only ratings meant for this trainer (per-trainer feedback, 2026-10-01).
   const summary = await trainerRatingSummary(employeeId);
@@ -275,5 +296,5 @@ async function portalData(session) {
 module.exports = {
   COOKIE_NAME, SESSION_DAYS, normalizeEmail,
   requestLoginCode, verifyLoginCode, sessionFromToken, endSession,
-  sendInvite, revokeInvite, requestEmailChange, confirmEmailChange, portalData,
+  sendInvite, revokeInvite, requestEmailChange, confirmEmailChange, portalData, teachingTodaySession,
 };

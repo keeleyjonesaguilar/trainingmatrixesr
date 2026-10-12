@@ -246,6 +246,8 @@ export const api = {
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/days/${day}`, { method: 'DELETE' }),
   getSessionEditLink: (sessionId) => request(`/training-sessions/${sessionId}/edit-link`, { method: 'POST' }),
   rebuildSessionRosters: (sessionId) => request(`/training-sessions/${sessionId}/rebuild-rosters`, { method: 'POST' }),
+  // Re-send the class summary (details, links, QR codes) to every trainer on an open session.
+  sendTrainerSummary: (sessionId) => request(`/training-sessions/${sessionId}/trainer-summary`, { method: 'POST' }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
   advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),
@@ -267,6 +269,8 @@ export const api = {
   portalUpdatePhone: (employeeId, phone) => request(`/portal/profiles/${employeeId}/phone`, { method: 'PUT', body: JSON.stringify({ phone }) }),
   portalRequestEmailChange: (newEmail) => request('/portal/email-change', { method: 'POST', body: JSON.stringify({ new_email: newEmail }) }),
   portalConfirmEmailChange: (code) => request('/portal/email-change/confirm', { method: 'POST', body: JSON.stringify({ code }) }),
+  // Live roster of a session the trainer is teaching today (no PIN - the portal login covers it).
+  portalSessionRoster: (sessionId) => request(`/portal/sessions/${sessionId}/roster`),
   // Office side: invite someone to the portal, or remove their access.
   invitePortal: (employeeId) => request(`/employees/${employeeId}/portal-invite`, { method: 'POST' }),
   removePortal: (employeeId) => request(`/employees/${employeeId}/portal-invite`, { method: 'DELETE' }),

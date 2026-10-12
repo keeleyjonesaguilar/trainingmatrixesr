@@ -8,6 +8,7 @@ import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
+import { trainerSummaryProblem } from '../lib/trainerSummary';
 
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
@@ -297,6 +298,8 @@ export default function Sessions() {
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
       }
+      const summaryProblem = trainerSummaryProblem(session.trainer_summary);
+      if (summaryProblem) window.alert(`Session created. ${summaryProblem}`);
       navigate(`/sessions/${session.session_id}`);
     } catch (err) {
       setError(err.message);

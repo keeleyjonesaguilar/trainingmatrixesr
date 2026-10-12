@@ -5,6 +5,7 @@ import { parseName } from '../lib/names.js';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
+import { trainerSummaryProblem } from '../lib/trainerSummary';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
@@ -299,6 +300,10 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
       }
+      // Trainers added by this edit were just emailed the class summary.
+      if (updated.trainer_summary?.sent_to?.length) window.alert(`Class summary emailed to the trainer(s) you added: ${updated.trainer_summary.sent_to.join(', ')}`);
+      const summaryProblem = trainerSummaryProblem(updated.trainer_summary);
+      if (summaryProblem) window.alert(summaryProblem);
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -763,6 +768,23 @@ Their certificate and the training record it added to their employee file will b
     }
   };
 
+  // The class summary to every trainer on the session (2026-10-12) - sent on create; this re-sends
+  // it after a change (date, location, files).
+  const [sendingSummary, setSendingSummary] = useState(false);
+  const emailTrainerSummary = async () => {
+    if (!window.confirm('Email the class summary (details, sign-in and feedback links, QR codes, WeTransfer link) to every trainer on this session?')) return;
+    setSendingSummary(true);
+    try {
+      const result = await api.sendTrainerSummary(id);
+      const problem = trainerSummaryProblem(result);
+      window.alert(`Class summary emailed to ${result.sent_to.join(', ')}.${problem ? `\n\n${problem}` : ''}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSendingSummary(false);
+    }
+  };
+
   const openTrainerEditPage = async () => {
     // Opened before the request so the browser doesn't treat it as an unrequested pop-up.
     const tab = window.open('', '_blank');
@@ -1166,6 +1188,17 @@ Their certificate and the training record it added to their employee file will b
             >
               {copiedLink === 'sign-in' ? 'Copied!' : 'Copy Link'}
             </button>
+            {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+                disabled={sendingSummary}
+                onClick={emailTrainerSummary}
+              >
+                {sendingSummary ? 'Sending…' : 'Email Class Summary'}
+              </button>
+            )}
 
             {session.status === 'closed' && (
               <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>

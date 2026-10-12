@@ -9,7 +9,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
 const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
-const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers } = require('../lib/sessionDays');
+const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers, sessionTrainers } = require('../lib/sessionDays');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
@@ -17,6 +17,7 @@ const { logActivity } = require('../lib/activityLog');
 const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { totalDuration } = require('../lib/durations');
+const { sendTrainerSummary, sendTrainerSummarySafely } = require('../lib/trainerSummary');
 
 // A session with per-training durations: `duration` is the total of them all (migration 078,
 // Keeley's report, 2026-10-07) - recalculated whenever any of them changes.
@@ -440,7 +441,11 @@ router.post('/', async (req, res) => {
       : undefined,
     req,
   });
-  res.status(201).json({ ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning });
+  // Class summary to the trainer(s) - details, links, QR codes (2026-10-12). Not for toolbox talks.
+  const trainerSummary = await sendTrainerSummarySafely(session_id);
+  res.status(201).json({
+    ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning, trainer_summary: trainerSummary,
+  });
 });
 
 // Edit a session's own metadata after creation (client/trainer/date/outline/location/duration).
@@ -450,6 +455,8 @@ router.post('/', async (req, res) => {
 router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Session not found' });
+  // Who was already teaching it - anyone added by this edit gets the class summary.
+  const trainersBefore = new Set((await sessionTrainers(existing)).map((t) => t.employee_id).filter(Boolean));
   const merged = { ...existing, ...req.body };
   if (existing.session_kind === 'toolbox_talk') {
     const topic = String(merged.toolbox_topic || existing.toolbox_topic || '').trim();
@@ -607,7 +614,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
     actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
   });
-  res.json({ ...withParsedDayDates(session), translation_warning: warning });
+  const addedTrainers = (await sessionTrainers(session)).map((t) => t.employee_id).filter((tid) => tid && !trainersBefore.has(tid));
+  const trainerSummary = addedTrainers.length && session.status !== 'closed'
+    ? await sendTrainerSummarySafely(req.params.id, { onlyEmployeeIds: addedTrainers, added: true })
+    : null;
+  res.json({ ...withParsedDayDates(session), translation_warning: warning, trainer_summary: trainerSummary });
 });
 
 // Two independent fulfillment checkboxes (Keeley's request, 2026-09-21) - whether this
@@ -638,6 +649,26 @@ router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
 // holiday) doesn't misjudge who was actually present. New sign-ins and "find your name" check-ins
 // always attach to whatever current_day is at the moment they happen (server/routes/
 // publicSessions.js), so advancing here is what actually opens the next day for attendance.
+// Re-send the class summary to every trainer on the session - e.g. after the date, location or
+// files change (2026-10-12).
+router.post('/:id/trainer-summary', requireAdmin, async (req, res) => {
+  const result = await sendTrainerSummary(req.params.id);
+  if (result.error) return res.status(result.error === 'Session not found.' ? 404 : 400).json({ error: result.error });
+  if (result.skipped) return res.status(400).json({ error: 'Toolbox talks don\u0027t have a class summary.' });
+  if (!result.sent_to.length) {
+    return res.status(400).json({
+      error: result.missing.length
+        ? `No email on file for ${result.missing.join(', ')} - add one to their profile and try again.`
+        : 'The class summary email could not be sent. Please try again.',
+    });
+  }
+  logActivity({
+    actor: req.user, action: 'trainer_summary_sent', entityType: 'training_session', entityId: req.params.id,
+    details: `To ${result.sent_to.join(', ')}`, req,
+  });
+  res.json(result);
+});
+
 router.post('/:id/advance-day', requireAdmin, async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).json({ error: 'Session not found' });

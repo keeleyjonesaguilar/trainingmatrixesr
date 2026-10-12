@@ -9,6 +9,7 @@ const { notifyAllUsers } = require('../lib/notifications');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { displayFirstLast } = require('../lib/names');
 const { recordHasCertificate, sendRecordCertificate } = require('../lib/recordCertificates');
+const { liveRoster } = require('../lib/liveRoster');
 
 const router = express.Router();
 
@@ -127,6 +128,16 @@ router.get('/documents/:documentId', requirePortal, async (req, res) => {
     return res.status(404).json({ error: 'Document not found.' });
   }
   res.download(doc.file_path, doc.filename);
+});
+
+// The live roster of a session the signed-in trainer is teaching today (Keeley's request,
+// 2026-10-12) - the same list as the sign-in page's trainer tab, without the PIN, since the
+// portal login already says who they are. Lead, day trainer or co-trainer, open sessions only.
+router.get('/sessions/:sessionId/roster', requirePortal, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const session = await portal.teachingTodaySession(req.portal, req.params.sessionId);
+  if (!session) return res.status(404).json({ error: "The roster is only available on the day you're teaching this session." });
+  res.json(await liveRoster(session));
 });
 
 module.exports = router;
