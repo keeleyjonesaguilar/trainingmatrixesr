@@ -170,22 +170,36 @@ function ClientEmployeesSection({ clientId, clientName }) {
   }, []);
 
   useEffect(() => {
+    // Only the newest search's answer counts - an earlier, slower one can't overwrite it.
+    let current = true;
     setLoading(true);
     setError('');
     const params = new URLSearchParams({ client_id: clientId, active: activeParam });
     if (search) params.set('search', search);
     if (status) params.set('status', status);
     for (const tid of trainingIds) params.append('training_ids', tid);
-    api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
+    api.getMatrix(params)
+      .then((d) => { if (current) setData(d); })
+      .catch((e) => { if (current) setError(e.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
   }, [clientId, search, trainingIds.join(','), activeParam, status]);
 
-  if (error) return <div className="error-banner">{error}</div>;
-  if (loading || !data) return <div className="card" style={{ marginTop: 16 }}><h2>Employees</h2><LoadingState label="Loading employees..." /></div>;
+  // The full-card spinner is only for the first load. After that the filters stay on screen while
+  // the list refreshes - swapping the whole card out took the search box with it, so each pause in
+  // typing kicked you out of the box (Keeley's report, 2026-10-12).
+  if (!data) {
+    return error ? <div className="error-banner">{error}</div>
+      : <div className="card" style={{ marginTop: 16 }}><h2>Employees</h2><LoadingState label="Loading employees..." /></div>;
+  }
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="toolbar" style={{ justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>Employees</h2>
+        <h2 style={{ margin: 0 }}>
+          Employees
+          {loading && <span className="page-subtitle" style={{ fontSize: 13, fontWeight: 400, marginLeft: 10 }}>Updating…</span>}
+        </h2>
         {/* Exports the currently filtered/visible rows, flattened one row per (employee,
             training) cell rather than the wide on-screen grid (Keeley's request, 2026-09-18). */}
         <button
@@ -247,6 +261,8 @@ function ClientEmployeesSection({ clientId, clientName }) {
           {trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid).join(', ')}
         </p>
       )}
+
+      {error && <div className="error-banner">{error}</div>}
 
       {data.employees.length === 0 ? (
         <div className="empty-state">{emptyFilterHint(status, trainingIds, allMasterTrainings) || 'No employees match these filters.'}</div>

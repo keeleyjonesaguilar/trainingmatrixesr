@@ -203,8 +203,10 @@ function EveryoneList({ rows }) {
 }
 
 function SessionList({ title, sessions, showRosterLinks, emptyText, loading }) {
-  const [page, setPage] = useState(0);
+  const [pageWanted, setPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PER_PAGE));
+  // Filtering can shrink the list under the current page - never point past the last one.
+  const page = Math.min(pageWanted, totalPages - 1);
   const pageRows = sessions.slice(page * SESSIONS_PER_PAGE, page * SESSIONS_PER_PAGE + SESSIONS_PER_PAGE);
 
   return (
@@ -226,9 +228,9 @@ function SessionList({ title, sessions, showRosterLinks, emptyText, loading }) {
       ))}
       {sessions.length > SESSIONS_PER_PAGE && (
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <button type="button" className="secondary" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</button>
+          <button type="button" className="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
           <span className="page-subtitle" style={{ margin: 0, alignSelf: 'center' }}>Page {page + 1} of {totalPages}</span>
-          <button type="button" className="secondary" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>Next</button>
+          <button type="button" className="secondary" disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)}>Next</button>
         </div>
       )}
     </div>

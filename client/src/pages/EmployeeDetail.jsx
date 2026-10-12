@@ -627,6 +627,9 @@ export default function EmployeeDetail() {
         </div>
         <div className="page-header-actions">
           <button className="secondary" onClick={() => navigate('/matrix')}>Back to Employees</button>
+          {/* Their training record as a file (Keeley's request, 2026-10-12) - server/lib/employeeTrainingExport.js. */}
+          <a className="btn btn-secondary" href={`/api/employees/${employee.employee_id}/training-record.pdf`} download>Export PDF</a>
+          <a className="btn btn-secondary" href={`/api/employees/${employee.employee_id}/training-record.csv`} download>Export CSV</a>
           {isAdmin && employee.active && (
             <button className="secondary" onClick={() => setConfirmingDeactivate(true)}>Deactivate Employee</button>
           )}

@@ -20,6 +20,7 @@ const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require
 const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
 const { TAUGHT_SESSIONS_SQL, trainerFeedbackComments, trainerRatingSummary } = require('../lib/sessionFeedback');
 const { nameSearchClause } = require('../lib/search');
+const { exportData, fileBase, toCsv, writePdf } = require('../lib/employeeTrainingExport');
 
 const router = express.Router();
 
@@ -178,6 +179,21 @@ async function multiDayEvents(recordId) {
     trainer_signed_off_at: d.signed_at,
   }));
 }
+
+// Export the employee's training record (Keeley's request, 2026-10-12) - lib/employeeTrainingExport.js.
+router.get('/:id/training-record.:format(csv|pdf)', async (req, res) => {
+  const data = await exportData(req.params.id);
+  if (!data) return res.status(404).json({ error: 'Employee not found' });
+  const filename = `${fileBase(data)}.${req.params.format}`;
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `attachment; filename="${filename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  if (req.params.format === 'csv') {
+    res.type('text/csv; charset=utf-8').send(toCsv(data));
+  } else {
+    res.type('application/pdf');
+    writePdf(data, res);
+  }
+});
 
 // Each employee's scannable training record (Keeley's request, 2026-09-30) - see
 // lib/employeeRecordCard.js. `path` lets the page open it on whichever site it's on.

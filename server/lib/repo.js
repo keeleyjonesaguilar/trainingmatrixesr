@@ -119,6 +119,27 @@ async function loadCellLookups(employeeIds, clientIds) {
   return { requirementMap, recordMap, ignoredSet };
 }
 
+// The same three lookups, for ONE training across every employee (the Training Type page,
+// Keeley's report 2026-10-12: it used to run computeCell per active employee - 5,000+ queries
+// and minutes per page). DISTINCT ON keeps the same "latest active record" getLatestRecord() picks.
+async function loadTrainingLookups(trainingId) {
+  const [requirementRows, recordRows, ignoredRows] = await Promise.all([
+    dbAll('SELECT * FROM client_training_requirements WHERE training_id = ?', [trainingId]),
+    dbAll(
+      `SELECT DISTINCT ON (employee_id) * FROM employee_training_records
+       WHERE training_id = ? AND is_active_record = 1 AND is_inactive = 0
+       ORDER BY employee_id, (completion_date IS NULL), completion_date DESC, insert_seq DESC`,
+      [trainingId]
+    ),
+    dbAll('SELECT employee_id, training_id FROM ignored_compliance_gaps WHERE training_id = ?', [trainingId]),
+  ]);
+  return {
+    requirementMap: new Map(requirementRows.map((r) => [`${r.client_id}|${r.training_id}`, r])),
+    recordMap: new Map(recordRows.map((r) => [`${r.employee_id}|${r.training_id}`, r])),
+    ignoredSet: new Set(ignoredRows.map((r) => `${r.employee_id}|${r.training_id}`)),
+  };
+}
+
 // Sync counterpart to computeCell, for use against loadCellLookups()'s maps instead of a fresh
 // db round trip per cell.
 function computeCellFromLookups({ employeeId, clientId, trainingId, masterTraining, requirementMap, recordMap, ignoredSet, today }) {
@@ -730,6 +751,7 @@ module.exports = {
   listRecordsForEmployee,
   computeCell,
   loadCellLookups,
+  loadTrainingLookups,
   computeCellFromLookups,
   recomputeAndPersistRecord,
   recomputeAllForClientTraining,

@@ -85,18 +85,24 @@ router.get('/:id/detail', async (req, res) => {
   const clauses = ['e.active = 1', 'c.is_internal = 0'];
   const params = [];
   if (client_id) { clauses.push('e.client_id = ?'); params.push(client_id); }
-  const employees = await dbAll(
-    `SELECT e.* FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE ${clauses.join(' AND ')}`,
-    params
-  );
+  // Everything loaded in a handful of queries, then worked out in memory (2026-10-12, speed): this
+  // used to call computeCell for each active employee - 2-3 queries apiece, 5,000+ per page.
+  const [employees, lookups] = await Promise.all([
+    dbAll(
+      `SELECT e.employee_id, e.full_name, e.client_id FROM employees e JOIN clients c ON c.client_id = e.client_id WHERE ${clauses.join(' AND ')}`,
+      params
+    ),
+    repo.loadTrainingLookups(mt.training_id),
+  ]);
 
   const buckets = { Current: [], Expired: [], 'No Expiration': [], 'Pending Review': [], Missing: [] };
   for (const emp of employees) {
-    const { status, expirationDate, record } = await repo.computeCell({
+    const { status, expirationDate, record } = repo.computeCellFromLookups({
       employeeId: emp.employee_id,
       clientId: emp.client_id,
       trainingId: mt.training_id,
       masterTraining: mt,
+      ...lookups,
     });
     if (buckets[status]) {
       buckets[status].push({

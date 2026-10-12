@@ -8,8 +8,10 @@ export default function LiveSearchInput({ value = '', onSearch, delay = 300, ...
   const [text, setText] = useState(value);
   const lastSent = useRef(value);
 
+  // Compared without surrounding spaces: pages store the search trimmed, and treating "john" coming
+  // back for "john " as an outside change used to delete the space mid-name ("johnsmith").
   useEffect(() => {
-    if (value !== lastSent.current) {
+    if (value.trim() !== lastSent.current.trim()) {
       lastSent.current = value;
       setText(value);
     }

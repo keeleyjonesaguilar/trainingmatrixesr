@@ -18,6 +18,8 @@ const NAV_ITEMS = [
   // accounts or bulk-import data.
   { to: '/import', label: 'Import Data', adminOnly: true },
   { to: '/admin/users', label: 'Manage Users', adminOnly: true },
+  // Changes and updates people would find useful, kept in one place (2026-10-12).
+  { to: '/requests', label: 'Requests' },
   { to: '/account', label: 'My Account' },
   // Super Admin only - login/IP audit trail. Hidden rather than shown-disabled for everyone
   // else, same as this app hides other things a given role can't reach.

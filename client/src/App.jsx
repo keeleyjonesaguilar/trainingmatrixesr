@@ -13,6 +13,7 @@ import Import from './pages/Import.jsx';
 import Reports from './pages/Reports.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
 import Account from './pages/Account.jsx';
+import Requests from './pages/Requests.jsx';
 import Security from './pages/Security.jsx';
 import Login from './pages/Login.jsx';
 import Sessions from './pages/Sessions.jsx';
@@ -116,6 +117,7 @@ export default function App() {
               <Route path="/import" element={<Import />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/admin/users" element={<AdminUsers currentUsername={username} />} />
+              <Route path="/requests" element={<Requests />} />
               <Route path="/account" element={<Account username={username} />} />
               <Route path="/security" element={<Security />} />
             </Routes>

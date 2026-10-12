@@ -314,4 +314,11 @@ export const api = {
   listNotifications: () => request('/notifications'),
   markNotificationRead: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
   markAllNotificationsRead: () => request('/notifications/mark-all-read', { method: 'POST' }),
+
+  // Requests page - changes and updates the office would find useful (2026-10-12).
+  listChangeRequests: () => request('/change-requests'),
+  createChangeRequest: (data) => request('/change-requests', { method: 'POST', body: JSON.stringify(data) }),
+  updateChangeRequest: (id, data) => request(`/change-requests/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  setChangeRequestStatus: (id, data) => request(`/change-requests/${id}/status`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteChangeRequest: (id) => request(`/change-requests/${id}`, { method: 'DELETE' }),
 };

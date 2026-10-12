@@ -147,6 +147,8 @@ export default function Matrix() {
   }, []);
 
   useEffect(() => {
+    // Only the newest search's answer counts - an earlier, slower one can't overwrite it.
+    let current = true;
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
@@ -155,7 +157,11 @@ export default function Matrix() {
     params.set('active', activeParam);
     if (status) params.set('status', status);
     for (const tid of trainingIds) params.append('training_ids', tid);
-    api.getMatrix(params).then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false));
+    api.getMatrix(params)
+      .then((d) => { if (current) setData(d); })
+      .catch((e) => { if (current) setError(e.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId, search, trainingIds.join(','), activeParam, status, refreshKey]);
 
@@ -302,9 +308,12 @@ export default function Matrix() {
         </p>
       )}
 
-      {loading && <LoadingState label="Loading employees..." />}
+      {/* The list stays up while a new search loads (Keeley's report, 2026-10-12: blanking it on every
+          pause in typing made the page look like it reloaded after each letter). */}
+      {loading && !data && <LoadingState label="Loading employees..." />}
+      {loading && data && <p className="page-subtitle" style={{ margin: '0 0 8px' }}>Updating…</p>}
 
-      {data && !loading && (
+      {data && (
         data.employees.length === 0 ? (
           <div className="empty-state">{emptyFilterHint(status, trainingIds, allMasterTrainings) || 'No employees match these filters.'}</div>
         ) : (
