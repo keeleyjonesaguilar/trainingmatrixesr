@@ -5,6 +5,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import EmployeeCompliancePanel from '../components/EmployeeCompliancePanel.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import MergeWithProfileModal from '../components/MergeWithProfileModal.jsx';
+import ScanInbox from '../components/ScanInbox.jsx';
 import { easternToday, formatEasternDate } from '../lib/dates.js';
 import { displayFirstLast, nameParts } from '../lib/names.js';
 
@@ -423,7 +424,7 @@ function PortalAccess({ employee, isAdmin, onChanged }) {
   );
 }
 
-function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] }) {
+function EmployeeDocumentsSection({ employeeId, employeeName, isAdmin, trainingOptions = [] }) {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [label, setLabel] = useState('');
@@ -484,6 +485,7 @@ function EmployeeDocumentsSection({ employeeId, isAdmin, trainingOptions = [] })
         Existing OSHA/CPR cards, medical evaluations, or anything else worth keeping on file for this employee.
       </p>
       {error && <div className="error-banner">{error}</div>}
+      {isAdmin && <ScanInbox employeeId={employeeId} employeeName={employeeName} trainingOptions={trainingOptions} onSaved={load} />}
       {loading ? <LoadingState label="Loading documents..." /> : (
         <>
           {documents.length === 0 ? (
@@ -763,6 +765,7 @@ export default function EmployeeDetail() {
         </div>
         <EmployeeDocumentsSection
           employeeId={employee.employee_id}
+          employeeName={displayFirstLast(employee)}
           isAdmin={isAdmin}
           trainingOptions={[...new Map(completedRecords.map((r) => [r.training_id, { training_id: r.training_id, training_name: r.master_training_name || r.training_name }])).values()]
             .sort((a, b) => a.training_id.localeCompare(b.training_id))}
