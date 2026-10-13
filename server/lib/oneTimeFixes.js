@@ -163,6 +163,15 @@ async function runOneTimeFixes() {
       const done = await creditOldMultiDayFeedback();
       console.log(`Older multi-day feedback: ${done.length} response(s) credited to the day's trainer.`);
     });
+
+    // LeoTerra 10/12/2026 class (Victor Mendez): the third training was TRN-092 Silica, not TRN-099
+    // Trenching and Excavations (Keeley's request, 2026-10-13). Certificates are rewritten over the
+    // Trenching ones, the records move to Silica, and the roster is rebuilt - lib/switchSessionTraining.js.
+    await runOnce('fix_leoterra_2026_10_12_silica_v1', 'switched the LeoTerra 10/12/2026 class from TRN-099 to TRN-092', async () => {
+      const { switchSessionTraining } = require('./switchSessionTraining'); // eslint-disable-line global-require
+      const rewritten = await switchSessionTraining('3f16b675-13b9-4db8-80da-8de59c15ed80', '501d3831-1b7c-42b7-822a-29c46414b80e', 'TRN-099', 'TRN-092');
+      console.log(`LeoTerra 10/12/2026: ${rewritten === null ? 'already changed - left alone' : `${rewritten} Silica certificate(s) written`}.`);
+    });
   }
 }
 
