@@ -321,7 +321,8 @@ export const api = {
   // Notification bell (top bar) - broadcast to every account, e.g. when a training session closes.
   listNotifications: () => request('/notifications'),
   markNotificationRead: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
-  markAllNotificationsRead: () => request('/notifications/mark-all-read', { method: 'POST' }),
+  // `group` ('attention' | 'completed' | 'updates') marks just that tab read (2026-10-14).
+  markAllNotificationsRead: (group) => request('/notifications/mark-all-read', { method: 'POST', body: JSON.stringify(group ? { group } : {}) }),
 
   // Requests page - changes and updates the office would find useful (2026-10-12).
   listChangeRequests: () => request('/change-requests'),

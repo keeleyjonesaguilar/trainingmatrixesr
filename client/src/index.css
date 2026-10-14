@@ -255,6 +255,25 @@ a:hover { text-decoration: underline; }
 .notification-item-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
 .notification-item-body { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
 .notification-item-time { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; }
+/* Tabs (2026-10-14): Needs attention / Completed / Updates. */
+.notification-dropdown { width: 380px; max-height: 480px; }
+.notification-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--esr-green); }
+.notification-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--color-border); }
+.notification-tab { border: none; background: none; padding: 7px 9px; font-size: 12px; font-weight: 600; color: var(--color-text-muted); cursor: pointer; border-radius: 6px 6px 0 0; display: flex; align-items: center; gap: 5px; }
+.notification-tab:hover { color: var(--color-text); }
+.notification-tab[aria-selected="true"] { color: var(--color-text); background: var(--color-bg); box-shadow: inset 0 -2px 0 var(--esr-green); }
+.notification-tab-count { min-width: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; line-height: 17px; text-align: center; background: var(--color-border); color: var(--color-text); }
+.notification-tab-attention .notification-tab-count { background: var(--status-missing-bg); color: var(--status-missing-text); }
+.notification-digest { padding: 9px 14px; font-size: 12px; font-weight: 600; color: var(--status-current-text); background: var(--status-current-bg); border-bottom: 1px solid var(--color-border); }
+.notification-item { border-left: 4px solid transparent; }
+.notification-item-attention { border-left-color: var(--status-missing-text); }
+.notification-item-completed { border-left-color: var(--esr-green); }
+.notification-item-updates { border-left-color: var(--color-border); }
+.notification-tag { display: inline-block; margin-right: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; }
+.notification-tag-attention { background: var(--status-missing-bg); color: var(--status-missing-text); }
+.notification-tag-completed { background: var(--status-current-bg); color: var(--status-current-text); }
+.notification-tag-updates { background: var(--color-bg); color: var(--color-text-muted); }
+@media (max-width: 480px) { .notification-dropdown { width: min(380px, calc(100vw - 24px)); } }
 
 /* ---------- Training search picker (Sessions.jsx create/edit forms) ---------- */
 

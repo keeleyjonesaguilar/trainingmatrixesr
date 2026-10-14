@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { parseName } from '../lib/names.js';
 import { useIsAdmin } from '../authContext.jsx';
-import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
+import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday, EASTERN_TZ } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
 import { trainerSummaryProblem } from '../lib/trainerSummary';
 import { resizeDays } from '../lib/courseDays';
@@ -227,6 +227,16 @@ function TrainerNotes({ session }) {
   );
 }
 
+// 15 minutes from now on Eastern time, as the datetime box wants it ("2026-10-14T14:25") - the box
+// opens on today so a test send can't land on the wrong day by accident.
+function soonEastern() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: EASTERN_TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date(Date.now() + 15 * 60 * 1000));
+  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
 // TEMPORARY (Keeley, 2026-10-14: "we will take it out after I am done") - email the class summary
 // to every trainer at a set time. The live site sends it (server/lib/trainerSummaryScheduler.js).
 function ScheduleSummary({ sessionId }) {
@@ -269,7 +279,7 @@ function ScheduleSummary({ sessionId }) {
   return (
     <div style={{ marginTop: 8, textAlign: 'left' }}>
       {!open ? (
-        <button type="button" className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setOpen(true)}>
+        <button type="button" className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={() => { setWhen(soonEastern()); setOpen(true); }}>
           Schedule Class Summary
         </button>
       ) : (
