@@ -18,6 +18,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const { getSessionDays } = require('../lib/sessionDays');
 const { ensureRecordToken, resetRecordToken, recordPath, recordQrPng } = require('../lib/employeeRecordCard');
 const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = require('../lib/portal');
+const { sendEmployeeCertificates } = require('../lib/certificateEmails');
 const { TAUGHT_SESSIONS_SQL, trainerFeedbackComments, trainerRatingSummary } = require('../lib/sessionFeedback');
 const { nameSearchClause } = require('../lib/search');
 const { exportData, fileBase, toCsv, writePdf } = require('../lib/employeeTrainingExport');
@@ -233,6 +234,26 @@ router.delete('/:id/portal-invite', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Email Certificates on the profile (Keeley's request, 2026-10-14) - lib/certificateEmails.js.
+// body: { record_ids, email, save_to_profile }.
+router.post('/:id/email-certificates', requireAdmin, async (req, res) => {
+  let result;
+  try {
+    result = await sendEmployeeCertificates(req.params.id, {
+      recordIds: req.body.record_ids, email: req.body.email, saveToProfile: Boolean(req.body.save_to_profile),
+    }, req.user);
+  } catch (err) {
+    console.error(`Certificate email failed for employee ${req.params.id}:`, err.message);
+    return res.status(502).json({ error: 'The email could not be sent. Please try again in a minute.' });
+  }
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  logActivity({
+    actor: req.user, action: 'certificates_emailed_to_employee', entityType: 'employee', entityId: req.params.id,
+    entityLabel: result.employee.full_name, details: `To ${result.sent_to}: ${result.sent.join(', ')}`, req,
+  });
+  res.json({ sent_to: result.sent_to, sent: result.sent, skipped: result.skipped, profile_updated: result.profile_updated });
+});
+
 // A lost badge: the old QR code stops working, a new one is issued.
 router.post('/:id/record-token/reset', requireAdmin, async (req, res) => {
   const token = await resetRecordToken(req.params.id);
@@ -343,6 +364,8 @@ router.get('/:id/full-detail', async (req, res) => {
       notes: r.notes,
       record_id: r.record_id,
       certificate_filename: r.certificate_filename,
+      certificate_emailed_at: r.certificate_emailed_at,
+      certificate_emailed_to: r.certificate_emailed_to,
       trainer_employee_id: r.trainer_employee_id,
       signature: signatureByRecord.get(r.record_id) || null,
       days: multiDayRecordIds.has(r.record_id) ? await multiDayEvents(r.record_id) : null,

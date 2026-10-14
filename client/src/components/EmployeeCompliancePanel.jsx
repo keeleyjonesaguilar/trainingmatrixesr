@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { formatEasternDateTime, formatShortDate } from '../lib/dates';
+import { formatEasternDate, formatEasternDateTime, formatShortDate } from '../lib/dates';
 import Modal from './Modal.jsx';
 import StatusBadge from './StatusBadge.jsx';
+import { EmailProfileCertificatesModal } from './EmailCertificatesModal.jsx';
 
 const ADD_NEW_TRAINER = '__add_new__';
 
@@ -71,7 +72,7 @@ function AddTrainerModal({ onCreated, onClose }) {
 // Certificate of completion cell (Keeley's request): shows a View link if one's on file,
 // otherwise an inline "Attach Certificate" control so it can be added later too - not just
 // at the moment the training record is first created.
-function CertificateCell({ record, isAdmin, onUploaded }) {
+function CertificateCell({ record, isAdmin, onUploaded, onEmail }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
@@ -99,6 +100,13 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
       {record.certificate_filename && (
         <a href={api.getCertificateUrl(record.record_id)} target="_blank" rel="noreferrer">View</a>
       )}
+      {/* Email just this one (2026-10-14) - opens the profile's Email Certificates window. */}
+      {isAdmin && record.certificate_filename && onEmail && (
+        <>
+          {' · '}
+          <button type="button" className="link-button" onClick={() => onEmail(record.record_id)}>Email</button>
+        </>
+      )}
       {isAdmin && (
         <>
           {record.certificate_filename ? ' · ' : null}
@@ -115,6 +123,11 @@ function CertificateCell({ record, isAdmin, onUploaded }) {
         </>
       )}
       {!record.certificate_filename && !isAdmin && '—'}
+      {record.certificate_emailed_at && (
+        <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }} title={`Emailed to ${record.certificate_emailed_to}`}>
+          Emailed {formatEasternDate(record.certificate_emailed_at)}
+        </div>
+      )}
       {error && <div className="error-banner" style={{ marginTop: 4 }}>{error}</div>}
     </div>
   );
@@ -223,6 +236,8 @@ export default function EmployeeCompliancePanel({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [inactiveRefreshKey, setInactiveRefreshKey] = useState(0);
+  // Email Certificates window (2026-10-14): null = closed, 'all' = from the button, or a record id.
+  const [emailing, setEmailing] = useState(null);
 
   useEffect(() => { setLocalTrainers(trainers); }, [trainers]);
 
@@ -335,7 +350,23 @@ export default function EmployeeCompliancePanel({
           <div className="card">
             <div className="toolbar">
               <h2 style={{ margin: 0 }}>{heading} ({completedRecords.length})</h2>
-              {isAdmin && <button type="button" onClick={() => setAddingRecord(true)}>+ Add Training</button>}
+              {isAdmin && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {completedRecords.some((r) => r.certificate_filename) && (
+                    <button type="button" className="secondary" onClick={() => setEmailing('all')}>Email Certificates</button>
+                  )}
+                  <button type="button" onClick={() => setAddingRecord(true)}>+ Add Training</button>
+                </div>
+              )}
+              {emailing && (
+                <EmailProfileCertificatesModal
+                  employee={employee}
+                  records={completedRecords}
+                  preselect={emailing === 'all' ? null : emailing}
+                  onClose={() => setEmailing(null)}
+                  onSent={onReload}
+                />
+              )}
             </div>
             <div className="table-scroll">
               <table>
@@ -376,7 +407,7 @@ export default function EmployeeCompliancePanel({
                       <td><StatusBadge status={t.status} /></td>
                       <td>{t.completion_date || '—'}</td>
                       <td>{t.expiration_date || '—'}</td>
-                      <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={onReload} /></td>
+                      <td><CertificateCell record={t} isAdmin={isAdmin} onUploaded={onReload} onEmail={setEmailing} /></td>
                       <td>
                         {t.signature ? (
                           <img src={t.signature} alt="Employee signature" style={{ height: 28, maxWidth: 90 }} />

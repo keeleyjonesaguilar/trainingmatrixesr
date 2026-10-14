@@ -43,6 +43,7 @@ const ACTIVITY_ACTION_LABELS = {
   certificates_zip_downloaded: 'Certificates ZIP downloaded',
   certificates_emailed_to_attendees: 'Certificates emailed to employees',
   certificates_emailed_to_client: 'Certificates emailed to company',
+  certificates_emailed_to_employee: 'Certificates emailed from profile',
   client_created: 'Client created',
   client_updated: 'Client updated',
   client_logo_updated: 'Client logo updated',

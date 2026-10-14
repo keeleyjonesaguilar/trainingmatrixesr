@@ -6,14 +6,17 @@
 //     employee profile).
 //   - Email Certificates to Company: the company's contact(s) get the same certificate ZIP(s) as
 //     the "Download Certificates" button, plus the sign-in roster if ticked, in one email.
+// And from an employee's profile (same day): any of their training records' certificates in one
+// email to them - Email Certificates on the Completed Trainings table.
 // Replies go to whoever pressed Send (the sending address isn't monitored). Routes live in
-// routes/trainingSessions.js.
+// routes/trainingSessions.js and routes/employees.js.
 const fs = require('fs');
 const { dbGet, dbAll, dbRun } = require('../db');
 const { sendEmail } = require('./email');
 const { listCertificateFiles, certificateZipName, certificateZipBuffer } = require('./certificateZip');
 const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('./certificateFilename');
-const { parseName } = require('./names');
+const { parseName, displayFirstLast } = require('./names');
+const { buildRecordCertificate, computeFilenameForRecord } = require('./recordCertificates');
 const {
   esc, longDate, sessionDates, GREEN, GOLD, TEXT, MUTED, BORDER, BG, FONT,
 } = require('./sessionCompleteEmail');
@@ -389,7 +392,104 @@ async function sendCompanyCertificates(sessionId, { emails, includeRoster = true
   return { session, sent_to: to, certificates: certified.length, attachments: attachments.map((a) => a.filename) };
 }
 
+// One training record's certificate as an attachment - the same file the profile's View link
+// opens: a saved one (uploaded by hand, or from a sign-in session), otherwise the auto-generated
+// one built on the spot (lib/recordCertificates.js). { missing: true } when the record points to a
+// file that isn't on this server's disk.
+async function recordCertificateAttachment(record) {
+  if (record.certificate_path && fs.existsSync(record.certificate_path)) {
+    const filename = record.certificate_auto_generated
+      ? (await computeFilenameForRecord(record)) || record.certificate_filename || 'certificate.pdf'
+      : record.certificate_filename || 'certificate.pdf';
+    return { filename, content: fs.readFileSync(record.certificate_path) };
+  }
+  if (record.certificate_auto_generated) {
+    const pdf = await buildRecordCertificate(record);
+    if (pdf) return { filename: (await computeFilenameForRecord(record)) || record.certificate_filename || 'certificate.pdf', content: pdf };
+  }
+  return record.certificate_path ? { missing: true } : null;
+}
+
+function buildEmployeeCertificatesEmail({ employee, clientName, items, sender }) {
+  const one = items.length === 1;
+  const title = one ? items[0].training : `${items.length} Training Certificates`;
+  const subject = one
+    ? `Your Training Certificate: ${items[0].training} – ${longDate(items[0].date)}`
+    : `Your Training Certificates (${items.length}) – Evolution Safety Resources`;
+  const first = employee.first_name || parseName(employee.full_name).first;
+  const intro = `${first ? `Hi ${esc(first)}` : 'Hello'}, ${one ? 'your training certificate is' : 'your training certificates are'} attached to this email - please keep a copy for your records.`;
+  const rows = [
+    ['Name', esc(displayFirstLast(employee))],
+    ...(clientName ? [['Company', esc(clientName)]] : []),
+    ...(one ? [['Training', esc(items[0].training)], ['Completed', esc(longDate(items[0].date))]] : [['Certificates', String(items.length)]]),
+  ];
+  const attached = items.map((i) => ({ kind: /\.pdf$/i.test(i.filename) ? 'PDF' : 'IMG', label: `Certificate – ${i.training}`, detail: `Completed ${longDate(i.date)}` }));
+  const html = frame({
+    subject,
+    kicker: `Certificate${one ? '' : 's'} of Completion`,
+    title,
+    subtitle: esc(clientName || 'Evolution Safety Resources'),
+    body: paragraph(intro) + summaryBox(rows) + attachedList(attached),
+    sender,
+  });
+  return { subject, html };
+}
+
+// recordIds: which of the employee's (active) training records to send. `email` is saved to their
+// profile when it has none, or when `saveToProfile` (the address was changed in the window).
+async function sendEmployeeCertificates(employeeId, { recordIds, email: rawEmail, saveToProfile = false }, user) {
+  const employee = await dbGet('SELECT * FROM employees WHERE employee_id = ?', [employeeId]);
+  if (!employee) return { error: 'Employee not found.', status: 404 };
+  const email = String(rawEmail || '').trim().toLowerCase();
+  if (!EMAIL_PATTERN.test(email)) return { error: email ? `"${email}" isn't a valid email address.` : 'Enter an email address to send to.', status: 400 };
+  const ids = [...new Set(Array.isArray(recordIds) ? recordIds : [])];
+  if (!ids.length) return { error: 'Choose at least one certificate to send.', status: 400 };
+  const records = await dbAll(
+    `SELECT r.*, mt.training_name AS master_training_name FROM employee_training_records r
+     JOIN master_trainings mt ON mt.training_id = r.training_id
+     WHERE r.employee_id = ? AND r.record_id = ANY(?) AND r.is_inactive = 0
+     ORDER BY r.completion_date DESC`,
+    [employeeId, ids]
+  );
+  const attachments = [];
+  const items = [];
+  const skipped = [];
+  for (const r of records) {
+    const training = stripTrainingIdPrefix(r.original_client_training_name || r.master_training_name);
+    const file = await recordCertificateAttachment(r); // eslint-disable-line no-await-in-loop
+    if (!file || file.missing) {
+      skipped.push({ training, reason: file?.missing ? 'certificate file not found on this server' : 'no certificate on file' });
+      continue; // eslint-disable-line no-continue
+    }
+    attachments.push({ filename: file.filename, content: file.content.toString('base64'), bytes: file.content.length });
+    items.push({ record_id: r.record_id, training, date: r.completion_date, filename: file.filename });
+  }
+  if (!attachments.length) {
+    return { error: `Nothing to send - ${skipped.map((x) => `${x.training}: ${x.reason}`).join('; ') || 'no certificates found'}.`, status: 400 };
+  }
+  const totalBytes = attachments.reduce((sum, a) => sum + a.bytes, 0);
+  if (totalBytes > MAX_ATTACHMENT_BYTES) {
+    return { error: `These certificates are too big to email together (${Math.round(totalBytes / 1024 / 1024)} MB). Choose fewer and send them in two emails.`, status: 400 };
+  }
+
+  const client = await dbGet('SELECT client_name, is_internal FROM clients WHERE client_id = ?', [employee.client_id]);
+  const sender = await senderFor(user);
+  await sendEmail({
+    to: email,
+    ...buildEmployeeCertificatesEmail({ employee, clientName: client && !client.is_internal ? client.client_name : null, items, sender }),
+    attachments: attachments.map(({ filename, content }) => ({ filename, content })),
+    replyTo: sender.email || undefined,
+    fromName: FROM_NAME,
+  });
+
+  const now = new Date().toISOString();
+  await dbRun('UPDATE employee_training_records SET certificate_emailed_at = ?, certificate_emailed_to = ? WHERE record_id = ANY(?)', [now, email, items.map((i) => i.record_id)]);
+  const profileUpdated = !employee.email || (saveToProfile && employee.email !== email);
+  if (profileUpdated) await dbRun('UPDATE employees SET email = ? WHERE employee_id = ?', [email, employeeId]);
+  return { employee, sent_to: email, sent: items.map((i) => i.training), skipped, profile_updated: profileUpdated };
+}
+
 module.exports = {
   splitEmails, EMAIL_PATTERN, attendeeEmailOptions, sendAttendeeCertificates, sendCompanyCertificates,
-  buildAttendeeEmail, buildCompanyEmail,
+  sendEmployeeCertificates, buildAttendeeEmail, buildCompanyEmail, buildEmployeeCertificatesEmail,
 };

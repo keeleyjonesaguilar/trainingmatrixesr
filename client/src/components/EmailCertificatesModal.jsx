@@ -4,7 +4,8 @@ import { api } from '../api';
 import { formatEasternDateTime } from '../lib/dates';
 
 // Emailing a closed session's certificates by hand (Keeley's request, 2026-10-14) - nothing goes
-// out until Send is pressed. server/lib/certificateEmails.js does the sending.
+// out until Send is pressed: from a closed session (employees / company), or from an employee's
+// profile. server/lib/certificateEmails.js does the sending.
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const muted = { fontSize: 12, color: 'var(--color-text-muted)' };
@@ -254,6 +255,127 @@ export function EmailCompanyModal({ session, onClose, onSent }) {
             <button type="button" className="btn btn-sm" disabled={sending || !emails.trim() || !certifiedCount} onClick={send}>
               {sending ? 'Sending…' : info.certificates_emailed_to_client_at ? 'Send Again' : 'Send to Company'}
             </button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// From an employee's profile (Keeley's request, 2026-10-14): any of their certificates in one email
+// to them. `records` are the Completed Trainings rows; `preselect` is a record id when opened from a
+// single certificate's Email link, otherwise every certificate starts ticked.
+export function EmailProfileCertificatesModal({ employee, records, preselect = null, onClose, onSent }) {
+  const withCert = records.filter((r) => r.record_id && r.certificate_filename);
+  const [chosen, setChosen] = useState(() => new Set(preselect ? [preselect] : withCert.map((r) => r.record_id)));
+  const [email, setEmail] = useState(employee.email || '');
+  const [saveToProfile, setSaveToProfile] = useState(true);
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const trimmed = email.trim().toLowerCase();
+  const validEmail = EMAIL_PATTERN.test(trimmed);
+  const changedFromProfile = Boolean(employee.email) && validEmail && trimmed !== employee.email.toLowerCase();
+  const toggle = (id, on) => setChosen((set) => {
+    const next = new Set(set);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+
+  const send = async () => {
+    setSending(true);
+    setError('');
+    try {
+      const res = await api.emailEmployeeCertificates(employee.employee_id, {
+        record_ids: [...chosen], email: trimmed, save_to_profile: changedFromProfile && saveToProfile,
+      });
+      setResult(res);
+      onSent?.();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal onClose={sending ? undefined : onClose} maxWidth={620}>
+      <h3 style={{ marginTop: 0 }}>Email Certificates to {employee.full_name}</h3>
+      {error && <div className="error-banner">{error}</div>}
+      {result ? (
+        <>
+          <p style={{ marginTop: 0 }}>
+            Emailed {result.sent.length} certificate{result.sent.length === 1 ? '' : 's'} to <strong>{result.sent_to}</strong>.
+            {result.profile_updated ? ' The address is saved on their profile.' : ''}
+          </p>
+          {result.skipped.length > 0 && (
+            <p style={muted}>Not included: {result.skipped.map((s) => `${s.training} - ${s.reason}`).join('; ')}</p>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-sm" onClick={onClose}>Done</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={{ display: 'block', fontWeight: 600, fontSize: 13, marginBottom: 4 }} htmlFor="profile-cert-email">Send to</label>
+          <input
+            id="profile-cert-email"
+            type="email"
+            style={{ width: '100%' }}
+            placeholder="name@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          {!employee.email && validEmail && (
+            <div style={{ ...muted, marginTop: 4 }}>This address will be saved to their profile.</div>
+          )}
+          {changedFromProfile && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 13 }}>
+              <input type="checkbox" checked={saveToProfile} onChange={(e) => setSaveToProfile(e.target.checked)} />
+              Replace {employee.email} on their profile with this address
+            </label>
+          )}
+
+          <div style={{ display: 'flex', gap: 12, margin: '14px 0 6px', fontSize: 13, alignItems: 'center' }}>
+            <strong>Certificates</strong>
+            <button type="button" className="link-button" onClick={() => setChosen(new Set(withCert.map((r) => r.record_id)))}>Select all</button>
+            <button type="button" className="link-button" onClick={() => setChosen(new Set())}>Clear</button>
+          </div>
+          <div className="table-scroll" style={{ maxHeight: 320 }}>
+            <table>
+              <thead><tr><th></th><th>Training</th><th>Completed</th><th>Last Sent</th></tr></thead>
+              <tbody>
+                {withCert.map((r) => (
+                  <tr key={r.record_id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Send ${r.training_name}`}
+                        checked={chosen.has(r.record_id)}
+                        onChange={(e) => toggle(r.record_id, e.target.checked)}
+                      />
+                    </td>
+                    <td>{r.training_name}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{r.completion_date}</td>
+                    <td style={muted}>
+                      {r.certificate_emailed_at ? <>{formatEasternDateTime(r.certificate_emailed_at)}<br />{r.certificate_emailed_to}</> : '—'}
+                    </td>
+                  </tr>
+                ))}
+                {withCert.length === 0 && <tr><td colSpan={4} className="empty-state">No certificates on file for this employee.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 14 }}>
+            <span style={muted}>All in one email. Replies come back to you.</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={sending} onClick={onClose}>Cancel</button>
+              <button type="button" className="btn btn-sm" disabled={sending || !validEmail || !chosen.size} onClick={send}>
+                {sending ? 'Sending…' : `Email ${chosen.size} Certificate${chosen.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
           </div>
         </>
       )}

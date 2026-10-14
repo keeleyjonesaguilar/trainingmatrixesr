@@ -251,6 +251,7 @@ export const api = {
   getCertificateEmailOptions: (sessionId) => request(`/training-sessions/${sessionId}/certificate-emails`),
   emailCertificatesToAttendees: (sessionId, recipients) => request(`/training-sessions/${sessionId}/certificate-emails/attendees`, { method: 'POST', body: JSON.stringify({ recipients }) }),
   emailCertificatesToCompany: (sessionId, data) => request(`/training-sessions/${sessionId}/certificate-emails/company`, { method: 'POST', body: JSON.stringify(data) }),
+  emailEmployeeCertificates: (employeeId, data) => request(`/employees/${employeeId}/email-certificates`, { method: 'POST', body: JSON.stringify(data) }),
   retryAttendeeProcessing: (sessionId, attendeeId) =>
     request(`/training-sessions/${sessionId}/attendees/${attendeeId}/process`, { method: 'POST' }),
   advanceSessionDay: (sessionId) => request(`/training-sessions/${sessionId}/advance-day`, { method: 'POST' }),
