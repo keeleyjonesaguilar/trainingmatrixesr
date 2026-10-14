@@ -41,6 +41,8 @@ const ACTIVITY_ACTION_LABELS = {
   aha_roster_downloaded: 'AHA roster downloaded',
   certificate_downloaded: 'Certificate downloaded',
   certificates_zip_downloaded: 'Certificates ZIP downloaded',
+  certificates_emailed_to_attendees: 'Certificates emailed to employees',
+  certificates_emailed_to_client: 'Certificates emailed to company',
   client_created: 'Client created',
   client_updated: 'Client updated',
   client_logo_updated: 'Client logo updated',

@@ -6,6 +6,7 @@ const { requireAdmin } = require('../middleware/auth');
 const repo = require('../lib/repo');
 const { INTERNAL_CLIENT_ID } = require('../lib/repo');
 const { logActivity } = require('../lib/activityLog');
+const { splitEmails, EMAIL_PATTERN } = require('../lib/certificateEmails');
 
 const router = express.Router();
 
@@ -143,10 +144,19 @@ router.put('/:id', requireAdmin, async (req, res) => {
   const client_name = req.body.client_name ?? existing.client_name;
   const active = req.body.active === undefined ? existing.active : (req.body.active ? 1 : 0);
   const notes = req.body.notes === undefined ? existing.notes : req.body.notes;
-  await dbRun('UPDATE clients SET client_name = ?, active = ?, notes = ? WHERE client_id = ?', [
+  // Where the company's certificates are emailed (migration 080) - one or more addresses.
+  let certificateEmails = existing.certificate_emails;
+  if (req.body.certificate_emails !== undefined) {
+    const list = splitEmails(req.body.certificate_emails);
+    const bad = list.filter((e) => !EMAIL_PATTERN.test(e));
+    if (bad.length) return res.status(400).json({ error: `${bad.join(', ')} ${bad.length === 1 ? "isn't a valid email address" : "aren't valid email addresses"}.` });
+    certificateEmails = list.length ? list.join(', ') : null;
+  }
+  await dbRun('UPDATE clients SET client_name = ?, active = ?, notes = ?, certificate_emails = ? WHERE client_id = ?', [
     client_name,
     active,
     notes,
+    certificateEmails,
     req.params.id,
   ]);
   logActivity({ actor: req.user, action: 'client_updated', entityType: 'client', entityId: req.params.id, entityLabel: client_name, req });

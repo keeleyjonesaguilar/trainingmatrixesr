@@ -10,6 +10,7 @@ import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
+import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCertificatesModal.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
@@ -771,6 +772,8 @@ Their certificate and the training record it added to their employee file will b
   // The class summary to every trainer on the session (2026-10-12) - sent on create; this re-sends
   // it after a change (date, location, files).
   const [sendingSummary, setSendingSummary] = useState(false);
+  // Email Certificates to Employees / to Company (2026-10-14) - 'employees' | 'company' | null.
+  const [emailingCerts, setEmailingCerts] = useState(null);
   const emailTrainerSummary = async () => {
     if (!window.confirm('Email the class summary (details, sign-in and feedback links, QR codes, WeTransfer link) to every trainer on this session?')) return;
     setSendingSummary(true);
@@ -971,6 +974,11 @@ Their certificate and the training record it added to their employee file will b
             />
             Sent to Client
           </label>
+          {session.certificates_emailed_to_client_at && (
+            <span style={{ color: 'var(--color-text-muted)', alignSelf: 'center' }}>
+              Certificates emailed to {session.certificates_emailed_to_client} {formatEasternDateTime(session.certificates_emailed_to_client_at)}
+            </span>
+          )}
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -1243,6 +1251,24 @@ Their certificate and the training record it added to their employee file will b
                     together get one button each, since certificates are never mixed types in
                     the same ZIP. Every certificate inside is already named "Training Title_
                     Client_Trainer_Date_Trainee Name.pdf" - nothing to rename by hand. */}
+                {/* Emailing certificates by hand (Keeley's request, 2026-10-14) - each employee
+                    their own, or the ZIP(s) to the company. Nothing goes out until Send. */}
+                {isAdmin && session.session_kind !== 'toolbox_talk' && (
+                  <>
+                    <button type="button" className="btn btn-accent btn-sm" style={{ justifyContent: 'center' }} onClick={() => setEmailingCerts('employees')}>
+                      Email Certificates to Employees
+                    </button>
+                    <button type="button" className="btn btn-accent btn-sm" style={{ justifyContent: 'center' }} onClick={() => setEmailingCerts('company')}>
+                      Email Certificates to Company
+                    </button>
+                    {emailingCerts === 'employees' && (
+                      <EmailEmployeesModal sessionId={id} onClose={() => setEmailingCerts(null)} onSent={load} />
+                    )}
+                    {emailingCerts === 'company' && (
+                      <EmailCompanyModal session={session} onClose={() => setEmailingCerts(null)} onSent={load} />
+                    )}
+                  </>
+                )}
                 {session.session_kind !== 'toolbox_talk' && (
                 <a
                   href={`/api/training-sessions/${id}/certificates.zip?training=primary`}
@@ -1391,6 +1417,11 @@ Their certificate and the training record it added to their employee file will b
                               ) : null;
                             })}
                             {!a.certificate_path && !a.additional_certificates?.some((c) => c.certificate_path) && '—'}
+                            {a.certificate_emailed_at && (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }} title={`Emailed to ${a.certificate_emailed_to}`}>
+                                Emailed {formatEasternDateTime(a.certificate_emailed_at)}
+                              </span>
+                            )}
                           </div>
                         </td>
                       )}

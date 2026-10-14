@@ -272,4 +272,7 @@ ${editBlock}${feedbackBlock(feedback, isToolbox)}
   return { subject, html };
 }
 
-module.exports = { buildSessionCompleteEmail };
+// The look is shared with the certificate emails (lib/certificateEmails.js).
+module.exports = {
+  buildSessionCompleteEmail, esc, longDate, sessionDates, GREEN, GOLD, TEXT, MUTED, BORDER, BG, FONT,
+};

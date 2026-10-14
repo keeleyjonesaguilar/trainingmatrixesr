@@ -168,6 +168,52 @@ function ClientNotes({ client, onSaved }) {
   );
 }
 
+// Where this company's certificates are emailed (Keeley's request, 2026-10-14) - prefilled in the
+// session page's "Email Certificates to Company" window. One or more addresses.
+function CertificateEmails({ client, onSaved }) {
+  const isAdmin = useIsAdmin();
+  const [emails, setEmails] = useState(client.certificate_emails || '');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.updateClient(client.client_id, { certificate_emails: emails });
+      setDirty(false);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2>Certificate Email</h2>
+      <p className="page-subtitle" style={{ marginTop: 0 }}>Where this company&apos;s certificates go when you press &quot;Email Certificates to Company&quot; on a session.</p>
+      {error && <div className="error-banner">{error}</div>}
+      {isAdmin ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            style={{ flex: 1, minWidth: 260 }}
+            placeholder="safety@company.com, hr@company.com"
+            value={emails}
+            onChange={(e) => { setEmails(e.target.value); setDirty(true); }}
+          />
+          <button disabled={!dirty || saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
+        </div>
+      ) : (
+        <p className="page-subtitle" style={{ margin: 0 }}>{client.certificate_emails || 'No certificate email on file.'}</p>
+      )}
+    </div>
+  );
+}
+
 // Delete Client (Keeley's request): a type-the-name-to-confirm flow, since this cascades to
 // every employee/training-record/session/import batch under this client and can't be undone -
 // a bare window.confirm() felt too thin for something this destructive. Deactivate sits right
@@ -386,6 +432,8 @@ export default function ClientDetail() {
       <ClientSummaryStrip clientId={clientId} />
 
       <ClientNotes client={client} onSaved={loadClient} />
+
+      <CertificateEmails client={client} onSaved={loadClient} />
 
       <div className="card">
         <h2>Training Requirements</h2>

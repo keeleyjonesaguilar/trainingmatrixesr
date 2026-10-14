@@ -18,6 +18,7 @@ const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = requir
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { totalDuration } = require('../lib/durations');
 const { sendTrainerSummary, sendTrainerSummarySafely } = require('../lib/trainerSummary');
+const { attendeeEmailOptions, sendAttendeeCertificates, sendCompanyCertificates } = require('../lib/certificateEmails');
 
 // A session with per-training durations: `duration` is the total of them all (migration 078,
 // Keeley's report, 2026-10-07) - recalculated whenever any of them changes.
@@ -667,6 +668,62 @@ router.post('/:id/trainer-summary', requireAdmin, async (req, res) => {
     details: `To ${result.sent_to.join(', ')}`, req,
   });
   res.json(result);
+});
+
+// Emailing certificates by hand (Keeley's request, 2026-10-14) - lib/certificateEmails.js. This
+// fills both send windows: each attendee with the address to prefill, and the company's saved
+// address(es) and when it was last sent.
+router.get('/:id/certificate-emails', requireAdmin, async (req, res) => {
+  const session = await dbGet(
+    `SELECT ts.status, ts.client_id, ts.certificates_emailed_to_client_at, ts.certificates_emailed_to_client, c.certificate_emails
+     FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id WHERE ts.session_id = ?`,
+    [req.params.id]
+  );
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  res.json({
+    attendees: await attendeeEmailOptions(req.params.id),
+    client_certificate_emails: session.certificate_emails || '',
+    certificates_emailed_to_client_at: session.certificates_emailed_to_client_at,
+    certificates_emailed_to_client: session.certificates_emailed_to_client,
+  });
+});
+
+// body: { recipients: [{ attendee_id, email }] } - each gets only their own certificate(s).
+router.post('/:id/certificate-emails/attendees', requireAdmin, async (req, res) => {
+  const recipients = Array.isArray(req.body.recipients) ? req.body.recipients : [];
+  if (!recipients.length) return res.status(400).json({ error: 'Choose at least one person to email.' });
+  const result = await sendAttendeeCertificates(req.params.id, recipients, req.user);
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  if (result.sent.length) {
+    logActivity({
+      actor: req.user, action: 'certificates_emailed_to_attendees', entityType: 'training_session', entityId: req.params.id,
+      entityLabel: `${result.session.training_type_label} · ${result.session.client_name}`,
+      details: result.sent.map((s) => `${s.name} (${s.email})`).join(', '), req,
+    });
+  }
+  res.json({ sent: result.sent, skipped: result.skipped, failed: result.failed });
+});
+
+// body: { emails, include_roster, save_as_default } - the certificate ZIP(s) to the company.
+router.post('/:id/certificate-emails/company', requireAdmin, async (req, res) => {
+  let result;
+  try {
+    result = await sendCompanyCertificates(req.params.id, {
+      emails: req.body.emails,
+      includeRoster: req.body.include_roster !== false,
+      saveAsDefault: Boolean(req.body.save_as_default),
+    }, req.user);
+  } catch (err) {
+    console.error(`Company certificate email failed for session ${req.params.id}:`, err.message);
+    return res.status(502).json({ error: 'The email could not be sent. Please try again in a minute.' });
+  }
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  logActivity({
+    actor: req.user, action: 'certificates_emailed_to_client', entityType: 'training_session', entityId: req.params.id,
+    entityLabel: `${result.session.training_type_label} · ${result.session.client_name}`,
+    details: `To ${result.sent_to.join(', ')} - ${result.certificates} certificate(s)`, req,
+  });
+  res.json({ sent_to: result.sent_to, certificates: result.certificates, attachments: result.attachments });
 });
 
 router.post('/:id/advance-day', requireAdmin, async (req, res) => {

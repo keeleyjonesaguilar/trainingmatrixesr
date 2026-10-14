@@ -7,7 +7,10 @@
 // unverified domain, so this throws a clear error rather than silently failing if that happens.
 // `attachments` (optional, Keeley's request, 2026-09-22: email the trainer their AHA roster PDF)
 // is a list of { filename, content } where `content` is the file's bytes base64-encoded -
-// Resend's own attachment shape, passed straight through.
+// Resend's own attachment shape, passed straight through. `replyTo` (optional) is where replies
+// go instead of the unmonitored sending address - the certificate emails set it to whoever sent them.
+// `fromName` (optional) swaps the display name on RESEND_FROM_EMAIL for this one email, keeping the
+// same address (Keeley's request, 2026-10-14: certificate emails show "ESR: Completed Training").
 //
 // Sends go out one at a time, at most ~2 a second, and a "too many requests" answer is retried
 // (Keeley's report, 2026-10-05: a trainer never got a close-out email). Resend accepts about 2
@@ -20,9 +23,17 @@ let lastSentAt = 0;
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-async function sendNow({ to, subject, html, attachments }) {
+// "Safety Training Matrix <noreply@x.com>" + "ESR: Completed Training" -> the same address under the
+// new name. Quoted, since a name with a colon must be.
+function withFromName(from, name) {
+  if (!name) return from;
+  const address = (/<([^>]+)>/.exec(from) || [null, from])[1].trim();
+  return `"${String(name).replace(/["\\]/g, '')}" <${address}>`;
+}
+
+async function sendNow({ to, subject, html, attachments, replyTo, fromName }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
+  const from = withFromName(process.env.RESEND_FROM_EMAIL, fromName);
   if (!apiKey || !from) {
     throw new Error('Email is not configured - RESEND_API_KEY and RESEND_FROM_EMAIL must be set in .env.');
   }
@@ -38,7 +49,7 @@ async function sendNow({ to, subject, html, attachments }) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from, to, subject, html, ...(attachments?.length ? { attachments } : {}) }),
+      body: JSON.stringify({ from, to, subject, html, ...(attachments?.length ? { attachments } : {}), ...(replyTo ? { reply_to: replyTo } : {}) }),
     });
     if (res.status === 429 && attempt < MAX_ATTEMPTS) {
       const retryAfter = Number(res.headers.get('retry-after'));
