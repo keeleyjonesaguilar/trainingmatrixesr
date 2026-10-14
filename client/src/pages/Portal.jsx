@@ -2,8 +2,9 @@
 // trainers. Sign in with the email on your profile and a one-time code (no password); then see
 // your trainings and certificates, keep your phone/email current, and - for trainers - what you
 // teach and your rating averages. Backed by server/routes/portal.js.
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import Modal from '../components/Modal.jsx';
 import esrLogo from '../assets/brand/esr-logo-full.png';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { formatShortDate, parseTimestamp, EASTERN_TZ } from '../lib/dates';
@@ -24,7 +25,63 @@ function sessionDates(s) {
 
 // "TRN-016 - Fall Protection" -> "Fall Protection".
 function shortTraining(label) {
-  return String(label || '').replace(/^TRN-d+s*-s*/, '');
+  return String(label || '').replace(/^TRN-\d+\s*-\s*/, '');
+}
+
+// The class summary for one upcoming class (Keeley's request, 2026-10-14: "even easier to locate if
+// the email gets lost") - the same content as the trainer's email, their own day(s) only, shown in a
+// sandboxed frame so the email's styles stay inside it, with both QR codes below to view or save.
+function ClassSummaryModal({ session, onClose }) {
+  const [html, setHtml] = useState(null);
+  const [error, setError] = useState('');
+  const frameRef = useRef(null);
+
+  useEffect(() => {
+    api.portalSessionSummary(session.session_id)
+      .then((res) => setHtml(res.html.replace('<head>', '<head><base target="_blank">').replace('<html>', '<html><head><base target="_blank"></head>')))
+      .catch((err) => setError(err.message));
+  }, [session.session_id]);
+
+  // Grows the frame to the summary's height, so the pop-up scrolls as one page.
+  const fit = () => {
+    const doc = frameRef.current?.contentDocument;
+    if (doc?.body) frameRef.current.style.height = `${doc.documentElement.scrollHeight + 4}px`;
+  };
+
+  const qr = (kind) => `/api/portal/sessions/${session.session_id}/qr/${kind}.png`;
+  return (
+    <Modal onClose={onClose} maxWidth={680}>
+      <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+      <h2 style={{ margin: '0 0 4px' }}>{shortTraining(session.training)}</h2>
+      <p className="page-subtitle" style={{ margin: '0 0 12px' }}>{session.client} · {sessionDates(session)}</p>
+      {error && <p className="error-banner">{error}</p>}
+      {!html && !error && <p style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>Loading…</p>}
+      {html && (
+        <iframe
+          ref={frameRef}
+          title="Class summary"
+          srcDoc={html}
+          onLoad={fit}
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          style={{ width: '100%', height: 600, border: 0, borderRadius: 8, display: 'block' }}
+        />
+      )}
+      {html && (
+        <div className="portal-qr-pair">
+          {[['signin', 'Sign-In QR code', 'Show at the start of class'], ['feedback', 'Feedback QR code', 'Show at the end of class']].map(([kind, label, hint]) => (
+            <figure key={kind}>
+              <img src={qr(kind)} alt={label} />
+              <figcaption>
+                <strong>{label}</strong> · {hint}
+                <br />
+                <a href={qr(kind)} download={`${label} - ${shortTraining(session.training)}.png`}>Download</a>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
 }
 
 // The live roster of a session the trainer is teaching today (Keeley's request, 2026-10-12) - the
@@ -281,6 +338,7 @@ function ContactCard({ profile, accountEmail, onChanged }) {
 function Profile({ profile, accountEmail, onChanged }) {
   const t = profile.trainer;
   const [rosterFor, setRosterFor] = useState(null);
+  const [summaryFor, setSummaryFor] = useState(null);
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <div>
@@ -302,8 +360,13 @@ function Profile({ profile, accountEmail, onChanged }) {
                   {t.upcoming.map((s) => (
                     <Fragment key={s.session_id}>
                       <tr>
-                        <td>{sessionDates(s)}</td><td>{s.training}</td><td>{s.client}</td><td style={{ whiteSpace: 'normal' }}>{s.location || '—'}</td><td>{s.attendees}</td>
+                        <td>{sessionDates(s)}</td>
                         <td>
+                          <button type="button" className="link-button" style={{ textAlign: 'left' }} onClick={() => setSummaryFor(s)}>{s.training}</button>
+                        </td>
+                        <td>{s.client}</td><td style={{ whiteSpace: 'normal' }}>{s.location || '—'}</td><td>{s.attendees}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button type="button" className="btn btn-secondary btn-sm" style={{ marginRight: 6 }} onClick={() => setSummaryFor(s)}>Class details</button>
                           {s.teaching_today && (
                             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRosterFor(rosterFor === s.session_id ? null : s.session_id)}>
                               {rosterFor === s.session_id ? 'Hide roster' : 'View roster'}
@@ -322,6 +385,8 @@ function Profile({ profile, accountEmail, onChanged }) {
           )}
         </div>
       )}
+
+      {summaryFor && <ClassSummaryModal session={summaryFor} onClose={() => setSummaryFor(null)} />}
 
       {t && (
         <div className="stat-grid" style={{ marginBottom: 0 }}>

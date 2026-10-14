@@ -10,6 +10,9 @@ const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { displayFirstLast } = require('../lib/names');
 const { recordHasCertificate, sendRecordCertificate } = require('../lib/recordCertificates');
 const { liveRoster } = require('../lib/liveRoster');
+const { trainerSummaryHtml } = require('../lib/trainerSummary');
+const { qrPngBuffer, feedbackQrPngBuffer } = require('../lib/qr');
+const { labeledQrPng } = require('../lib/qrLabel');
 
 const router = express.Router();
 
@@ -138,6 +141,30 @@ router.get('/sessions/:sessionId/roster', requirePortal, async (req, res) => {
   const session = await portal.teachingTodaySession(req.portal, req.params.sessionId);
   if (!session) return res.status(404).json({ error: "The roster is only available on the day you're teaching this session." });
   res.json(await liveRoster(session));
+});
+
+// The class summary for a session this trainer teaches (Keeley's request, 2026-10-14) - the same
+// content as their email, their own day(s) only, for when the email gets lost. Open sessions only.
+router.get('/sessions/:sessionId/summary', requirePortal, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const found = await portal.teachingSession(req.portal, req.params.sessionId);
+  if (!found) return res.status(404).json({ error: 'This class summary is no longer available.' });
+  const html = await trainerSummaryHtml(found.session.session_id, found.profiles.map((p) => p.employee_id), displayFirstLast(found.profiles[0]));
+  if (!html) return res.status(404).json({ error: 'This class summary is no longer available.' });
+  res.json({ html });
+});
+
+// The green SIGN-IN / gold FEEDBACK QR codes for that session, the same images as the email's.
+router.get('/sessions/:sessionId/qr/:kind', requirePortal, async (req, res) => {
+  const kind = req.params.kind === 'feedback.png' ? 'feedback' : req.params.kind === 'signin.png' ? 'signin' : null;
+  const found = kind ? await portal.teachingSession(req.portal, req.params.sessionId) : null;
+  if (!found) return res.status(404).json({ error: 'QR code not found.' });
+  const token = found.session.qr_token;
+  const png = labeledQrPng(kind === 'signin' ? await qrPngBuffer(token) : await feedbackQrPngBuffer(token), kind);
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Disposition', `inline; filename="${kind === 'signin' ? 'Sign-In' : 'Feedback'} QR Code.png"`);
+  res.send(png);
 });
 
 module.exports = router;

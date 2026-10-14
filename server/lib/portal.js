@@ -235,6 +235,20 @@ function teachesToday(session, myDays, today) {
 
 // An open session one of the signed-in profiles is a trainer on (lead, day trainer or co-trainer)
 // that runs today - the only sessions whose live roster the portal shows. Null otherwise.
+// An open session one of the signed-in profiles teaches (any day) - for the class summary pop-up
+// (2026-10-14). Resolves { session, profiles } with the profiles that teach it, or null.
+async function teachingSession(session, sessionId) {
+  const ts = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [sessionId]);
+  if (!ts || ts.status !== 'open' || ts.session_kind === 'toolbox_talk') return null;
+  const profiles = [];
+  for (const e of session.profiles) {
+    if (e.employee_type !== 'trainer' && !e.is_trainer) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    if (await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SQL}) t WHERE t.session_id = $2`, [e.employee_id, sessionId])) profiles.push(e);
+  }
+  return profiles.length ? { session: ts, profiles } : null;
+}
+
 async function teachingTodaySession(session, sessionId) {
   const ts = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [sessionId]);
   if (!ts || ts.status !== 'open' || !isTodaySession(ts, easternToday())) return null;
@@ -330,5 +344,5 @@ async function portalData(session) {
 module.exports = {
   COOKIE_NAME, SESSION_DAYS, normalizeEmail,
   requestLoginCode, verifyLoginCode, sessionFromToken, endSession,
-  sendInvite, revokeInvite, requestEmailChange, confirmEmailChange, portalData, teachingTodaySession,
+  sendInvite, revokeInvite, requestEmailChange, confirmEmailChange, portalData, teachingTodaySession, teachingSession,
 };

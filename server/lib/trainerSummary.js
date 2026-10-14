@@ -201,7 +201,9 @@ function powerpointLinks(d, days) {
   return d.session.wetransfer_link ? [{ day: null, url: d.session.wetransfer_link }] : [];
 }
 
-function buildEmail(d, r, { added = false, morning = false } = {}) {
+// `inPortal` (2026-10-14): the same summary shown in the Training Portal - the QR codes sit below it
+// instead of being attached, and View roster is on the same page.
+function buildEmail(d, r, { added = false, morning = false, inPortal = false } = {}) {
   const s = d.session;
   const title = d.trainings.map((t) => t.label).join(' + ');
   const first = String(r.name || '').trim().split(/\s+/)[0];
@@ -265,8 +267,11 @@ function buildEmail(d, r, { added = false, morning = false } = {}) {
     signoffOnly
       ? 'Sign off your day only at the END of class, after everyone has signed in - it opens the next day for sign-ins.'
       : 'Close the session at the END of class, after everyone has signed in and given feedback - certificates and the roster are created automatically and emailed to you. Add any notes about the class (any issues?) on the close-out form.',
-    r.portal ? `On class day you can also see who has signed in from the ESR Training Portal - sign in at ${link(`${publicBaseUrl()}/portal`)} and click View roster.` : null,
-    `<em>The QR codes are also attached to this email as a backup, in case there are any issues with the PowerPoint - the same QR codes are already in the PowerPoint.</em>`,
+    inPortal ? 'On class day, use View roster on your Training Portal page to see who has signed in.'
+      : r.portal ? `On class day you can also see who has signed in from the ESR Training Portal - sign in at ${link(`${publicBaseUrl()}/portal`)} and click View roster.` : null,
+    inPortal
+      ? '<em>The QR codes are below this summary as a backup, in case there are any issues with the PowerPoint - the same QR codes are already in the PowerPoint.</em>'
+      : '<em>The QR codes are also attached to this email as a backup, in case there are any issues with the PowerPoint - the same QR codes are already in the PowerPoint.</em>',
   ];
 
   // 5. The outline - only this recipient's days on a multi-day course.
@@ -374,4 +379,16 @@ async function sendTrainerSummarySafely(sessionId, options) {
   }
 }
 
-module.exports = { sendTrainerSummary, sendTrainerSummarySafely, buildEmail, summaryDetails, trainerRecipients };
+// The class summary as one trainer's email shows it - their day(s) only - for the Training Portal
+// (Keeley's request, 2026-10-14: "even easier to locate if the email gets lost"). `employeeIds` are
+// the signed-in person's profiles; null if none of them teaches this session.
+async function trainerSummaryHtml(sessionId, employeeIds, name) {
+  const d = await summaryDetails(sessionId);
+  if (!d) return null;
+  const mine = d.trainers.filter((t) => t.employee_id && employeeIds.includes(t.employee_id));
+  if (!mine.length) return null;
+  const r = { name, email: '', portal: true, keys: mine.flatMap((t) => trainerKeys(t.employee_id, t.name)) };
+  return buildEmail(d, r, { inPortal: true }).html;
+}
+
+module.exports = { sendTrainerSummary, sendTrainerSummarySafely, buildEmail, summaryDetails, trainerRecipients, trainerSummaryHtml };

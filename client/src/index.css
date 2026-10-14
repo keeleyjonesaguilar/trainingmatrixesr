@@ -779,3 +779,10 @@ tr:hover td { background: #fafbfc; }
 .new-trainer-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 12px; border: 1px dashed var(--esr-green); border-radius: 8px; background: var(--color-surface); }
 .new-trainer-title { font-size: 12px; font-weight: 700; color: var(--esr-green); text-transform: uppercase; letter-spacing: .06em; }
 .new-trainer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+
+/* Class summary pop-up in the Training Portal (2026-10-14): the two QR codes under the summary. */
+.portal-qr-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.portal-qr-pair figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.portal-qr-pair img { width: 100%; max-width: 220px; border: 1px solid var(--color-border); border-radius: 6px; background: #fff; }
+.portal-qr-pair figcaption { font-size: 12.5px; color: var(--color-text-muted); }
+@media (max-width: 520px) { .portal-qr-pair { grid-template-columns: 1fr; } }

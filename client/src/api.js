@@ -273,6 +273,8 @@ export const api = {
   portalRequestCode: (email) => request('/portal/request-code', { method: 'POST', body: JSON.stringify({ email }) }),
   portalVerify: (email, code) => request('/portal/verify', { method: 'POST', body: JSON.stringify({ email, code }) }),
   portalMe: () => request('/portal/me'),
+  // The class summary pop-up on Upcoming Trainings to Teach (2026-10-14).
+  portalSessionSummary: (sessionId) => request(`/portal/sessions/${sessionId}/summary`),
   portalLogout: () => request('/portal/logout', { method: 'POST' }),
   portalUpdatePhone: (employeeId, phone) => request(`/portal/profiles/${employeeId}/phone`, { method: 'PUT', body: JSON.stringify({ phone }) }),
   portalRequestEmailChange: (newEmail) => request('/portal/email-change', { method: 'POST', body: JSON.stringify({ new_email: newEmail }) }),
