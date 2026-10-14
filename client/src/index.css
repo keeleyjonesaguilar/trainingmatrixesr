@@ -755,3 +755,8 @@ tr:hover td { background: #fafbfc; }
 .course-day label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
 .course-day-outline { margin-top: 10px; }
 @media (max-width: 720px) { .course-day-fields { grid-template-columns: 1fr; } }
+
+/* "+ Add New Trainer" inline form on the session forms (2026-10-14). */
+.new-trainer-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 12px; border: 1px dashed var(--esr-green); border-radius: 8px; background: var(--color-surface); }
+.new-trainer-title { font-size: 12px; font-weight: 700; color: var(--esr-green); text-transform: uppercase; letter-spacing: .06em; }
+.new-trainer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }

@@ -10,6 +10,7 @@ import { resizeDays } from '../lib/courseDays';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
+import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
 import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCertificatesModal.jsx';
 
@@ -188,6 +189,14 @@ function RecordStatusBadge({ status }) {
 // duration) after creation. Client and Training Type are selects here (not free text like the
 // create form) so a typo can't silently spawn a new client mid-edit.
 // "2026-10-02" -> "Fri, October 2, 2026" for the session header (plain date, no timezone shift).
+// "08:30" -> "8:30 AM".
+function clockTime(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+  if (!m) return hhmm || '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 function formatLongDate(dateStr) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr || '');
   if (!m) return dateStr || '';
@@ -299,6 +308,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     trainer_last_name: last,
     trainer_phone: session.trainer_phone || '',
     session_date: session.session_date,
+    start_time: session.start_time || '',
     location: session.location || '',
     wetransfer_link: session.wetransfer_link || '',
     // With per-training durations this box is the first training's own (the total is worked out).
@@ -324,6 +334,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     Array.from({ length: session.total_days || 0 }, (_, i) => session.day_wetransfer_links?.[i] || '')
   );
   const [trainerOptions, setTrainerOptions] = useState([]);
+  const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
   // Other trainers teaching alongside the lead (migration 074, 2026-10-01).
   const [coTrainerIds, setCoTrainerIds] = useState((session.co_trainers || []).map((t) => t.trainer_employee_id).filter(Boolean));
@@ -468,11 +479,15 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         </div>
         <div className="field">
           <label>Other trainers</label>
-          <CoTrainersPicker trainers={trainerOptions} value={coTrainerIds} onChange={setCoTrainerIds} leadId={session.trainer_employee_id} />
+          <CoTrainersPicker trainers={trainerOptions} value={coTrainerIds} onChange={setCoTrainerIds} leadId={session.trainer_employee_id} onTrainerCreated={(t) => setTrainerOptions((prev) => [...prev, t])} />
         </div>
         <div className="field">
           <label>Date</label>
           <input type="date" value={form.session_date} onChange={(e) => setForm({ ...form, session_date: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>{form.total_days ? 'Start Time (each day)' : 'Start Time'}</label>
+          <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
         </div>
         <div className="field">
           <label>Location / Address</label>
@@ -579,16 +594,20 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                 />
                 <select
                   value={dayTrainers[i] || ''}
-                  onChange={(e) => setDayTrainers((prev) => {
-                    const next = [...prev];
-                    next[i] = e.target.value;
-                    return next;
-                  })}
+                  onChange={(e) => {
+                    if (e.target.value === '__new__') { setAddingDayTrainer(i); return; }
+                    setDayTrainers((prev) => {
+                      const next = [...prev];
+                      next[i] = e.target.value;
+                      return next;
+                    });
+                  }}
                   aria-label={`Day ${i + 1} trainer`}
                   style={{ maxWidth: 240 }}
                 >
                   <option value="">Main trainer ({`${form.trainer_first_name} ${form.trainer_last_name}`.trim() || 'not set'})</option>
                   {trainerOptions.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                  <option value="__new__">+ Add New Trainer</option>
                 </select>
                 <input
                   type="text"
@@ -598,6 +617,23 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   aria-label={`Day ${i + 1} WeTransfer link`}
                   style={{ maxWidth: 260 }}
                 />
+                {addingDayTrainer === i && (
+                  <div style={{ flexBasis: '100%' }}>
+                    <NewTrainerForm
+                      trainers={trainerOptions}
+                      onCreated={(t) => {
+                        setTrainerOptions((prev) => [...prev, t]);
+                        setDayTrainers((prev) => {
+                          const next = [...prev];
+                          next[i] = t.employee_id;
+                          return next;
+                        });
+                        setAddingDayTrainer(null);
+                      }}
+                      onCancel={() => setAddingDayTrainer(null)}
+                    />
+                  </div>
+                )}
                 {session.days?.[i]?.signed_at && (
                   <span style={{ fontSize: 12, color: 'var(--status-current-text)' }}>Signed off by {session.days[i].signed_trainer_name}</span>
                 )}
@@ -880,7 +916,8 @@ Their certificate and the training record it added to their employee file will b
   // Email Certificates to Employees / to Company (2026-10-14) - 'employees' | 'company' | null.
   const [emailingCerts, setEmailingCerts] = useState(null);
   const emailTrainerSummary = async () => {
-    if (!window.confirm("Email the class summary (details, instructions, outline, QR codes, WeTransfer link) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.")) return;
+    const lastSent = session.trainer_summary_sent_at ? `\n\nIt was already emailed ${formatEasternDateTime(session.trainer_summary_sent_at)} - this sends it again.` : '';
+    if (!window.confirm(`Email the class summary (details, instructions, outline, QR codes, WeTransfer link) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.${lastSent}`)) return;
     setSendingSummary(true);
     try {
       const result = await api.sendTrainerSummary(id);
@@ -1008,6 +1045,12 @@ Their certificate and the training record it added to their employee file will b
           <div className="session-fact-label">Date</div>
           <div className="session-fact-value">{formatLongDate(session.session_date)}</div>
         </div>
+        {session.start_time && (
+          <div className="session-fact">
+            <div className="session-fact-label">Start Time</div>
+            <div className="session-fact-value">{clockTime(session.start_time)}{session.total_days && !session.multi_training_day ? ' each day' : ''}</div>
+          </div>
+        )}
         {session.multi_training_day ? (
           <div className="session-fact">
             <div className="session-fact-label">Trainings</div>
@@ -1318,6 +1361,11 @@ Their certificate and the training record it added to their employee file will b
               >
                 {sendingSummary ? 'Sending…' : 'Email Class Summary'}
               </button>
+            )}
+            {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && session.trainer_summary_sent_at && (
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '6px 0 0' }}>
+                Last emailed to the trainer(s) {formatEasternDateTime(session.trainer_summary_sent_at)}
+              </p>
             )}
             {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && (
               <ScheduleSummary sessionId={id} />

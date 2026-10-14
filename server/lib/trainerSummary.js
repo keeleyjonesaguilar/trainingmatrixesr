@@ -10,7 +10,7 @@
 // On a multi-day course each day's trainer only sees their own day(s): its date, outline and
 // PowerPoint - never another day's. Also sent at 5:00 AM on the day they teach
 // (lib/trainerSummaryScheduler.js).
-const { dbGet, dbAll } = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const { sendEmail } = require('./email');
 const { notifyAllUsers } = require('./notifications');
 const { qrPngBuffer, feedbackQrPngBuffer } = require('./qr');
@@ -58,6 +58,14 @@ function sessionDatesText(session) {
   const dates = parseJson(session.day_dates);
   if (dates && dates.length > 1) return `${longDate(dates[0])} – ${longDate(dates[dates.length - 1])} (${dates.length} days)`;
   return longDate(session.session_date);
+}
+
+// "08:30" -> "8:30 AM" (a session's start time, migration 083).
+function clockTime(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 function link(url) {
@@ -230,13 +238,21 @@ function buildEmail(d, r, { added = false, morning = false } = {}) {
     [multiDay && days.length > 1 ? 'Dates' : 'Date', multiDay && (showDayLabels || !wholeCourse)
       ? days.map((day) => `<strong>Day ${day.day_number}</strong> · ${esc(longDate(day.date) || 'Date to be set')}`).join('<br>')
       : esc(dateText)],
-    s.duration ? [d.trainings.length > 1 ? 'Total hours' : 'Hours', `${esc(s.duration)}${multiDay ? ` <span style="color:${MUTED};">· whole course, ${s.total_days} days</span>` : ''}`] : null,
+    ['Start time', s.start_time ? `${esc(clockTime(s.start_time))}${multiDay ? ` <span style="color:${MUTED};">· each day</span>` : ''}` : 'To be confirmed by the office'],
     ['Location', esc(s.location || 'To be confirmed by the office')],
   ];
 
-  // 3. The PowerPoint.
+  // Expected duration - its own section (Keeley, 2026-10-14).
+  const durationRows = s.duration ? [
+    [d.trainings.length > 1 ? 'Total' : 'Duration', `${esc(s.duration)}${multiDay ? ` <span style="color:${MUTED};">· whole course, ${s.total_days} days</span>` : ''}`],
+    ...(d.trainings.length > 1 ? d.trainings.filter((t) => t.duration).map((t) => [t.label, esc(t.duration)]) : []),
+  ] : null;
+
+  // 3. The PowerPoint - each day's link on its own line under its day (Keeley, 2026-10-14: the
+  // run-together list read too dense).
+  const linkList = links.map((l) => `<div style="margin:6px 0 0;">${l.day && (showDayLabels || !wholeCourse) ? `<div style="font-weight:700;font-size:13px;color:#1a1d21;">Day ${l.day.day_number}</div>` : ''}${link(l.url)}</div>`).join('');
   const powerpointHtml = links.length
-    ? links.map((l) => `${l.day && (showDayLabels || !wholeCourse) ? `<strong>Day ${l.day.day_number}:</strong> ` : ''}${link(l.url)}`).join('<br>')
+    ? linkList
       + `<div style="font-size:12px;color:${MUTED};margin-top:4px;">WeTransfer - download ${links.length > 1 ? 'these' : 'it'} before class. The QR codes are already in the PowerPoint.</div>`
     : null;
 
@@ -245,7 +261,7 @@ function buildEmail(d, r, { added = false, morning = false } = {}) {
   const instructions = [
     `At the start of class, show the <strong style="color:${SIGN_IN_COLOR};">green SIGN-IN</strong> QR code that is at the beginning of the PowerPoint. Attendees scan it with their phone camera to sign in.${multiDay ? ' On a multi-day course they sign in every day - anyone back from an earlier day picks "I was here on an earlier day".' : ''}`,
     `To see who has signed in, or to ${signoffOnly ? 'sign off your day' : 'close out'}, <strong>scan that same SIGN-IN QR code yourself</strong> and tap <strong>"${CLOSE_BUTTON_LABEL}"</strong>${signoffOnly ? ' (on your day it reads "end of Day sign-off")' : ''}. You'll need the trainer PIN.`,
-    `At the end of class, show the <strong style="color:${FEEDBACK_COLOR};">gold FEEDBACK</strong> QR code so attendees can rate the class.`,
+    `At the end of class, show the <strong style="color:${FEEDBACK_COLOR};">gold FEEDBACK</strong> QR code that is at the end of the PowerPoint so attendees can rate the class.`,
     signoffOnly
       ? 'Sign off your day only at the END of class, after everyone has signed in - it opens the next day for sign-ins.'
       : 'Close the session at the END of class, after everyone has signed in and given feedback - certificates and the roster are created automatically and emailed to you. Add any notes about the class (any issues?) on the close-out form.',
@@ -269,7 +285,7 @@ function buildEmail(d, r, { added = false, morning = false } = {}) {
       ? `You've been added as a trainer on this class${whichDays}. Here's everything you need.`
       : `You're scheduled to teach this class${whichDays}. Here's everything you need.`;
   const topLink = links.length
-    ? `<p style="margin:10px 0 0;"><strong>PowerPoint:</strong> ${links.map((l) => `${l.day && (showDayLabels || !wholeCourse) ? `Day ${l.day.day_number} ` : ''}${link(l.url)}`).join('<br>')}</p>`
+    ? `<div style="margin:14px 0 0;"><div style="font-weight:700;">PowerPoint</div>${linkList}</div>`
     : '';
 
   const subjectDates = multiDay && !wholeCourse ? days.map((day) => `Day ${day.day_number} – ${longDate(day.date)}`).join(', ') : dateText;
@@ -283,6 +299,7 @@ function buildEmail(d, r, { added = false, morning = false } = {}) {
       panels: [
         panel('Class details', classRows),
         panel('Logistics', logisticsRows),
+        durationRows ? panel('Expected duration', durationRows) : '',
         powerpointHtml ? textPanel('PowerPoint', powerpointHtml) : '',
         listPanel('Instructions', instructions),
         outlineHtml ? textPanel('Outline', outlineHtml) : '',
@@ -336,6 +353,9 @@ async function sendTrainerSummary(sessionId, { onlyEmployeeIds = null, added = f
       link_path: `/sessions/${s.session_id}`,
       email: false,
     });
+  }
+  if (recipients.length > failed.length) {
+    await dbRun('UPDATE training_sessions SET trainer_summary_sent_at = now_utc_text() WHERE session_id = ?', [s.session_id]);
   }
   return {
     sent_to: recipients.filter((r) => !failed.includes(r.email)).map((r) => `${r.name} (${r.email})`),

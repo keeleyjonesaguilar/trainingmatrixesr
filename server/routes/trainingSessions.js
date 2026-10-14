@@ -40,6 +40,14 @@ function cleanWetransferLink(value) {
   return /^https?:\/\/\S+$/i.test(link) ? { link } : { error: 'The WeTransfer link should start with https://' };
 }
 
+// When class starts (migration 083, Keeley's request, 2026-10-14) - "HH:MM" from the form's time
+// box, or blank.
+function cleanStartTime(value) {
+  const t = String(value || '').trim();
+  if (!t) return { time: null };
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(t) ? { time: t } : { error: 'Enter the start time as a time of day, e.g. 8:00 AM.' };
+}
+
 // A multi-day course's PowerPoint link for each day (migration 082, Keeley's request, 2026-10-14) -
 // each optional. JSON array (one entry per day) or null when none are filled in.
 function cleanDayWetransferLinks(list, totalDays) {
@@ -380,6 +388,8 @@ router.post('/', async (req, res) => {
   if (dayOutlinesError) return res.status(400).json({ error: dayOutlinesError });
   const dayLinks = multiTraining ? { json: null } : cleanDayWetransferLinks(day_wetransfer_links, totalDays);
   if (dayLinks.error) return res.status(400).json({ error: dayLinks.error });
+  const startTime = cleanStartTime(req.body.start_time);
+  if (startTime.error) return res.status(400).json({ error: startTime.error });
   let clientId;
   try {
     clientId = await repo.findOrCreateClientByName(client_name);
@@ -446,6 +456,7 @@ router.post('/', async (req, res) => {
   }
   if (wetransfer.link) await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, session_id]);
   if (dayLinks.json) await dbRun('UPDATE training_sessions SET day_wetransfer_links = ? WHERE session_id = ?', [dayLinks.json, session_id]);
+  if (startTime.time) await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [startTime.time, session_id]);
   // 2+ trainings with their own durations: keep the first training's own, and the total as `duration`.
   if (hasExtras) {
     const first = String(req.body.first_training_duration || effective.duration || '').trim();
@@ -597,6 +608,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
     await dbRun('UPDATE training_sessions SET multi_training_day = ?, current_day = 1 WHERE session_id = ?', [multiTraining ? 1 : 0, req.params.id]);
   }
   await dbRun('UPDATE training_sessions SET day_wetransfer_links = ? WHERE session_id = ?', [dayLinksJson, req.params.id]);
+  if (Object.prototype.hasOwnProperty.call(req.body, 'start_time')) {
+    const startTime = cleanStartTime(req.body.start_time);
+    if (startTime.error) return res.status(400).json({ error: startTime.error });
+    await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [startTime.time, req.params.id]);
+  }
   if (Object.prototype.hasOwnProperty.call(req.body, 'wetransfer_link')) {
     const wetransfer = cleanWetransferLink(req.body.wetransfer_link);
     if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });

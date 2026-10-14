@@ -16,6 +16,11 @@
 // (Keeley's report, 2026-10-05: a trainer never got a close-out email). Resend accepts about 2
 // requests a second, and the close-out email used to go to every recipient at once - the extra
 // sends were refused and only written to the server log.
+// The sender name on every email the app sends (Keeley's request, 2026-10-14), whatever name
+// RESEND_FROM_EMAIL carries - except where a caller passes its own `fromName` (the certificate
+// emails, "ESR: Completed Training").
+const DEFAULT_FROM_NAME = 'ESR Training Portal';
+
 const MIN_GAP_MS = 600;
 const MAX_ATTEMPTS = 5;
 let queue = Promise.resolve();
@@ -33,7 +38,7 @@ function withFromName(from, name) {
 
 async function sendNow({ to, subject, html, attachments, replyTo, fromName }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = withFromName(process.env.RESEND_FROM_EMAIL, fromName);
+  const from = process.env.RESEND_FROM_EMAIL ? withFromName(process.env.RESEND_FROM_EMAIL, fromName || DEFAULT_FROM_NAME) : null;
   if (!apiKey || !from) {
     throw new Error('Email is not configured - RESEND_API_KEY and RESEND_FROM_EMAIL must be set in .env.');
   }

@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import { displayFirstLast } from '../lib/names.js';
+import NewTrainerForm from './NewTrainerForm.jsx';
 
 // "Other trainers" on a session (Keeley's request, 2026-10-01): pick any number of trainers who
 // teach alongside the lead trainer. Each one's name goes on the certificates and roster, any of
 // them can close out, and trainees rate each of them separately on the feedback form.
 // `value` is an array of employee_ids; the lead trainer (`leadId`) isn't offered again.
-export default function CoTrainersPicker({ trainers, value, onChange, leadId }) {
+// "+ Add New Trainer" (2026-10-14) creates one on the spot; `onTrainerCreated` adds it to the
+// parent's trainer list.
+export default function CoTrainersPicker({ trainers, value, onChange, leadId, onTrainerCreated }) {
+  const [adding, setAdding] = useState(false);
   const selected = value.map((id) => trainers.find((t) => t.employee_id === id)).filter(Boolean);
   const available = trainers.filter((t) => t.employee_id !== leadId && !value.includes(t.employee_id));
   return (
@@ -19,10 +24,25 @@ export default function CoTrainersPicker({ trainers, value, onChange, leadId }) 
           ))}
         </div>
       )}
-      <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}>
-        <option value="">{selected.length ? 'Add another trainer…' : 'Add a trainer (optional)…'}</option>
-        {available.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
-      </select>
+      {adding ? (
+        <NewTrainerForm
+          trainers={trainers}
+          onCreated={(t) => { onTrainerCreated?.(t); onChange([...value, t.employee_id]); setAdding(false); }}
+          onCancel={() => setAdding(false)}
+        />
+      ) : (
+        <select
+          value=""
+          onChange={(e) => {
+            if (e.target.value === '__new__') setAdding(true);
+            else if (e.target.value) onChange([...value, e.target.value]);
+          }}
+        >
+          <option value="">{selected.length ? 'Add another trainer…' : 'Add a trainer (optional)…'}</option>
+          {available.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+          {onTrainerCreated && <option value="__new__">+ Add New Trainer</option>}
+        </select>
+      )}
     </div>
   );
 }

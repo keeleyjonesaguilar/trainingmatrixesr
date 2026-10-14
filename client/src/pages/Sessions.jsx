@@ -5,6 +5,7 @@ import { displayFirstLast } from '../lib/names.js';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
+import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
@@ -85,8 +86,6 @@ export default function Sessions() {
   // needs no separate create step.
   const [clientMode, setClientMode] = useState('select');
   const [trainerMode, setTrainerMode] = useState('select');
-  const [newTrainerFirst, setNewTrainerFirst] = useState('');
-  const [newTrainerLast, setNewTrainerLast] = useState('');
   const [selectedTrainerId, setSelectedTrainerId] = useState('');
   // Other trainers teaching alongside the lead (Keeley's request, 2026-10-01).
   const [coTrainerIds, setCoTrainerIds] = useState([]);
@@ -133,6 +132,8 @@ export default function Sessions() {
     trainer_name: '',
     trainer_phone: '',
     session_date: easternToday(),
+    // When class starts (Keeley's request, 2026-10-14) - optional, shown in the trainer's email.
+    start_time: '',
     location: '',
     // Optional - the class files for the trainer (Keeley's request, 2026-10-07).
     wetransfer_link: '',
@@ -163,6 +164,8 @@ export default function Sessions() {
   // Each day's PowerPoint (WeTransfer link) - only that day's trainer is sent it (Keeley's request,
   // 2026-10-14).
   const [dayLinks, setDayLinks] = useState([]);
+  // The day whose trainer dropdown has "+ Add New Trainer" open, or null.
+  const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   // Set when the picked Training Type is a multi-day course (OSHA 10/30) and filled the days in, so
   // picking a one-day training afterwards turns multi-day back off.
   const [daysFromTraining, setDaysFromTraining] = useState(false);
@@ -299,6 +302,7 @@ export default function Sessions() {
         training_type_label,
         additional_trainings,
         separate_checkins: separateCheckins,
+        start_time: form.start_time,
         wetransfer_link: isMultiDay ? '' : form.wetransfer_link.trim(),
         day_wetransfer_links: isMultiDay ? dayLinks.map((l) => l.trim()) : null,
         trainer_name: form.trainer_name.trim(),
@@ -490,8 +494,6 @@ export default function Sessions() {
                       onChange={(e) => {
                         if (e.target.value === '__new__') {
                           setTrainerMode('new');
-                          setNewTrainerFirst('');
-                          setNewTrainerLast('');
                           setSelectedTrainerId('');
                           setForm({ ...form, trainer_name: '', trainer_phone: '' });
                         } else {
@@ -508,32 +510,17 @@ export default function Sessions() {
                       <option value="__new__">+ Add New Trainer</option>
                     </select>
                   ) : (
-                    <>
-                      {/* First/last kept separate (Keeley's request, 2026-09-22), combined into
-                          trainer_name as "First Last". */}
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <input
-                          value={newTrainerFirst}
-                          onChange={(e) => { setNewTrainerFirst(e.target.value); setForm({ ...form, trainer_name: `${e.target.value.trim()} ${newTrainerLast.trim()}`.trim() }); }}
-                          placeholder="First name"
-                          required
-                          autoFocus
-                        />
-                        <input
-                          value={newTrainerLast}
-                          onChange={(e) => { setNewTrainerLast(e.target.value); setForm({ ...form, trainer_name: `${newTrainerFirst.trim()} ${e.target.value.trim()}`.trim() }); }}
-                          placeholder="Last name"
-                          required
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() => { setTrainerMode('select'); setSelectedTrainerId(''); setForm({ ...form, trainer_name: '', trainer_phone: '' }); }}
-                      >
-                        Choose an existing trainer instead
-                      </button>
-                    </>
+                    // A new trainer gets a profile with an email first (Keeley, 2026-10-14), then is picked.
+                    <NewTrainerForm
+                      trainers={trainers}
+                      onCreated={(t) => {
+                        setTrainers((prev) => [...prev, t]);
+                        setTrainerMode('select');
+                        setSelectedTrainerId(t.employee_id);
+                        setForm((f) => ({ ...f, trainer_name: displayFirstLast(t), trainer_phone: t.employee_number || '' }));
+                      }}
+                      onCancel={() => setTrainerMode('select')}
+                    />
                   )}
                 </div>
                 <div className="field">
@@ -548,14 +535,12 @@ export default function Sessions() {
                       )}
                     </>
                   ) : (
-                    <p className="page-subtitle" style={{ margin: 0 }}>
-                      Not required for a newly added trainer - this session will be flagged for review until their Employee ID is added.
-                    </p>
+                    <p className="page-subtitle" style={{ margin: 0 }}>Filled in once the new trainer is added.</p>
                   )}
                 </div>
                 <div className="field">
                   <label>Other trainers</label>
-                  <CoTrainersPicker trainers={trainers} value={coTrainerIds} onChange={setCoTrainerIds} leadId={selectedTrainerId} />
+                  <CoTrainersPicker trainers={trainers} value={coTrainerIds} onChange={setCoTrainerIds} leadId={selectedTrainerId} onTrainerCreated={(t) => setTrainers((prev) => [...prev, t])} />
                   {coTrainerIds.length > 0 && (
                     <p className="page-subtitle" style={{ margin: '4px 0 0' }}>
                       Every trainer&apos;s name goes on the certificates, any of them can close out, and trainees rate each one.
@@ -569,6 +554,14 @@ export default function Sessions() {
                     value={form.session_date}
                     onChange={(e) => setForm({ ...form, session_date: e.target.value })}
                     required
+                  />
+                </div>
+                <div className="field">
+                  <label>{isMultiDay ? 'Start Time (each day)' : 'Start Time'}</label>
+                  <input
+                    type="time"
+                    value={form.start_time}
+                    onChange={(e) => setForm({ ...form, start_time: e.target.value })}
                   />
                 </div>
                 <div className="field">
@@ -732,10 +725,14 @@ export default function Sessions() {
                                   <span>Trainer</span>
                                   <select
                                     value={dayTrainers[i] || ''}
-                                    onChange={(e) => setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    onChange={(e) => {
+                                      if (e.target.value === '__new__') setAddingDayTrainer(i);
+                                      else setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)));
+                                    }}
                                   >
                                     <option value="">{form.trainer_name ? `Main trainer (${form.trainer_name})` : 'Main trainer'}</option>
                                     {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                                    <option value="__new__">+ Add New Trainer</option>
                                   </select>
                                 </label>
                                 <label>
@@ -748,6 +745,17 @@ export default function Sessions() {
                                   />
                                 </label>
                               </div>
+                              {addingDayTrainer === i && (
+                                <NewTrainerForm
+                                  trainers={trainers}
+                                  onCreated={(t) => {
+                                    setTrainers((prev) => [...prev, t]);
+                                    setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? t.employee_id : x)));
+                                    setAddingDayTrainer(null);
+                                  }}
+                                  onCancel={() => setAddingDayTrainer(null)}
+                                />
+                              )}
                               <label className="course-day-outline">
                                 <span>Day {i + 1} outline</span>
                                 <textarea

@@ -86,7 +86,10 @@ router.post('/', async (req, res) => {
   if (employee_number && !isValidPhoneNumber(employee_number)) {
     return res.status(400).json({ error: 'employee_number must be a standard 10-digit phone number' });
   }
-  if (email && !EMAIL_PATTERN.test(email)) {
+  // Required (Keeley's request, 2026-10-14): without it a trainer never gets their class summary
+  // or close-out paperwork.
+  if (!email) return res.status(400).json({ error: "Enter the trainer's email address - class details and paperwork are sent there." });
+  if (!EMAIL_PATTERN.test(email)) {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
   const employee_id = uuidv4();
