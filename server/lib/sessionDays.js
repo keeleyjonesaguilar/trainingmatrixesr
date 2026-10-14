@@ -88,6 +88,7 @@ async function getSessionDays(session) {
       signature: row.signature || null,
       signed_at: row.signed_at || null,
       reminder_sent_at: row.reminder_sent_at || null,
+      trainer_notes: row.trainer_notes || null,
     };
   });
 }

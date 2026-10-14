@@ -248,6 +248,10 @@ export const api = {
   rebuildSessionRosters: (sessionId) => request(`/training-sessions/${sessionId}/rebuild-rosters`, { method: 'POST' }),
   // Re-send the class summary (details, links, QR codes) to every trainer on an open session.
   sendTrainerSummary: (sessionId) => request(`/training-sessions/${sessionId}/trainer-summary`, { method: 'POST' }),
+  // TEMPORARY (Keeley, 2026-10-14) - scheduled class summary emails.
+  listScheduledSummaries: (sessionId) => request(`/training-sessions/${sessionId}/scheduled-summaries`),
+  scheduleSummary: (sessionId, sendAtLocal) => request(`/training-sessions/${sessionId}/scheduled-summaries`, { method: 'POST', body: JSON.stringify({ send_at_local: sendAtLocal }) }),
+  cancelScheduledSummary: (sessionId, scheduleId) => request(`/training-sessions/${sessionId}/scheduled-summaries/${scheduleId}`, { method: 'DELETE' }),
   getCertificateEmailOptions: (sessionId) => request(`/training-sessions/${sessionId}/certificate-emails`),
   emailCertificatesToAttendees: (sessionId, recipients) => request(`/training-sessions/${sessionId}/certificate-emails/attendees`, { method: 'POST', body: JSON.stringify({ recipients }) }),
   emailCertificatesToCompany: (sessionId, data) => request(`/training-sessions/${sessionId}/certificate-emails/company`, { method: 'POST', body: JSON.stringify(data) }),

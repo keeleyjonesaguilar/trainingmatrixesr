@@ -11,6 +11,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { dbAll, dbGet, dbRun } = require('../db');
 const { EASTERN_TZ, parseTimestamp } = require('./dates');
+const { nameKey } = require('./names');
 
 // Every session a trainer taught: as lead, as a multi-day course's day trainer (assigned or
 // signed), or as a co-trainer. `$1` is the trainer's employee_id.
@@ -33,9 +34,13 @@ function average(rows, field) {
 
 // Everything the close-out email shows about one session's feedback: averages (overall and per
 // trainer), yes/no tallies, and every written comment (oldest first, the order they came in).
-async function sessionFeedbackSummary(sessionId) {
-  const rows = await dbAll('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at', [sessionId]);
-  const trainerRows = rows.length
+//
+// `forTrainer` ({ employeeIds, nameKeys } - Sets) narrows it to the responses that rated that
+// trainer, and only their own ratings and comments: a multi-day course's Day 2 trainer never sees
+// Day 1's feedback (Keeley's request, 2026-10-14).
+async function sessionFeedbackSummary(sessionId, { forTrainer = null } = {}) {
+  let rows = await dbAll('SELECT * FROM session_feedback WHERE session_id = ? ORDER BY submitted_at', [sessionId]);
+  let trainerRows = rows.length
     ? await dbAll(
       `SELECT sft.*, sf.effectiveness_rating, sf.submitted_at FROM session_feedback_trainers sft
        JOIN session_feedback sf ON sf.feedback_id = sft.feedback_id
@@ -43,6 +48,11 @@ async function sessionFeedbackSummary(sessionId) {
       [sessionId]
     )
     : [];
+  if (forTrainer) {
+    trainerRows = trainerRows.filter((t) => forTrainer.employeeIds.has(t.trainer_employee_id) || forTrainer.nameKeys.has(nameKey(t.trainer_name)));
+    const theirs = new Set(trainerRows.map((t) => t.feedback_id));
+    rows = rows.filter((r) => theirs.has(r.feedback_id));
+  }
   const byTrainer = new Map();
   for (const t of trainerRows) {
     const key = t.trainer_employee_id || `name:${t.trainer_name.toLowerCase()}`;
@@ -61,7 +71,7 @@ async function sessionFeedbackSummary(sessionId) {
   ].sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt)));
   return {
     count: rows.length,
-    avgTrainerRating: average(rows, 'trainer_rating'),
+    avgTrainerRating: forTrainer ? average(trainerRows, 'rating') : average(rows, 'trainer_rating'),
     avgEffectiveness: average(rows, 'effectiveness_rating'),
     trainers: [...byTrainer.values()].map((t) => ({
       name: t.name,

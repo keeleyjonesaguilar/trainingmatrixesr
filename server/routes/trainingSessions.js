@@ -19,6 +19,8 @@ const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessio
 const { totalDuration } = require('../lib/durations');
 const { sendTrainerSummary, sendTrainerSummarySafely } = require('../lib/trainerSummary');
 const { attendeeEmailOptions, sendAttendeeCertificates, sendCompanyCertificates } = require('../lib/certificateEmails');
+const { easternLocalToUtcText } = require('../lib/dates');
+const { labeledQrPng } = require('../lib/qrLabel');
 
 // A session with per-training durations: `duration` is the total of them all (migration 078,
 // Keeley's report, 2026-10-07) - recalculated whenever any of them changes.
@@ -36,6 +38,20 @@ function cleanWetransferLink(value) {
   const link = String(value || '').trim();
   if (!link) return { link: null };
   return /^https?:\/\/\S+$/i.test(link) ? { link } : { error: 'The WeTransfer link should start with https://' };
+}
+
+// A multi-day course's PowerPoint link for each day (migration 082, Keeley's request, 2026-10-14) -
+// each optional. JSON array (one entry per day) or null when none are filled in.
+function cleanDayWetransferLinks(list, totalDays) {
+  if (list === undefined || list === null || !totalDays) return { json: null };
+  if (!Array.isArray(list)) return { error: 'day_wetransfer_links must be a list, one link per day.' };
+  const links = [];
+  for (let i = 0; i < totalDays; i += 1) {
+    const cleaned = cleanWetransferLink(list[i]);
+    if (cleaned.error) return { error: `Day ${i + 1}: ${cleaned.error}` };
+    links.push(cleaned.link || '');
+  }
+  return { json: links.some(Boolean) ? JSON.stringify(links) : null };
 }
 
 const { isValidPhoneNumber } = require('../lib/phone');
@@ -113,6 +129,7 @@ function withParsedDayDates(session) {
     ...session,
     day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
     day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
+    day_wetransfer_links: session.day_wetransfer_links ? JSON.parse(session.day_wetransfer_links) : null,
   };
 }
 
@@ -301,7 +318,7 @@ router.post('/', async (req, res) => {
     client_name, master_training_id, training_type_label, trainer_name, trainer_phone,
     session_date, outline, location, duration, language = 'english', additional_trainings = [],
     total_days = null, day_dates = null, day_outlines = null, day_trainers = null, separate_checkins = false,
-    session_kind = 'training', toolbox_topic = null, co_trainer_ids = [], wetransfer_link = null,
+    session_kind = 'training', toolbox_topic = null, co_trainer_ids = [], wetransfer_link = null, day_wetransfer_links = null,
   } = req.body || {};
   // A toolbox talk (Keeley's request, 2026-09-30): a Topic instead of a catalog training, filed
   // under the catalog's "Toolbox Talk" entry; outline/duration optional; never multi-day.
@@ -361,6 +378,8 @@ router.post('/', async (req, res) => {
   if (dayDatesError) return res.status(400).json({ error: dayDatesError });
   const { dayOutlinesJson, error: dayOutlinesError } = multiTraining ? { dayOutlinesJson: null } : validateDayOutlines(day_outlines, totalDays);
   if (dayOutlinesError) return res.status(400).json({ error: dayOutlinesError });
+  const dayLinks = multiTraining ? { json: null } : cleanDayWetransferLinks(day_wetransfer_links, totalDays);
+  if (dayLinks.error) return res.status(400).json({ error: dayLinks.error });
   let clientId;
   try {
     clientId = await repo.findOrCreateClientByName(client_name);
@@ -426,6 +445,7 @@ router.post('/', async (req, res) => {
     await saveCoTrainers(await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [session_id]), co_trainer_ids);
   }
   if (wetransfer.link) await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, session_id]);
+  if (dayLinks.json) await dbRun('UPDATE training_sessions SET day_wetransfer_links = ? WHERE session_id = ?', [dayLinks.json, session_id]);
   // 2+ trainings with their own durations: keep the first training's own, and the total as `duration`.
   if (hasExtras) {
     const first = String(req.body.first_training_duration || effective.duration || '').trim();
@@ -517,6 +537,12 @@ router.put('/:id', requireAdmin, async (req, res) => {
     if (result.error) return res.status(400).json({ error: result.error });
     dayOutlinesJson = result.dayOutlinesJson;
   }
+  let dayLinksJson = multiTraining || !totalDays ? null : existing.day_wetransfer_links;
+  if (!multiTraining && totalDays && Object.prototype.hasOwnProperty.call(req.body, 'day_wetransfer_links')) {
+    const result = cleanDayWetransferLinks(req.body.day_wetransfer_links, totalDays);
+    if (result.error) return res.status(400).json({ error: result.error });
+    dayLinksJson = result.json;
+  }
 
   let clientId = existing.client_id;
   if (req.body.client_name) {
@@ -570,6 +596,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (switchedCheckins) {
     await dbRun('UPDATE training_sessions SET multi_training_day = ?, current_day = 1 WHERE session_id = ?', [multiTraining ? 1 : 0, req.params.id]);
   }
+  await dbRun('UPDATE training_sessions SET day_wetransfer_links = ? WHERE session_id = ?', [dayLinksJson, req.params.id]);
   if (Object.prototype.hasOwnProperty.call(req.body, 'wetransfer_link')) {
     const wetransfer = cleanWetransferLink(req.body.wetransfer_link);
     if (wetransfer.error) return res.status(400).json({ error: wetransfer.error });
@@ -668,6 +695,42 @@ router.post('/:id/trainer-summary', requireAdmin, async (req, res) => {
     details: `To ${result.sent_to.join(', ')}`, req,
   });
   res.json(result);
+});
+
+// TEMPORARY (Keeley, 2026-10-14: "we will take it out after I am done") - schedule the class
+// summary to go to every trainer at a set time. Sent by lib/trainerSummaryScheduler.js on the live
+// server; the time is typed in Eastern.
+router.get('/:id/scheduled-summaries', requireAdmin, async (req, res) => {
+  res.json(await dbAll('SELECT * FROM scheduled_trainer_summaries WHERE session_id = ? ORDER BY send_at DESC', [req.params.id]));
+});
+
+router.post('/:id/scheduled-summaries', requireAdmin, async (req, res) => {
+  const session = await dbGet('SELECT session_id, status, session_kind FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found.' });
+  if (session.session_kind === 'toolbox_talk') return res.status(400).json({ error: "Toolbox talks don't have a class summary." });
+  if (session.status === 'closed') return res.status(400).json({ error: 'This session is already closed.' });
+  const sendAt = easternLocalToUtcText(req.body?.send_at_local);
+  if (!sendAt) return res.status(400).json({ error: 'Pick a date and time to send it.' });
+  if (sendAt <= new Date().toISOString().replace('T', ' ').slice(0, 19)) return res.status(400).json({ error: 'Pick a time in the future.' });
+  const id = uuidv4();
+  await dbRun(
+    'INSERT INTO scheduled_trainer_summaries (id, session_id, send_at, created_by) VALUES (?, ?, ?, ?)',
+    [id, req.params.id, sendAt, req.user.username]
+  );
+  logActivity({
+    actor: req.user, action: 'trainer_summary_scheduled', entityType: 'training_session', entityId: req.params.id,
+    details: `For ${req.body.send_at_local} Eastern`, req,
+  });
+  res.status(201).json(await dbGet('SELECT * FROM scheduled_trainer_summaries WHERE id = ?', [id]));
+});
+
+router.delete('/:id/scheduled-summaries/:scheduleId', requireAdmin, async (req, res) => {
+  const result = await dbRun(
+    'UPDATE scheduled_trainer_summaries SET cancelled_at = now_utc_text() WHERE id = ? AND session_id = ? AND sent_at IS NULL AND cancelled_at IS NULL',
+    [req.params.scheduleId, req.params.id]
+  );
+  if (!result.changes) return res.status(400).json({ error: 'That one was already sent or cancelled.' });
+  res.json({ ok: true });
 });
 
 // Emailing certificates by hand (Keeley's request, 2026-10-14) - lib/certificateEmails.js. This
@@ -828,7 +891,9 @@ router.post('/:id/log-link-copied', async (req, res) => {
 router.get('/:id/qrcode.png', async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).end();
-  const buf = await qrPngBuffer(session.qr_token);
+  // With the green SIGN-IN banner, like the trainer email's copy (Keeley's request, 2026-10-14: it
+  // goes in the PowerPoint, so it should look the part).
+  const buf = labeledQrPng(await qrPngBuffer(session.qr_token), 'signin');
   logActivity({
     actor: req.user, action: 'qr_code_downloaded', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Sign-In QR', req,
@@ -843,7 +908,8 @@ router.get('/:id/qrcode.png', async (req, res) => {
 router.get('/:id/feedback-qrcode.png', async (req, res) => {
   const session = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
   if (!session) return res.status(404).end();
-  const buf = await feedbackQrPngBuffer(session.qr_token);
+  // With the gold FEEDBACK banner (2026-10-14).
+  const buf = labeledQrPng(await feedbackQrPngBuffer(session.qr_token), 'feedback');
   logActivity({
     actor: req.user, action: 'qr_code_downloaded', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, details: 'Feedback QR', req,

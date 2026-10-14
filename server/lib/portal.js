@@ -13,6 +13,8 @@ const { easternToday } = require('./dates');
 const { latestTrainings } = require('./employeeRecordCard');
 const { INTERNAL_CLIENT_ID } = require('./repo');
 const { TAUGHT_SESSIONS_SQL, trainerRatingSummary } = require('./sessionFeedback');
+const { getSessionDays } = require('./sessionDays');
+const { isMultiDay } = require('./sessionParts');
 
 const COOKIE_NAME = 'tm_portal';
 const SESSION_DAYS = 14;
@@ -215,6 +217,22 @@ function isTodaySession(s, today) {
   return Array.isArray(dayDates) && dayDates.length ? dayDates.includes(today) : s.session_date === today;
 }
 
+// The days of a multi-day course this trainer teaches (Keeley's request, 2026-10-14: Day 2's
+// trainer sees Day 2, not Day 1) - every day for a co-trainer, or for a lead who isn't assigned a
+// day. Null for a one-day session.
+async function trainerDays(session, employeeId) {
+  if (!isMultiDay(session)) return null;
+  const days = await getSessionDays(session);
+  const co = await dbGet('SELECT 1 AS x FROM session_co_trainers WHERE session_id = ? AND trainer_employee_id = ?', [session.session_id, employeeId]);
+  if (co) return days;
+  const mine = days.filter((d) => d.assigned_trainer_employee_id === employeeId || d.signed_trainer_employee_id === employeeId);
+  return mine.length ? mine : days;
+}
+
+function teachesToday(session, myDays, today) {
+  return myDays ? myDays.some((d) => d.date === today) : isTodaySession(session, today);
+}
+
 // An open session one of the signed-in profiles is a trainer on (lead, day trainer or co-trainer)
 // that runs today - the only sessions whose live roster the portal shows. Null otherwise.
 async function teachingTodaySession(session, sessionId) {
@@ -225,14 +243,17 @@ async function teachingTodaySession(session, sessionId) {
     // Spelled-out $2: db.js numbers plain ? from $1, which TAUGHT_SQL already uses.
     // eslint-disable-next-line no-await-in-loop
     const teaches = await dbGet(`SELECT 1 AS x FROM (${TAUGHT_SQL}) t WHERE t.session_id = $2`, [e.employee_id, sessionId]);
-    if (teaches) return ts;
+    // On a multi-day course, only on a day they teach.
+    // eslint-disable-next-line no-await-in-loop
+    if (teaches && teachesToday(ts, await trainerDays(ts, e.employee_id), easternToday())) return ts;
   }
   return null;
 }
 
 async function trainerView(employeeId) {
   const sessions = await dbAll(
-    `SELECT ts.session_id, ts.training_type_label, ts.session_date, ts.status, ts.location, ts.total_days, ts.day_dates, c.client_name,
+    `SELECT ts.session_id, ts.training_type_label, ts.session_date, ts.status, ts.location, ts.total_days, ts.day_dates, ts.multi_training_day,
+            ts.trainer_name, ts.trainer_employee_id, c.client_name,
             (SELECT COUNT(*) FROM session_attendees a WHERE a.session_id = ts.session_id) AS attendee_count
      FROM training_sessions ts JOIN clients c ON c.client_id = ts.client_id
      WHERE ts.session_id IN (${TAUGHT_SQL})
@@ -245,8 +266,21 @@ async function trainerView(employeeId) {
     day_dates: s.day_dates ? JSON.parse(s.day_dates) : null, total_days: s.total_days, location: s.location,
     attendees: Number(s.attendee_count), status: s.status,
   });
-  const upcoming = sessions.filter((s) => s.status === 'open' && (JSON.parse(s.day_dates || 'null')?.slice(-1)[0] || s.session_date) >= today)
-    .map((s) => ({ ...shape(s), teaching_today: isTodaySession(s, today) })).sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming = [];
+  for (const s of sessions.filter((x) => x.status === 'open')) {
+    // eslint-disable-next-line no-await-in-loop
+    const myDays = await trainerDays(s, employeeId);
+    const dates = myDays ? myDays.map((d) => d.date).filter(Boolean) : [s.session_date];
+    if (!dates.length || dates[dates.length - 1] < today) continue; // eslint-disable-line no-continue
+    upcoming.push({
+      ...shape(s),
+      date: dates[0],
+      // Only their own days on a course split between trainers.
+      my_days: myDays && myDays.length < s.total_days ? myDays.map((d) => ({ day_number: d.day_number, date: d.date })) : null,
+      teaching_today: teachesToday(s, myDays, today),
+    });
+  }
+  upcoming.sort((a, b) => a.date.localeCompare(b.date));
   const taught = sessions.filter((s) => s.status === 'closed').map(shape);
   // Only ratings meant for this trainer (per-trainer feedback, 2026-10-01).
   const summary = await trainerRatingSummary(employeeId);

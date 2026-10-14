@@ -121,6 +121,22 @@ function feedbackBlock(feedback, isToolbox) {
 `;
 }
 
+// The trainer's notes about the class (Keeley's request, 2026-10-14: "Were there any issues during
+// this class?") - in the office's copies.
+function notesBlock(notes) {
+  if (!notes || !notes.length) return '';
+  return `
+        <tr><td style="padding:12px 28px 4px;">
+          <div style="${FONT}font-size:13px;font-weight:700;color:${GREEN};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Trainer Notes</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff8e6;border-radius:10px;border-left:4px solid ${GOLD};">
+            <tr><td style="padding:12px 18px;${FONT}font-size:14px;line-height:1.5;color:${TEXT};">
+              ${notes.map((n) => `<div style="margin:4px 0;"><strong>${esc(n.label)}:</strong> ${esc(n.text).replace(/\n/g, '<br>')}</div>`).join('')}
+            </td></tr>
+          </table>
+        </td></tr>
+`;
+}
+
 /**
  * @param session            closed training_sessions row joined with client_name
  * @param trainingLabels     every training the session covered (primary first)
@@ -131,8 +147,9 @@ function feedbackBlock(feedback, isToolbox) {
  * @param editUrl            the trainer's "Edit close-out details" link - trainer's copy only
  * @param isUpdate           true for the resend after the trainer edits a closed session
  * @param feedback           lib/sessionFeedback.js sessionFeedbackSummary() for the session
+ * @param trainerNotes       [{ label, text }] - the trainer's close-out/day notes, office copies only
  */
-function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, editUrl = null, isUpdate = false, feedback = null }) {
+function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachmentsSummary, recipientIsTrainer, logoUrl, editUrl = null, isUpdate = false, feedback = null, trainerNotes = [] }) {
   const trainingNames = trainingLabels.map(stripTrainingIdPrefix);
   const title = trainingNames.join(' + ');
   const trainerName = session.trainer_signed_name || session.trainer_name || 'the trainer';
@@ -168,6 +185,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
               <div style="${FONT}font-size:14px;font-weight:700;color:${TEXT};">Need to change something?</div>
               <div style="${FONT}font-size:13px;line-height:1.5;color:${MUTED};margin:4px 0 12px;">Fill in a missing address or other details, or remove a duplicate sign-in. You'll need your trainer PIN to save.</div>
               <a href="${esc(editUrl)}" style="display:inline-block;background:${GREEN};color:#ffffff;${FONT}font-size:14px;font-weight:600;text-decoration:none;padding:10px 18px;border-radius:8px;">Edit Close-Out Details</a>
+              <div style="${FONT}font-size:12px;line-height:1.5;color:#a15c00;background:#fff2df;border-radius:6px;padding:8px 10px;margin-top:12px;"><strong>Please note:</strong> changes can only be made within 24 hours of closing out the session. After that this link stops working, because the certificates and roster go out to the client and trainees by the end of the day after training is completed. For anything later, contact the ESR office.</div>
             </td></tr>
           </table>
         </td></tr>
@@ -235,7 +253,7 @@ function buildSessionCompleteEmail({ session, trainingLabels, attendees, attachm
             </td></tr>
           </table>
         </td></tr>
-${editBlock}${feedbackBlock(feedback, isToolbox)}
+${editBlock}${notesBlock(trainerNotes)}${feedbackBlock(feedback, isToolbox)}
         <tr><td style="padding:16px 28px 4px;">
           <div style="${FONT}font-size:13px;font-weight:700;color:${GREEN};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Attached to this email</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${attachmentRows}

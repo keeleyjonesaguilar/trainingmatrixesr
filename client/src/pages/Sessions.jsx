@@ -9,6 +9,7 @@ import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
 import { trainerSummaryProblem } from '../lib/trainerSummary';
+import { courseDays, resizeDays, joinDayOutlines } from '../lib/courseDays';
 
 const SESSION_SORT_ACCESSORS = {
   session_date: (s) => s.session_date || '',
@@ -159,6 +160,12 @@ export default function Sessions() {
   // Who teaches each day (Keeley's request, 2026-09-29) - a trainer's employee_id, or '' for the
   // session's main trainer, so a one-trainer course needs nothing extra here.
   const [dayTrainers, setDayTrainers] = useState([]);
+  // Each day's PowerPoint (WeTransfer link) - only that day's trainer is sent it (Keeley's request,
+  // 2026-10-14).
+  const [dayLinks, setDayLinks] = useState([]);
+  // Set when the picked Training Type is a multi-day course (OSHA 10/30) and filled the days in, so
+  // picking a one-day training afterwards turns multi-day back off.
+  const [daysFromTraining, setDaysFromTraining] = useState(false);
   const [creating, setCreating] = useState(false);
   // Upcoming-count badge (Keeley's request, 2026-09-22): open sessions dated today or later,
   // same definition Dashboard.jsx's "Upcoming Trainings Scheduled" box already uses. Fetched on
@@ -166,6 +173,23 @@ export default function Sessions() {
   // client filter is currently applied below and would otherwise go to 0 the moment someone
   // filters to "Closed".
   const [upcomingCount, setUpcomingCount] = useState(null);
+
+  // Sets the number of days, keeping what's already typed for the days that stay.
+  const setDayCount = (count, outlines = null) => {
+    setForm((f) => ({ ...f, total_days: count ? String(count) : '' }));
+    setDayDates((prev) => resizeDays(prev, count, (i) => sequentialDates(form.session_date, count)[i]));
+    setDayOutlines((prev) => (outlines ? outlines.slice(0, count) : resizeDays(prev, count, () => form.outline)));
+    setDayTrainers((prev) => resizeDays(prev, count));
+    setDayLinks((prev) => resizeDays(prev, count));
+  };
+
+  const clearDays = () => {
+    setForm((f) => ({ ...f, total_days: '' }));
+    setDayDates([]);
+    setDayOutlines([]);
+    setDayTrainers([]);
+    setDayLinks([]);
+  };
 
   const load = () => {
     setSessionsLoading(true);
@@ -240,7 +264,7 @@ export default function Sessions() {
     // fill in.
     if (
       !form.client_name || !form.master_training_id || !form.trainer_name ||
-      !form.session_date || !form.location || !form.duration || !form.outline
+      !form.session_date || !form.location || !form.duration || (!isMultiDay && !form.outline)
     ) {
       setError('Every field is required to create a session.');
       return;
@@ -275,7 +299,8 @@ export default function Sessions() {
         training_type_label,
         additional_trainings,
         separate_checkins: separateCheckins,
-        wetransfer_link: form.wetransfer_link.trim(),
+        wetransfer_link: isMultiDay ? '' : form.wetransfer_link.trim(),
+        day_wetransfer_links: isMultiDay ? dayLinks.map((l) => l.trim()) : null,
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -288,7 +313,8 @@ export default function Sessions() {
         // 2+ trainings: each has its own duration and the session's is their total (2026-10-07).
         duration: isMultiTraining ? sessionTotal : form.duration,
         first_training_duration: isMultiTraining ? form.duration : undefined,
-        outline: form.outline,
+        // A multi-day course's outline is its days' outlines (the per-day boxes replace the one box).
+        outline: isMultiDay ? joinDayOutlines(dayOutlines) : form.outline,
         language: form.language,
         total_days: isMultiDay ? Number(form.total_days) : null,
         day_dates: isMultiDay ? dayDates : null,
@@ -331,7 +357,7 @@ export default function Sessions() {
               <button className="btn btn-accent" onClick={() => { setSessionKind('training'); setShowForm(true); }}>
                 + New Session
               </button>
-              <button className="btn btn-secondary" onClick={() => { setSessionKind('toolbox_talk'); setIsMultiDay(false); setShowForm(true); }}>
+              <button className="btn btn-secondary" onClick={() => { setSessionKind('toolbox_talk'); setIsMultiDay(false); setDaysFromTraining(false); clearDays(); setShowForm(true); }}>
                 + New Toolbox Talk
               </button>
             </div>
@@ -418,6 +444,20 @@ export default function Sessions() {
                         outline: outlineTouched ? f.outline : (t?.outline || ''),
                         duration: t?.default_duration || '',
                       }));
+                      // A multi-day course (OSHA 10 = 2 days, OSHA 30 = 4 - Keeley's request,
+                      // 2026-10-14): multi-day on, its days, and each day's outline from the
+                      // Training Type page. Back off again if the next pick is a one-day training.
+                      const course = courseDays(t);
+                      if (course) {
+                        setAdditionalTrainingIds([]);
+                        setIsMultiDay(true);
+                        setDaysFromTraining(true);
+                        setDayCount(course.days, course.outlines);
+                      } else if (daysFromTraining) {
+                        setIsMultiDay(false);
+                        setDaysFromTraining(false);
+                        clearDays();
+                      }
                     }}
                   />
                 </div>
@@ -540,7 +580,7 @@ export default function Sessions() {
                     required
                   />
                 </div>
-                {!isToolbox && (
+                {!isToolbox && !isMultiDay && (
                   <div className="field">
                     <label>WeTransfer Link (optional)</label>
                     <input
@@ -642,14 +682,15 @@ export default function Sessions() {
                 </div>
                 )}
                 {!isToolbox && !isMultiTraining && (
-                <div className="field">
+                <div className="field" style={isMultiDay ? { gridColumn: '1 / -1' } : undefined}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 400 }}>
                     <input
                       type="checkbox"
                       checked={isMultiDay}
                       onChange={(e) => {
                         setIsMultiDay(e.target.checked);
-                        if (!e.target.checked) { setForm((f) => ({ ...f, total_days: '' })); setDayDates([]); setDayOutlines([]); setDayTrainers([]); }
+                        setDaysFromTraining(false);
+                        if (!e.target.checked) clearDays();
                       }}
                     />
                     Multi-day training (one QR code, used every day)
@@ -661,21 +702,9 @@ export default function Sessions() {
                         min={2}
                         value={form.total_days}
                         onChange={(e) => {
-                          const count = Math.max(0, parseInt(e.target.value, 10) || 0);
-                          setForm({ ...form, total_days: e.target.value });
-                          setDayDates((prev) => (
-                            count <= prev.length
-                              ? prev.slice(0, count)
-                              : [...prev, ...sequentialDates(form.session_date, count).slice(prev.length, count)]
-                          ));
-                          setDayOutlines((prev) => (
-                            count <= prev.length
-                              ? prev.slice(0, count)
-                              : [...prev, ...Array.from({ length: count - prev.length }, () => form.outline)]
-                          ));
-                          setDayTrainers((prev) => (
-                            count <= prev.length ? prev.slice(0, count) : [...prev, ...Array.from({ length: count - prev.length }, () => '')]
-                          ));
+                          const count = Math.min(10, Math.max(0, parseInt(e.target.value, 10) || 0));
+                          setDayCount(count);
+                          setForm((f) => ({ ...f, total_days: e.target.value }));
                         }}
                         placeholder="Number of days (e.g. 4)"
                         style={{ marginTop: 8, maxWidth: 160 }}
@@ -685,51 +714,54 @@ export default function Sessions() {
                         Attendees must sign in every day for it to count. Pick who teaches each day below - each day's trainer signs off their own day from the sign-in page, which opens the next day. Certificates are created when the final day is closed out.
                       </p>
                       {dayDates.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
                           {dayDates.map((d, i) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', width: 44 }}>
-                                Day {i + 1}
+                            <div key={i} className="course-day">
+                              <div className="course-day-head">Day {i + 1}</div>
+                              <div className="course-day-fields">
+                                <label>
+                                  <span>Date</span>
+                                  <input
+                                    type="date"
+                                    value={d}
+                                    onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    required
+                                  />
+                                </label>
+                                <label>
+                                  <span>Trainer</span>
+                                  <select
+                                    value={dayTrainers[i] || ''}
+                                    onChange={(e) => setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                  >
+                                    <option value="">{form.trainer_name ? `Main trainer (${form.trainer_name})` : 'Main trainer'}</option>
+                                    {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>WeTransfer link (optional)</span>
+                                  <input
+                                    type="text"
+                                    value={dayLinks[i] || ''}
+                                    onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    placeholder="https://we.tl/..."
+                                  />
+                                </label>
+                              </div>
+                              <label className="course-day-outline">
+                                <span>Day {i + 1} outline</span>
+                                <textarea
+                                  rows={4}
+                                  value={dayOutlines[i] || ''}
+                                  onChange={(e) => setDayOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                  required
+                                />
                               </label>
-                              <input
-                                type="date"
-                                value={d}
-                                onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
-                                style={{ maxWidth: 160 }}
-                                required
-                              />
-                              <select
-                                value={dayTrainers[i] || ''}
-                                onChange={(e) => setDayTrainers((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
-                                aria-label={`Day ${i + 1} trainer`}
-                                style={{ maxWidth: 240 }}
-                              >
-                                <option value="">{form.trainer_name ? `Main trainer (${form.trainer_name})` : 'Main trainer'}</option>
-                                {trainers.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
-                              </select>
                             </div>
                           ))}
-                        </div>
-                      )}
-                      {dayOutlines.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-                          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)' }}>
-                            Outline per Day
-                          </label>
-                          {dayOutlines.map((o, i) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                              <span style={{ fontSize: 12, color: 'var(--color-text-muted)', width: 44, marginTop: 8 }}>
-                                Day {i + 1}
-                              </span>
-                              <textarea
-                                rows={2}
-                                value={o}
-                                onChange={(e) => setDayOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
-                                style={{ flexGrow: 1 }}
-                                required
-                              />
-                            </div>
-                          ))}
+                          <p className="page-subtitle" style={{ margin: 0 }}>
+                            Each day&apos;s trainer is emailed only their own day - its date, outline and WeTransfer link - when the session is created, and again at 5:00 AM that morning.
+                          </p>
                         </div>
                       )}
                     </>
@@ -737,6 +769,7 @@ export default function Sessions() {
                 </div>
                 )}
               </div>
+              {!isMultiDay && (
               <div className="field">
                 <label>{isToolbox ? 'Talking Points (optional)' : 'Outline / Topics Covered'}</label>
                 <textarea
@@ -752,6 +785,7 @@ export default function Sessions() {
                   </p>
                 )}
               </div>
+              )}
               <div style={{ display: 'flex', gap: 10 }}>
                 <button className="btn btn-accent" type="submit" disabled={creating}>
                   {creating ? 'Creating…' : isToolbox ? 'Create Toolbox Talk & Generate QR Code' : 'Create Session & Generate QR Code'}

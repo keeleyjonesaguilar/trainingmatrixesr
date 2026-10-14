@@ -51,6 +51,27 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (!EXPIRATION_UNITS.includes(merged.default_expiration)) {
     return res.status(400).json({ error: `default_expiration must be one of: ${EXPIRATION_UNITS.join(', ')}` });
   }
+  // Multi-day course setup (migration 082, Keeley's request, 2026-10-14): a number of days (2+, or
+  // blank for a one-day training) and one outline per day.
+  let totalDays = existing.default_total_days;
+  let dayOutlines = existing.default_day_outlines;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'default_total_days')) {
+    totalDays = req.body.default_total_days ? Number(req.body.default_total_days) : null;
+    if (totalDays !== null && (!Number.isInteger(totalDays) || totalDays < 2 || totalDays > 10)) {
+      return res.status(400).json({ error: 'Number of days must be a whole number from 2 to 10 (or blank for a one-day training).' });
+    }
+    // A list, or the saved JSON text when a whole training record is sent back (the Settings panel).
+    let sent = req.body.default_day_outlines;
+    if (typeof sent === 'string') {
+      try { sent = JSON.parse(sent); } catch { sent = null; }
+    }
+    const outlines = Array.isArray(sent) ? sent.map((o) => String(o ?? '')) : [];
+    dayOutlines = totalDays ? JSON.stringify(Array.from({ length: totalDays }, (_, i) => outlines[i] || '')) : null;
+  }
+  await dbRun(
+    'UPDATE master_trainings SET default_total_days = ?, default_day_outlines = ? WHERE training_id = ?',
+    [totalDays, dayOutlines, req.params.id]
+  );
   await dbRun(
     `UPDATE master_trainings SET training_name=?, training_type=?, default_expiration=?, active=?, display_order=?, outline=?, default_duration=?
      WHERE training_id=?`,

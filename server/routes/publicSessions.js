@@ -48,6 +48,29 @@ function isValidSignature(sig) {
   return typeof sig === 'string' && sig.startsWith('data:image/') && sig.length > 100;
 }
 
+// The trainer's optional notes from the close-out / day sign-off form (Keeley's request,
+// 2026-10-14: "Were there any issues during this class?").
+function trainerNotes(body) {
+  return String(body?.trainer_notes || '').trim().slice(0, 4000) || null;
+}
+
+// Puts the trainer's notes on the office's bell, so an issue isn't missed.
+async function notifyTrainerNotes(session, notes, who, dayLabel = null) {
+  if (!notes) return;
+  try {
+    await notifyAllUsers({
+      type: 'trainer_notes',
+      title: `${who} left notes on ${session.training_type_label.replace(/^TRN-\d+\s*-\s*/, '')} · ${session.client_name}${dayLabel ? ` (${dayLabel})` : ''}`,
+      body: notes.length > 300 ? `${notes.slice(0, 300)}…` : notes,
+      link_path: `/sessions/${session.session_id}`,
+      email: false,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Trainer notes notification failed for session ${session.session_id}:`, err.message);
+  }
+}
+
 // Fetch session context (no auth) so the sign-in page can show
 // "You're signing in for: <client> / <training> / <date>" before the form.
 router.get('/:token', async (req, res) => {
@@ -177,6 +200,9 @@ router.post('/:token/days/:day/signoff', async (req, res) => {
   const email = trainer_email.trim().toLowerCase();
   const employeeId = await signoffTrainerId(days[dayNumber - 1], trainer_signed_name.trim(), phone);
   await recordDaySignoff(session, dayNumber, { name: trainer_signed_name.trim(), employeeId, email, phone, signature });
+  const notes = trainerNotes(req.body);
+  await dbRun('UPDATE session_days SET trainer_notes = ? WHERE session_id = ? AND day_number = ?', [notes, session.session_id, dayNumber]);
+  await notifyTrainerNotes(session, notes, trainer_signed_name.trim(), `Day ${dayNumber}`);
   await fillTrainerProfile(employeeId, phone, email);
   await dbRun('UPDATE training_sessions SET current_day = ? WHERE session_id = ? AND current_day = ?', [dayNumber + 1, session.session_id, dayNumber]);
   res.json({ ok: true, signed_off_day: dayNumber, current_day: dayNumber + 1, total_days: session.total_days });
@@ -386,11 +412,11 @@ router.post('/:token/close', async (req, res) => {
   await dbRun(
     `UPDATE training_sessions
      SET status = 'closed', trainer_signed_name = ?, trainer_email = ?, trainer_phone = ?, trainer_signature = ?,
-         trainer_signed_at = now_utc_text(), closed_at = now_utc_text(),
+         trainer_signed_at = now_utc_text(), closed_at = now_utc_text(), trainer_close_notes = ?,
          ${Object.keys(ahaColumns).map((col) => `${col} = ?`).join(', ')}
      WHERE session_id = ?`,
     [
-      trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature,
+      trainer_signed_name.trim(), trainer_email.trim().toLowerCase(), formattedTrainerPhone, signature, trainerNotes(req.body),
       ...Object.values(ahaColumns),
       session.session_id,
     ]
@@ -415,6 +441,7 @@ router.post('/:token/close', async (req, res) => {
     await recordDaySignoff(session, session.total_days, {
       name: trainer_signed_name.trim(), employeeId: trainerEmployeeId, email: trainer_email.trim().toLowerCase(), phone: formattedTrainerPhone, signature,
     });
+    await dbRun('UPDATE session_days SET trainer_notes = ? WHERE session_id = ? AND day_number = ?', [trainerNotes(req.body), session.session_id, session.total_days]);
   } else if (!trainerEmployeeId) {
     trainerEmployeeId = await repo.findOrCreateTrainerEmployee(trainer_signed_name.trim(), formattedTrainerPhone);
     if (trainerEmployeeId) {
@@ -518,6 +545,7 @@ router.post('/:token/close', async (req, res) => {
   }
 
   const attendeesFinal = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [session.session_id]);
+  await notifyTrainerNotes(updatedSession, trainerNotes(req.body), trainer_signed_name.trim());
 
   // Completed forms emailed once close-out finishes (Keeley's request, 2026-09-22): a ZIP of the
   // attendees' certificates, the sign-in roster PDF, and the AHA roster for First Aid/CPR/AED -

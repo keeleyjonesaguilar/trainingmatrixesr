@@ -16,6 +16,8 @@ function longDate(d) {
 }
 
 function sessionDates(s) {
+  // A course split between trainers: just the day(s) this trainer teaches (2026-10-14).
+  if (s.my_days?.length) return s.my_days.map((d) => `Day ${d.day_number} of ${s.total_days} · ${formatShortDate(d.date)}`).join(', ');
   if (s.day_dates?.length > 1) return `${formatShortDate(s.day_dates[0])} – ${formatShortDate(s.day_dates[s.day_dates.length - 1])} (${s.day_dates.length} days)`;
   return longDate(s.date);
 }

@@ -746,3 +746,12 @@ tr:hover td { background: #fafbfc; }
 .session-fact-client { font-size: 16px; }
 .session-fact-client a { color: var(--esr-green); }
 .session-fact-sub { font-size: 12px; font-weight: 400; color: var(--color-text-muted); }
+
+/* One day of a multi-day course on the session forms (2026-10-14): date, trainer and WeTransfer
+   link side by side, that day's outline under them. */
+.course-day { border: 1px solid var(--color-border); border-radius: 10px; padding: 12px 14px; background: var(--color-surface); }
+.course-day-head { font-family: var(--font-head); font-weight: 700; font-size: 13px; color: var(--esr-green); margin-bottom: 8px; }
+.course-day-fields { display: grid; grid-template-columns: minmax(130px, 160px) minmax(160px, 1fr) minmax(180px, 1.4fr); gap: 10px; }
+.course-day label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.course-day-outline { margin-top: 10px; }
+@media (max-width: 720px) { .course-day-fields { grid-template-columns: 1fr; } }

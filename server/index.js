@@ -46,6 +46,9 @@ async function start() {
   // Morning reminder to trainers whose session is still open after its scheduled day (Keeley's
   // request, 2026-09-29) - live site only; see server/lib/sessionReminderScheduler.js.
   require('./lib/sessionReminderScheduler').start();
+  // The class summary at 5:00 AM on the day of training, and office-scheduled sends (Keeley's
+  // request, 2026-10-14) - live site only; see server/lib/trainerSummaryScheduler.js.
+  require('./lib/trainerSummaryScheduler').start();
 
   const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 

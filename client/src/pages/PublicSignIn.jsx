@@ -19,7 +19,8 @@ function formatDate(d) {
 // cached on the session itself (see server/lib/translate.js).
 const STRINGS = {
   signing_in_tab: { en: "I'm signing in", es: 'Estoy firmando' },
-  trainer_tab: { en: "I'm the trainer — close session", es: 'Soy el instructor — cerrar sesión' },
+  // Keeley's wording, 2026-10-14.
+  trainer_tab: { en: "I'm the trainer — Review and Close Session", es: 'Soy el instructor — Revisar y cerrar la sesión' },
   // A multi-day course's trainer signs off each day before the last (Keeley's request, 2026-09-29).
   trainer_tab_signoff: { en: "I'm the trainer — end of Day {day} sign-off", es: 'Soy el instructor — firma al final del Día {day}' },
   // Asked right before a day's sign-off goes through (Keeley's request, 2026-09-30: a trainer
@@ -54,6 +55,12 @@ const STRINGS = {
   trainer_phone: { en: 'Trainer phone number', es: 'Número de teléfono del instructor' },
   trainer_pin: { en: 'Trainer PIN', es: 'PIN del instructor' },
   trainer_signature: { en: 'Trainer signature', es: 'Firma del instructor' },
+  // Optional notes for the office (Keeley's request, 2026-10-14).
+  trainer_notes: { en: 'Notes about this class (optional)', es: 'Notas sobre esta clase (opcional)' },
+  trainer_notes_placeholder: {
+    en: 'e.g. Were there any issues during this class?',
+    es: 'p. ej. ¿Hubo algún problema durante esta clase?',
+  },
   close_note: {
     en: 'Only close the session once everyone has signed in — the roster locks immediately and certificates are generated automatically.',
     es: 'Cierre la sesión solo cuando todos hayan firmado — la lista se bloquea de inmediato y los certificados se generan automáticamente.',
@@ -477,6 +484,7 @@ export default function PublicSignIn() {
   const [trainerEmail, setTrainerEmail] = useState('');
   const [trainerPhone, setTrainerPhone] = useState('');
   const [pin, setPin] = useState('');
+  const [trainerNotes, setTrainerNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [justSigned, setJustSigned] = useState(false);
@@ -601,9 +609,11 @@ export default function PublicSignIn() {
           trainer_phone: trainerPhone.trim(),
           pin: pin.trim(),
           signature: sigRef.current.toDataURL(),
+          trainer_notes: trainerNotes.trim(),
         });
         setSignedOffDay(day);
         setPin('');
+        setTrainerNotes('');
         // The next day may have a different trainer - let their details pre-fill instead.
         setTrainerName('');
         setTrainerEmail('');
@@ -620,6 +630,7 @@ export default function PublicSignIn() {
         trainer_phone: trainerPhone.trim(),
         pin: pin.trim(),
         signature: sigRef.current.toDataURL(),
+        trainer_notes: trainerNotes.trim(),
         ...(isAhaSession ? ahaFieldsPayload(ahaFields) : {}),
       });
       setClosedNow(true);
@@ -1063,6 +1074,16 @@ export default function PublicSignIn() {
                 {info.master_training_id === AHA_ROSTER_TRAINING_ID && !isSignoffDay && (
                   <AhaRosterFields value={ahaFields} onChange={setAhaFields} />
                 )}
+                <div className="field">
+                  <label>{t('trainer_notes')}</label>
+                  <textarea
+                    rows={3}
+                    value={trainerNotes}
+                    onChange={(e) => setTrainerNotes(e.target.value)}
+                    placeholder={t('trainer_notes_placeholder')}
+                    maxLength={4000}
+                  />
+                </div>
                 <div className="field">
                   <label>{t('trainer_signature')}</label>
                   <SignaturePad ref={sigRef} />

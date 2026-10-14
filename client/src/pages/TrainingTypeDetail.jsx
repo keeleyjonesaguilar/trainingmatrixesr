@@ -6,6 +6,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
+import { courseDays, resizeDays } from '../lib/courseDays';
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
@@ -166,6 +167,96 @@ function TrainingOutline({ training, isAdmin, onSaved }) {
   );
 }
 
+// A multi-day course (Keeley's request, 2026-10-14: OSHA 10 is 2 days, OSHA 30 is 4) - picking this
+// training on the New Session form turns on multi-day with this many days and fills in each day's
+// outline from here.
+function CourseDaysPanel({ training, isAdmin, onSaved }) {
+  const saved = courseDays(training);
+  const [editing, setEditing] = useState(false);
+  const [days, setDays] = useState(saved ? String(saved.days) : '');
+  const [outlines, setOutlines] = useState(saved ? saved.outlines : []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const reset = () => {
+    const current = courseDays(training);
+    setDays(current ? String(current.days) : '');
+    setOutlines(current ? current.outlines : []);
+    setError('');
+  };
+  useEffect(reset, [training]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const count = Number(days) || null;
+      await api.updateMasterTraining(training.training_id, { default_total_days: count, default_day_outlines: count ? outlines : null });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div className="card">
+        <h2>Multi-Day Course</h2>
+        {saved ? (
+          <>
+            <p className="page-subtitle" style={{ margin: '0 0 8px' }}>
+              {saved.days} days - picking this training on a new session sets up {saved.days} days, each with its own date, trainer, WeTransfer link and this outline.
+            </p>
+            {saved.outlines.map((o, i) => (
+              <div key={i} style={{ marginBottom: 8 }}>
+                <strong style={{ fontSize: 13 }}>Day {i + 1}</strong>
+                <p className="outline-text" style={{ margin: '2px 0 0', whiteSpace: 'pre-line' }}>{o || 'No outline yet.'}</p>
+              </div>
+            ))}
+          </>
+        ) : (
+          <p className="page-subtitle" style={{ margin: 0 }}>One-day training.</p>
+        )}
+        {isAdmin && <button type="button" className="link-button" onClick={() => setEditing(true)}>{saved ? 'Edit days' : 'Make it a multi-day course'}</button>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <h2>Multi-Day Course</h2>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field-row" style={{ maxWidth: 220 }}>
+        <label>Number of days</label>
+        <input
+          type="number"
+          min={2}
+          max={10}
+          value={days}
+          placeholder="Blank = one-day"
+          onChange={(e) => {
+            setDays(e.target.value);
+            setOutlines((prev) => resizeDays(prev, Math.min(10, Math.max(0, parseInt(e.target.value, 10) || 0))));
+          }}
+        />
+      </div>
+      {outlines.map((o, i) => (
+        <div className="field" key={i} style={{ marginTop: 10 }}>
+          <label>Day {i + 1} outline</label>
+          <textarea rows={5} value={o} onChange={(e) => setOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))} />
+        </div>
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+        <button type="button" className="secondary" onClick={() => { setEditing(false); reset(); }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // "Everyone with this training" (Keeley's request): replaces the old Expired-only view with
 // everyone who has any real status for it - Current, Expired, No Expiration, Pending Review.
 const EVERYONE_SORT_ACCESSORS = {
@@ -290,6 +381,7 @@ export default function TrainingTypeDetail() {
         <div>
           <SettingsPanel training={training} isAdmin={isAdmin} onSaved={load} onDeleted={() => navigate('/training-types')} />
           <TrainingOutline training={training} isAdmin={isAdmin} onSaved={load} />
+          <CourseDaysPanel training={training} isAdmin={isAdmin} onSaved={load} />
 
           <div className="card">
             <div className="toolbar">

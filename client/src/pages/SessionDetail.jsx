@@ -6,6 +6,7 @@ import { useIsAdmin } from '../authContext.jsx';
 import { formatEasternDateTime, sequentialDates, formatShortDate, easternToday } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
 import { trainerSummaryProblem } from '../lib/trainerSummary';
+import { resizeDays } from '../lib/courseDays';
 import { TrainingSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
@@ -199,6 +200,95 @@ function splitTrainerName(name) {
   return parseName(name);
 }
 
+// What the trainer wrote when closing out, and on each day's sign-off (Keeley's request, 2026-10-14:
+// "Were there any issues during this class?").
+function TrainerNotes({ session }) {
+  const notes = [
+    ...(session.days || []).filter((d) => d.trainer_notes).map((d) => ({ key: `day-${d.day_number}`, who: `Day ${d.day_number} – ${d.signed_trainer_name || d.assigned_trainer_name}`, text: d.trainer_notes })),
+    ...(!(session.days || []).length && session.trainer_close_notes ? [{ key: 'close', who: session.trainer_signed_name || session.trainer_name, text: session.trainer_close_notes }] : []),
+  ];
+  if (!notes.length) return null;
+  return (
+    <div className="card" style={{ marginBottom: 20, borderLeft: '4px solid var(--esr-gold)' }}>
+      <h3 style={{ marginTop: 0, fontSize: 14 }}>Trainer Notes</h3>
+      {notes.map((n) => (
+        <p key={n.key} style={{ margin: '6px 0', fontSize: 14, whiteSpace: 'pre-line' }}><strong>{n.who}:</strong> {n.text}</p>
+      ))}
+    </div>
+  );
+}
+
+// TEMPORARY (Keeley, 2026-10-14: "we will take it out after I am done") - email the class summary
+// to every trainer at a set time. The live site sends it (server/lib/trainerSummaryScheduler.js).
+function ScheduleSummary({ sessionId }) {
+  const [open, setOpen] = useState(false);
+  const [when, setWhen] = useState('');
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const load = () => api.listScheduledSummaries(sessionId).then(setRows).catch((err) => setError(err.message));
+  useEffect(() => { load(); }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const schedule = async () => {
+    setError('');
+    if (!when) return setError('Pick a date and time.');
+    setBusy(true);
+    try {
+      await api.scheduleSummary(sessionId, when);
+      setWhen('');
+      setOpen(false);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+    return undefined;
+  };
+  const cancel = async (row) => {
+    if (!window.confirm(`Cancel the class summary scheduled for ${formatEasternDateTime(row.send_at)}?`)) return;
+    try {
+      await api.cancelScheduledSummary(sessionId, row.id);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const pending = rows.filter((r) => !r.sent_at && !r.cancelled_at);
+  const sent = rows.filter((r) => r.sent_at).slice(0, 3);
+
+  return (
+    <div style={{ marginTop: 8, textAlign: 'left' }}>
+      {!open ? (
+        <button type="button" className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setOpen(true)}>
+          Schedule Class Summary
+        </button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Send to every trainer at (Eastern time)</label>
+          <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" className="btn btn-accent btn-sm" disabled={busy} onClick={schedule}>{busy ? 'Saving…' : 'Schedule'}</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setOpen(false); setError(''); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {error && <p className="error-banner" style={{ marginTop: 6 }}>{error}</p>}
+      {pending.map((r) => (
+        <div key={r.id} style={{ fontSize: 12, marginTop: 6 }}>
+          Scheduled: {formatEasternDateTime(r.send_at)}{' · '}
+          <button type="button" className="link-button" style={{ fontSize: 12 }} onClick={() => cancel(r)}>Cancel</button>
+        </div>
+      ))}
+      {sent.map((r) => (
+        <div key={r.id} style={{ fontSize: 12, marginTop: 6, color: 'var(--color-text-muted)' }}>
+          Sent {formatEasternDateTime(r.sent_at)}{r.result ? ` - ${r.result}` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDeleted }) {
   const { first, last } = splitTrainerName(session.trainer_name);
   const [form, setForm] = useState({
@@ -228,6 +318,10 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   // Who teaches each day (Keeley's request, 2026-09-29) - '' means the session's main trainer.
   const [dayTrainers, setDayTrainers] = useState(
     (session.days || []).map((d) => (d.assigned_trainer_employee_id && d.assigned_trainer_employee_id !== session.trainer_employee_id ? d.assigned_trainer_employee_id : ''))
+  );
+  // Each day's PowerPoint link (Keeley's request, 2026-10-14).
+  const [dayLinks, setDayLinks] = useState(
+    Array.from({ length: session.total_days || 0 }, (_, i) => session.day_wetransfer_links?.[i] || '')
   );
   const [trainerOptions, setTrainerOptions] = useState([]);
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
@@ -294,6 +388,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           day_dates: form.total_days && !session.multi_training_day ? dayDates : null,
           day_outlines: form.total_days && !session.multi_training_day ? dayOutlines : null,
           day_trainers: form.total_days && !session.multi_training_day ? dayTrainers : null,
+          day_wetransfer_links: form.total_days && !session.multi_training_day ? dayLinks.map((l) => l.trim()) : null,
           co_trainer_ids: coTrainerIds,
           ...checkinFields,
           ...durationFields,
@@ -383,9 +478,10 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <label>Location / Address</label>
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
-        {!isToolbox && (
+        {/* A multi-day course has a link per day (below); this one-link box stays for one that already has it. */}
+        {!isToolbox && (!form.total_days || isMultiTraining || session.wetransfer_link) && (
           <div className="field">
-            <label>WeTransfer Link (optional)</label>
+            <label>{form.total_days && !isMultiTraining ? 'WeTransfer Link (all days)' : 'WeTransfer Link (optional)'}</label>
             <input value={form.wetransfer_link} onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })} placeholder="https://we.tl/..." />
           </div>
         )}
@@ -460,6 +556,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
               setDayTrainers((prev) => (
                 count <= prev.length ? prev.slice(0, count) : [...prev, ...Array.from({ length: count - prev.length }, () => '')]
               ));
+              setDayLinks((prev) => resizeDays(prev, count));
             }}
             placeholder="Leave blank for single-day"
           />
@@ -468,7 +565,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       </div>
       {!isMultiTraining && form.total_days && dayDates.length > 0 && (
         <div className="field">
-          <label>Scheduled Dates &amp; Trainers</label>
+          <label>Scheduled Dates, Trainers &amp; WeTransfer Links</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dayDates.map((d, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -493,6 +590,14 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   <option value="">Main trainer ({`${form.trainer_first_name} ${form.trainer_last_name}`.trim() || 'not set'})</option>
                   {trainerOptions.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
                 </select>
+                <input
+                  type="text"
+                  value={dayLinks[i] || ''}
+                  onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  placeholder={`Day ${i + 1} WeTransfer link`}
+                  aria-label={`Day ${i + 1} WeTransfer link`}
+                  style={{ maxWidth: 260 }}
+                />
                 {session.days?.[i]?.signed_at && (
                   <span style={{ fontSize: 12, color: 'var(--status-current-text)' }}>Signed off by {session.days[i].signed_trainer_name}</span>
                 )}
@@ -775,7 +880,7 @@ Their certificate and the training record it added to their employee file will b
   // Email Certificates to Employees / to Company (2026-10-14) - 'employees' | 'company' | null.
   const [emailingCerts, setEmailingCerts] = useState(null);
   const emailTrainerSummary = async () => {
-    if (!window.confirm('Email the class summary (details, sign-in and feedback links, QR codes, WeTransfer link) to every trainer on this session?')) return;
+    if (!window.confirm("Email the class summary (details, instructions, outline, QR codes, WeTransfer link) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.")) return;
     setSendingSummary(true);
     try {
       const result = await api.sendTrainerSummary(id);
@@ -1031,7 +1136,7 @@ Their certificate and the training record it added to their employee file will b
           {session.days?.length > 0 && (
             <table style={{ marginTop: 12 }}>
               <thead>
-                <tr><th>Day</th><th>Trainer</th><th>Sign-Off</th><th>Outline</th></tr>
+                <tr><th>Day</th><th>Trainer</th><th>Sign-Off</th><th>Outline</th><th>WeTransfer</th></tr>
               </thead>
               <tbody>
                 {session.days.map((d) => {
@@ -1060,7 +1165,12 @@ Their certificate and the training record it added to their employee file will b
                           <span style={{ color: 'var(--color-text-muted)' }}>—</span>
                         )}
                       </td>
-                      <td style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{session.day_outlines?.[d.day_number - 1] || '—'}</td>
+                      <td style={{ fontSize: 13, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{session.day_outlines?.[d.day_number - 1] || '—'}</td>
+                      <td style={{ fontSize: 13 }}>
+                        {session.day_wetransfer_links?.[d.day_number - 1]
+                          ? <a href={session.day_wetransfer_links[d.day_number - 1]} target="_blank" rel="noopener noreferrer">Open files ↗</a>
+                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
                     </tr>
                   );
                 })}
@@ -1157,6 +1267,8 @@ Their certificate and the training record it added to their employee file will b
         </div>
       )}
 
+      <TrainerNotes session={session} />
+
       {editingSession && (
         <EditSessionForm
           session={session}
@@ -1206,6 +1318,9 @@ Their certificate and the training record it added to their employee file will b
               >
                 {sendingSummary ? 'Sending…' : 'Email Class Summary'}
               </button>
+            )}
+            {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && (
+              <ScheduleSummary sessionId={id} />
             )}
 
             {session.status === 'closed' && (

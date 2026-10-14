@@ -20,4 +20,24 @@ function easternToday() {
   return EASTERN_DATE_FORMAT.format(new Date());
 }
 
-module.exports = { EASTERN_TZ, parseTimestamp, easternToday };
+const EASTERN_PARTS_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: EASTERN_TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+});
+
+// An Eastern wall-clock time typed in a form ("2026-10-15T05:00", from <input type="datetime-local">)
+// -> UTC "YYYY-MM-DD HH:MM:SS", the format now_utc_text() stores. Null if it isn't one.
+function easternLocalToUtcText(local) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(local || ''));
+  if (!m) return null;
+  const asUtc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  const offsetAt = (ms) => {
+    const p = Object.fromEntries(EASTERN_PARTS_FORMAT.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+    return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute)) - ms;
+  };
+  // Twice, so a time near a daylight-saving switch lands on the right side of it.
+  let utc = asUtc - offsetAt(asUtc);
+  utc = asUtc - offsetAt(utc);
+  return new Date(utc).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+module.exports = { EASTERN_TZ, parseTimestamp, easternToday, easternLocalToUtcText };

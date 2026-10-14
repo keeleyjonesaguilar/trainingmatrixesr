@@ -14,7 +14,8 @@ const { buildSessionCompleteEmail } = require('./sessionCompleteEmail');
 const { sendEmail } = require('./email');
 const { withDayTrainers, getCoTrainers } = require('./sessionDays');
 const { sessionFeedbackSummary } = require('./sessionFeedback');
-const { isMultiTrainingDay, trainingParts } = require('./sessionParts');
+const { isMultiTrainingDay, isMultiDay, trainingParts } = require('./sessionParts');
+const { nameKey } = require('./names');
 
 // The one training that also gets the official AHA Heartsaver Course Roster (Keeley's request,
 // 2026-09-21) - every other training uses the in-house roster/certificate only.
@@ -166,9 +167,23 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   // with no email anywhere is flagged to the office instead of silently skipped.
   const dayTrainerEmails = [];
   const unreachable = [];
-  const addTrainer = async (name, profileId, signedEmail = null) => {
+  // Who each trainer address belongs to - on a multi-day course with more than one day trainer,
+  // each one's copy only shows the feedback about them (Keeley's request, 2026-10-14).
+  const identities = new Map();
+  const remember = (email, name, profileId, isCo) => {
+    const key = normalize(email);
+    if (!key) return;
+    const id = identities.get(key) || { employeeIds: new Set(), nameKeys: new Set(), isCo: false };
+    if (profileId) id.employeeIds.add(profileId);
+    if (name) id.nameKeys.add(nameKey(name));
+    id.isCo = id.isCo || isCo;
+    identities.set(key, id);
+  };
+  const addTrainer = async (name, profileId, signedEmail = null, isCo = false) => {
     const profileEmail = profileId ? (await dbGet('SELECT email FROM employees WHERE employee_id = ?', [profileId]))?.email : null;
     dayTrainerEmails.push(signedEmail, profileEmail);
+    remember(signedEmail, name, profileId, isCo);
+    remember(profileEmail, name, profileId, isCo);
     if (!normalize(signedEmail) && !normalize(profileEmail) && name) unreachable.push(name);
   };
   for (const d of session.session_days || []) {
@@ -177,8 +192,10 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   }
   for (const co of await getCoTrainers(session.session_id)) {
     // eslint-disable-next-line no-await-in-loop
-    await addTrainer(co.trainer_name, co.trainer_employee_id);
+    await addTrainer(co.trainer_name, co.trainer_employee_id, null, true);
   }
+  const dayTrainerCount = new Set((session.session_days || []).map((d) => nameKey(d.signed_trainer_name || d.assigned_trainer_name || ''))).size;
+  const splitFeedback = isMultiDay(session) && dayTrainerCount > 1;
   // Each app user's Training Emails on/off is set on Manage Users (routes/users.js, Keeley's
   // request, 2026-09-30); email_settings (migration 067) holds the trainer on/off and any extra
   // addresses, which stay at their defaults (trainers on, no extras) - no screen edits them.
@@ -195,6 +212,11 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   const attachments = formAttachments.map(({ filename, content }) => ({ filename, content }));
   const logoUrl = `${publicBaseUrl()}/email-logo.png`;
   const feedback = await sessionFeedbackSummary(session.session_id);
+  // The trainer's notes from close-out and each day's sign-off - the office's copies only.
+  const trainerNotes = [
+    ...(session.session_days || []).filter((d) => d.trainer_notes).map((d) => ({ label: `Day ${d.day_number} – ${d.signed_trainer_name || d.assigned_trainer_name}`, text: d.trainer_notes })),
+    ...(!isMultiDay(session) && session.trainer_close_notes ? [{ label: session.trainer_signed_name || session.trainer_name, text: session.trainer_close_notes }] : []),
+  ];
   // Multi Training Day: how many of the trainings each attendee was certified for.
   let emailAttendees = attendees;
   if (isMultiTrainingDay(session)) {
@@ -212,11 +234,17 @@ async function sendCompletedFormsEmail({ session: sessionRow, additionalTraining
   // One at a time (lib/email.js also paces them) - sent all at once, the email service refused
   // some and a trainer never got theirs (Keeley's report, 2026-10-05).
   const failed = [];
+  const officeEmails = new Set([...appUsers.map((u) => normalize(u.email)), ...extra]);
   for (const to of recipients) {
     const recipientIsTrainer = trainerRecipients.has(to);
+    const identity = identities.get(to);
+    const ownFeedback = splitFeedback && recipientIsTrainer && !officeEmails.has(to) && identity && !identity.isCo;
     const email = buildSessionCompleteEmail({
-      session, trainingLabels, attendees: emailAttendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate, feedback,
+      session, trainingLabels, attendees: emailAttendees, attachmentsSummary, recipientIsTrainer, logoUrl, isUpdate,
+      // eslint-disable-next-line no-await-in-loop
+      feedback: ownFeedback ? await sessionFeedbackSummary(session.session_id, { forTrainer: identity }) : feedback,
       editUrl: recipientIsTrainer ? editUrl : null,
+      trainerNotes: officeEmails.has(to) ? trainerNotes : [],
     });
     try {
       await sendEmail({ to, ...email, attachments }); // eslint-disable-line no-await-in-loop

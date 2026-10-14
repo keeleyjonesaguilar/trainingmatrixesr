@@ -9,7 +9,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../api';
 import esrMark from '../assets/brand/esr-mark.png';
 import AhaRosterFields, { ahaFieldsFromSaved, ahaFieldsPayload } from '../components/AhaRosterFields';
-import { formatEasternDateTime } from '../lib/dates';
+import { formatEasternDateTime, parseTimestamp, EASTERN_TZ } from '../lib/dates';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -33,6 +33,19 @@ function likelyDuplicateIds(attendees) {
   const ids = new Set();
   for (const group of groups.values()) if (group.length > 1) group.forEach((id) => ids.add(id));
   return ids;
+}
+
+// The 24-hour edit window (Keeley's request, 2026-10-14) - the certificates and roster go to the
+// client and trainees by the end of the day after training.
+function EditWindowNote({ until }) {
+  const when = parseTimestamp(until).toLocaleString('en-US', {
+    timeZone: EASTERN_TZ, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  return (
+    <p style={{ fontSize: 12, color: 'var(--status-missing-text)', background: 'var(--status-missing-bg)', borderRadius: 8, padding: '8px 10px' }}>
+      Changes can only be made within 24 hours of closing out - until {when} Eastern. After that, contact the ESR office.
+    </p>
+  );
 }
 
 export default function PublicSessionEdit() {
@@ -178,6 +191,14 @@ export default function PublicSessionEdit() {
               This session hasn&apos;t been closed yet. Use the sign-in page to close it out first.
             </p>
           </div>
+        ) : info.edit_window_over ? (
+          <div className="card">
+            <p className="error-banner" style={{ margin: 0 }}>
+              Changes can only be made within 24 hours of closing out the session, because the certificates and roster go
+              out to the client and trainees by the end of the day after training. Please contact the ESR office if
+              something still needs to change.
+            </p>
+          </div>
         ) : !details ? (
           <div className="card">
             {formError && <p className="error-banner">{formError}</p>}
@@ -185,6 +206,7 @@ export default function PublicSessionEdit() {
               <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 0 }}>
                 Enter the trainer PIN you used to close this session.
               </p>
+              {info.edit_until && <EditWindowNote until={info.edit_until} />}
               <div className="field">
                 <label>Trainer PIN</label>
                 <input value={pin} onChange={(e) => setPin(e.target.value)} type="password" autoComplete="off" placeholder="PIN" autoFocus />
@@ -196,6 +218,7 @@ export default function PublicSessionEdit() {
           </div>
         ) : (
           <form onSubmit={save}>
+            {info.edit_until && <EditWindowNote until={info.edit_until} />}
             {savedMessage && <p className="success-banner">{savedMessage}</p>}
             {formError && <p className="error-banner">{formError}</p>}
 

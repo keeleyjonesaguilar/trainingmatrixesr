@@ -12,6 +12,7 @@ const { insertManualAttendee, markDaysAttended, certifyAfterClose } = require('.
 const { getSessionDays } = require('../lib/sessionDays');
 const { isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { logActivity } = require('../lib/activityLog');
+const { parseTimestamp } = require('../lib/dates');
 const {
   AHA_ROSTER_TRAINING_ID, AHA_FIELDS, ahaColumnsFromBody, getSessionWithClient, regenerateRosters, sendCompletedFormsEmail,
 } = require('../lib/sessionCloseOut');
@@ -25,6 +26,20 @@ async function getSessionByEditToken(editToken) {
   const row = await dbGet('SELECT session_id FROM training_sessions WHERE edit_token = ?', [String(editToken || '')]);
   return row ? getSessionWithClient(row.session_id) : null;
 }
+
+// The link only works for 24 hours after close-out (Keeley's request, 2026-10-14): the certificates
+// and roster go to the client and trainees by the end of the day after training. Null = no limit
+// (a session closed before close-out times were recorded).
+const EDIT_WINDOW_HOURS = 24;
+function editWindowEnds(session) {
+  const closed = parseTimestamp(session.closed_at || session.trainer_signed_at);
+  return Number.isNaN(closed.getTime()) ? null : new Date(closed.getTime() + EDIT_WINDOW_HOURS * 60 * 60 * 1000);
+}
+function editWindowOver(session) {
+  const ends = editWindowEnds(session);
+  return Boolean(ends && Date.now() > ends.getTime());
+}
+const WINDOW_OVER_MESSAGE = 'Changes can only be made within 24 hours of closing out the session - please contact the ESR office.';
 
 // Same case-insensitive, admin-editable PIN the close-out form checks.
 async function pinMatches(pin) {
@@ -41,6 +56,10 @@ async function unlockedSession(req, res) {
   }
   if (session.status !== 'closed') {
     res.status(400).json({ error: "This session hasn't been closed yet - use the sign-in page to close it out first." });
+    return null;
+  }
+  if (editWindowOver(session)) {
+    res.status(403).json({ error: WINDOW_OVER_MESSAGE });
     return null;
   }
   if (!(await pinMatches(req.body?.pin))) {
@@ -96,6 +115,8 @@ router.get('/:editToken', async (req, res) => {
     training_type_label: session.training_type_label,
     session_date: session.session_date,
     status: session.status,
+    edit_until: editWindowEnds(session)?.toISOString() || null,
+    edit_window_over: editWindowOver(session),
   });
 });
 
