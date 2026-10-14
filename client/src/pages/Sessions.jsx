@@ -164,6 +164,9 @@ export default function Sessions() {
   // Each day's PowerPoint (WeTransfer link) - only that day's trainer is sent it (Keeley's request,
   // 2026-10-14).
   const [dayLinks, setDayLinks] = useState([]);
+  // Each day's start time and its own length (Keeley's request, 2026-10-14).
+  const [dayStartTimes, setDayStartTimes] = useState([]);
+  const [dayDurations, setDayDurations] = useState([]);
   // The day whose trainer dropdown has "+ Add New Trainer" open, or null.
   const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   // Set when the picked Training Type is a multi-day course (OSHA 10/30) and filled the days in, so
@@ -184,6 +187,8 @@ export default function Sessions() {
     setDayOutlines((prev) => (outlines ? outlines.slice(0, count) : resizeDays(prev, count, () => form.outline)));
     setDayTrainers((prev) => resizeDays(prev, count));
     setDayLinks((prev) => resizeDays(prev, count));
+    setDayStartTimes((prev) => resizeDays(prev, count, () => form.start_time));
+    setDayDurations((prev) => resizeDays(prev, count));
   };
 
   const clearDays = () => {
@@ -192,6 +197,8 @@ export default function Sessions() {
     setDayOutlines([]);
     setDayTrainers([]);
     setDayLinks([]);
+    setDayStartTimes([]);
+    setDayDurations([]);
   };
 
   const load = () => {
@@ -302,7 +309,10 @@ export default function Sessions() {
         training_type_label,
         additional_trainings,
         separate_checkins: separateCheckins,
-        start_time: form.start_time,
+        // A multi-day course has a time per day; Day 1's is also the session's.
+        start_time: isMultiDay ? (dayStartTimes[0] || '') : form.start_time,
+        day_start_times: isMultiDay ? dayStartTimes : null,
+        day_durations: isMultiDay ? dayDurations.map((x) => x.trim()) : null,
         wetransfer_link: isMultiDay ? '' : form.wetransfer_link.trim(),
         day_wetransfer_links: isMultiDay ? dayLinks.map((l) => l.trim()) : null,
         trainer_name: form.trainer_name.trim(),
@@ -556,14 +566,16 @@ export default function Sessions() {
                     required
                   />
                 </div>
+                {!isMultiDay && (
                 <div className="field">
-                  <label>{isMultiDay ? 'Start Time (each day)' : 'Start Time'}</label>
+                  <label>Start Time</label>
                   <input
                     type="time"
                     value={form.start_time}
                     onChange={(e) => setForm({ ...form, start_time: e.target.value })}
                   />
                 </div>
+                )}
                 <div className="field">
                   <label>Location / Address</label>
                   <input
@@ -722,6 +734,23 @@ export default function Sessions() {
                                   />
                                 </label>
                                 <label>
+                                  <span>Start time</span>
+                                  <input
+                                    type="time"
+                                    value={dayStartTimes[i] || ''}
+                                    onChange={(e) => setDayStartTimes((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                  />
+                                </label>
+                                <label>
+                                  <span>Duration (this day)</span>
+                                  <input
+                                    type="text"
+                                    value={dayDurations[i] || ''}
+                                    onChange={(e) => setDayDurations((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    placeholder="e.g. 5 hours"
+                                  />
+                                </label>
+                                <label>
                                   <span>Trainer</span>
                                   <select
                                     value={dayTrainers[i] || ''}
@@ -768,7 +797,7 @@ export default function Sessions() {
                             </div>
                           ))}
                           <p className="page-subtitle" style={{ margin: 0 }}>
-                            Each day&apos;s trainer is emailed only their own day - its date, outline and WeTransfer link - when the session is created, and again at 5:00 AM that morning.
+                            Each day&apos;s trainer is emailed only their own day - its date, start time, duration, outline and WeTransfer link - when the session is created, and again at 5:00 AM that morning.
                           </p>
                         </div>
                       )}

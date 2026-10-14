@@ -218,15 +218,14 @@ function isTodaySession(s, today) {
 }
 
 // The days of a multi-day course this trainer teaches (Keeley's request, 2026-10-14: Day 2's
-// trainer sees Day 2, not Day 1) - every day for a co-trainer, or for a lead who isn't assigned a
-// day. Null for a one-day session.
+// trainer sees Day 2, not Day 1) - every day for a co-trainer; none for a main trainer who isn't
+// assigned a day. Null for a one-day session.
 async function trainerDays(session, employeeId) {
   if (!isMultiDay(session)) return null;
   const days = await getSessionDays(session);
   const co = await dbGet('SELECT 1 AS x FROM session_co_trainers WHERE session_id = ? AND trainer_employee_id = ?', [session.session_id, employeeId]);
   if (co) return days;
-  const mine = days.filter((d) => d.assigned_trainer_employee_id === employeeId || d.signed_trainer_employee_id === employeeId);
-  return mine.length ? mine : days;
+  return days.filter((d) => d.assigned_trainer_employee_id === employeeId || d.signed_trainer_employee_id === employeeId);
 }
 
 function teachesToday(session, myDays, today) {

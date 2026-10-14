@@ -48,6 +48,27 @@ function cleanStartTime(value) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(t) ? { time: t } : { error: 'Enter the start time as a time of day, e.g. 8:00 AM.' };
 }
 
+// Each day's start time and its own length on a multi-day course (migration 084, Keeley's request,
+// 2026-10-14) - each optional. JSON arrays (one entry per day) or null when none are filled in.
+function cleanDayStartTimes(list, totalDays) {
+  if (list === undefined || list === null || !totalDays) return { json: null };
+  if (!Array.isArray(list)) return { error: 'day_start_times must be a list, one time per day.' };
+  const times = [];
+  for (let i = 0; i < totalDays; i += 1) {
+    const cleaned = cleanStartTime(list[i]);
+    if (cleaned.error) return { error: `Day ${i + 1}: ${cleaned.error}` };
+    times.push(cleaned.time || '');
+  }
+  return { json: times.some(Boolean) ? JSON.stringify(times) : null, first: times[0] || null };
+}
+
+function cleanDayDurations(list, totalDays) {
+  if (list === undefined || list === null || !totalDays) return { json: null };
+  if (!Array.isArray(list)) return { error: 'day_durations must be a list, one per day.' };
+  const durations = Array.from({ length: totalDays }, (_, i) => String(list[i] ?? '').trim().slice(0, 60));
+  return { json: durations.some(Boolean) ? JSON.stringify(durations) : null };
+}
+
 // A multi-day course's PowerPoint link for each day (migration 082, Keeley's request, 2026-10-14) -
 // each optional. JSON array (one entry per day) or null when none are filled in.
 function cleanDayWetransferLinks(list, totalDays) {
@@ -138,6 +159,8 @@ function withParsedDayDates(session) {
     day_dates: session.day_dates ? JSON.parse(session.day_dates) : null,
     day_outlines: session.day_outlines ? JSON.parse(session.day_outlines) : null,
     day_wetransfer_links: session.day_wetransfer_links ? JSON.parse(session.day_wetransfer_links) : null,
+    day_start_times: session.day_start_times ? JSON.parse(session.day_start_times) : null,
+    day_durations: session.day_durations ? JSON.parse(session.day_durations) : null,
   };
 }
 
@@ -390,6 +413,10 @@ router.post('/', async (req, res) => {
   if (dayLinks.error) return res.status(400).json({ error: dayLinks.error });
   const startTime = cleanStartTime(req.body.start_time);
   if (startTime.error) return res.status(400).json({ error: startTime.error });
+  const dayTimes = multiTraining ? { json: null } : cleanDayStartTimes(req.body.day_start_times, totalDays);
+  if (dayTimes.error) return res.status(400).json({ error: dayTimes.error });
+  const dayDurations = multiTraining ? { json: null } : cleanDayDurations(req.body.day_durations, totalDays);
+  if (dayDurations.error) return res.status(400).json({ error: dayDurations.error });
   let clientId;
   try {
     clientId = await repo.findOrCreateClientByName(client_name);
@@ -456,7 +483,10 @@ router.post('/', async (req, res) => {
   }
   if (wetransfer.link) await dbRun('UPDATE training_sessions SET wetransfer_link = ? WHERE session_id = ?', [wetransfer.link, session_id]);
   if (dayLinks.json) await dbRun('UPDATE training_sessions SET day_wetransfer_links = ? WHERE session_id = ?', [dayLinks.json, session_id]);
-  if (startTime.time) await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [startTime.time, session_id]);
+  if (startTime.time || dayTimes.first) await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [startTime.time || dayTimes.first, session_id]);
+  if (dayTimes.json || dayDurations.json) {
+    await dbRun('UPDATE training_sessions SET day_start_times = ?, day_durations = ? WHERE session_id = ?', [dayTimes.json, dayDurations.json, session_id]);
+  }
   // 2+ trainings with their own durations: keep the first training's own, and the total as `duration`.
   if (hasExtras) {
     const first = String(req.body.first_training_duration || effective.duration || '').trim();
@@ -612,6 +642,21 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const startTime = cleanStartTime(req.body.start_time);
     if (startTime.error) return res.status(400).json({ error: startTime.error });
     await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [startTime.time, req.params.id]);
+  }
+  // Each day's start time and length - only on a multi-day course; cleared otherwise.
+  if (multiTraining || !totalDays) {
+    await dbRun('UPDATE training_sessions SET day_start_times = NULL, day_durations = NULL WHERE session_id = ?', [req.params.id]);
+  } else {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'day_start_times')) {
+      const dayTimes = cleanDayStartTimes(req.body.day_start_times, totalDays);
+      if (dayTimes.error) return res.status(400).json({ error: dayTimes.error });
+      await dbRun('UPDATE training_sessions SET day_start_times = ? WHERE session_id = ?', [dayTimes.json, req.params.id]);
+      if (dayTimes.first) await dbRun('UPDATE training_sessions SET start_time = ? WHERE session_id = ?', [dayTimes.first, req.params.id]);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'day_durations')) {
+      const dayDurations = cleanDayDurations(req.body.day_durations, totalDays);
+      await dbRun('UPDATE training_sessions SET day_durations = ? WHERE session_id = ?', [dayDurations.json, req.params.id]);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(req.body, 'wetransfer_link')) {
     const wetransfer = cleanWetransferLink(req.body.wetransfer_link);

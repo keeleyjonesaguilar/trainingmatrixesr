@@ -136,13 +136,14 @@ function trainerKeys(employeeId, name) {
 // Every trainer on the session with the email on their profile (the lead falls back to the email
 // they last closed out with). `missing` = trainers with no email anywhere. `keys` lets a recipient
 // be matched to the days they teach (one address can belong to more than one listed trainer).
-async function trainerRecipients(session, { onlyEmployeeIds = null, onlyKeys = null } = {}) {
+async function trainerRecipients(session, { onlyEmployeeIds = null, onlyKeys = null, include = null } = {}) {
   const out = new Map();
   const missing = [];
   for (const t of await sessionTrainers(session)) {
     if (onlyEmployeeIds && !onlyEmployeeIds.includes(t.employee_id)) continue; // eslint-disable-line no-continue
     const keys = trainerKeys(t.employee_id, t.name);
     if (onlyKeys && !keys.some((k) => onlyKeys.has(k))) continue; // eslint-disable-line no-continue
+    if (include && !include(keys)) continue; // eslint-disable-line no-continue
     // eslint-disable-next-line no-await-in-loop
     const profile = t.employee_id ? await dbGet('SELECT email, portal_invited_at FROM employees WHERE employee_id = ?', [t.employee_id]) : null;
     const isLead = t.employee_id ? t.employee_id === session.trainer_employee_id : t.name === session.trainer_name;
@@ -174,6 +175,8 @@ async function summaryDetails(sessionId) {
     days: await getSessionDays(session),
     dayOutlines: parseJson(session.day_outlines) || [],
     dayLinks: parseJson(session.day_wetransfer_links) || [],
+    dayStartTimes: parseJson(session.day_start_times) || [],
+    dayDurations: parseJson(session.day_durations) || [],
   };
 }
 
@@ -181,17 +184,21 @@ function dayKeys(day) {
   return trainerKeys(day.assigned_trainer_employee_id, day.assigned_trainer_name);
 }
 
-// The days of a multi-day course this recipient should see: the days they're assigned to teach.
-// Co-trainers teach every day, and a lead trainer who isn't assigned a day sees the whole course.
+// The days of a multi-day course this recipient should see: only the days they're assigned to
+// teach (Keeley, 2026-10-14: a main trainer not on Day 2 must not get Day 2's details). Co-trainers
+// teach every day. A main trainer assigned no day gets none - and so no summary at all.
 // `d.onlyDay` (the 5 AM email) narrows it to that one day.
 function visibleDays(d, r) {
   if (!d.days.length) return [];
-  let days = d.days;
-  if (!r.keys.some((k) => d.coKeys.has(k))) {
-    const mine = d.days.filter((day) => dayKeys(day).some((k) => r.keys.includes(k)));
-    if (mine.length) days = mine;
-  }
+  const days = r.keys.some((k) => d.coKeys.has(k))
+    ? d.days
+    : d.days.filter((day) => dayKeys(day).some((k) => r.keys.includes(k)));
   return d.onlyDay ? days.filter((day) => day.day_number === d.onlyDay) : days;
+}
+
+// Whether this trainer teaches any of the course (always true for a one-day session).
+function teachesAnyDay(d, keys) {
+  return !d.days.length || visibleDays({ ...d, onlyDay: null }, { keys }).length > 0;
 }
 
 // The PowerPoint link(s) this recipient gets: their days' own links, else the session's one link.
@@ -240,15 +247,25 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
     [multiDay && days.length > 1 ? 'Dates' : 'Date', multiDay && (showDayLabels || !wholeCourse)
       ? days.map((day) => `<strong>Day ${day.day_number}</strong> · ${esc(longDate(day.date) || 'Date to be set')}`).join('<br>')
       : esc(dateText)],
-    ['Start time', s.start_time ? `${esc(clockTime(s.start_time))}${multiDay ? ` <span style="color:${MUTED};">· each day</span>` : ''}` : 'To be confirmed by the office'],
+    multiDay
+      ? [days.length > 1 ? 'Start times' : 'Start time', days.map((day) => {
+        const time = clockTime(d.dayStartTimes[day.day_number - 1] || (day.day_number === 1 || !d.dayStartTimes.length ? s.start_time : ''));
+        return `${days.length > 1 || !wholeCourse ? `<strong>Day ${day.day_number}</strong> · ` : ''}${esc(time || 'To be confirmed by the office')}`;
+      }).join('<br>')]
+      : ['Start time', s.start_time ? esc(clockTime(s.start_time)) : 'To be confirmed by the office'],
     ['Location', esc(s.location || 'To be confirmed by the office')],
   ];
 
   // Expected duration - its own section (Keeley, 2026-10-14).
-  const durationRows = s.duration ? [
-    [d.trainings.length > 1 ? 'Total' : 'Duration', `${esc(s.duration)}${multiDay ? ` <span style="color:${MUTED};">· whole course, ${s.total_days} days</span>` : ''}`],
+  // On a multi-day course, each of this trainer's days with its own length first (2026-10-14).
+  const dayDurationRows = multiDay
+    ? days.filter((day) => d.dayDurations[day.day_number - 1]).map((day) => [`Day ${day.day_number}`, esc(d.dayDurations[day.day_number - 1])])
+    : [];
+  const durationRows = s.duration || dayDurationRows.length ? [
+    ...dayDurationRows,
+    s.duration ? [multiDay ? 'Whole course' : d.trainings.length > 1 ? 'Total' : 'Duration', `${esc(s.duration)}${multiDay ? ` <span style="color:${MUTED};">· ${s.total_days} days</span>` : ''}`] : null,
     ...(d.trainings.length > 1 ? d.trainings.filter((t) => t.duration).map((t) => [t.label, esc(t.duration)]) : []),
-  ] : null;
+  ].filter(Boolean) : null;
 
   // 3. The PowerPoint - each day's link on its own line under its day (Keeley, 2026-10-14: the
   // run-together list read too dense).
@@ -329,7 +346,8 @@ async function sendTrainerSummary(sessionId, { onlyEmployeeIds = null, added = f
     d.onlyDay = dayNumber;
     onlyKeys = new Set([...dayKeys(day), ...d.coKeys]);
   }
-  const { recipients, missing } = await trainerRecipients(s, { onlyEmployeeIds, onlyKeys });
+  // A main trainer assigned no day of a multi-day course isn't teaching it, so gets nothing.
+  const { recipients, missing } = await trainerRecipients(s, { onlyEmployeeIds, onlyKeys, include: (keys) => teachesAnyDay(d, keys) });
   const attachments = recipients.length ? [
     {
       filename: qrFilename(s, 'Sign-In QR Code'),
@@ -388,6 +406,7 @@ async function trainerSummaryHtml(sessionId, employeeIds, name) {
   const mine = d.trainers.filter((t) => t.employee_id && employeeIds.includes(t.employee_id));
   if (!mine.length) return null;
   const r = { name, email: '', portal: true, keys: mine.flatMap((t) => trainerKeys(t.employee_id, t.name)) };
+  if (!teachesAnyDay(d, r.keys)) return null;
   return buildEmail(d, r, { inPortal: true }).html;
 }
 

@@ -340,6 +340,13 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     (session.days || []).map((d) => (d.assigned_trainer_employee_id && d.assigned_trainer_employee_id !== session.trainer_employee_id ? d.assigned_trainer_employee_id : ''))
   );
   // Each day's PowerPoint link (Keeley's request, 2026-10-14).
+  // Each day's start time and its own length (2026-10-14).
+  const [dayStartTimes, setDayStartTimes] = useState(
+    Array.from({ length: session.total_days || 0 }, (_, i) => session.day_start_times?.[i] || (i === 0 ? session.start_time || '' : ''))
+  );
+  const [dayDurations, setDayDurations] = useState(
+    Array.from({ length: session.total_days || 0 }, (_, i) => session.day_durations?.[i] || '')
+  );
   const [dayLinks, setDayLinks] = useState(
     Array.from({ length: session.total_days || 0 }, (_, i) => session.day_wetransfer_links?.[i] || '')
   );
@@ -410,6 +417,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           day_outlines: form.total_days && !session.multi_training_day ? dayOutlines : null,
           day_trainers: form.total_days && !session.multi_training_day ? dayTrainers : null,
           day_wetransfer_links: form.total_days && !session.multi_training_day ? dayLinks.map((l) => l.trim()) : null,
+          ...(form.total_days && !session.multi_training_day
+            ? { day_start_times: dayStartTimes, day_durations: dayDurations.map((x) => x.trim()), start_time: dayStartTimes[0] || '' }
+            : {}),
           co_trainer_ids: coTrainerIds,
           ...checkinFields,
           ...durationFields,
@@ -495,10 +505,12 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <label>Date</label>
           <input type="date" value={form.session_date} onChange={(e) => setForm({ ...form, session_date: e.target.value })} required />
         </div>
-        <div className="field">
-          <label>{form.total_days ? 'Start Time (each day)' : 'Start Time'}</label>
-          <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
-        </div>
+        {(!form.total_days || isMultiTraining) && (
+          <div className="field">
+            <label>Start Time</label>
+            <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} />
+          </div>
+        )}
         <div className="field">
           <label>Location / Address</label>
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
@@ -582,6 +594,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                 count <= prev.length ? prev.slice(0, count) : [...prev, ...Array.from({ length: count - prev.length }, () => '')]
               ));
               setDayLinks((prev) => resizeDays(prev, count));
+              setDayStartTimes((prev) => resizeDays(prev, count, () => prev[0] || ''));
+              setDayDurations((prev) => resizeDays(prev, count));
             }}
             placeholder="Leave blank for single-day"
           />
@@ -590,7 +604,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       </div>
       {!isMultiTraining && form.total_days && dayDates.length > 0 && (
         <div className="field">
-          <label>Scheduled Dates, Trainers &amp; WeTransfer Links</label>
+          <label>Each Day: Date, Start Time, Duration, Trainer &amp; WeTransfer Link</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dayDates.map((d, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -601,6 +615,21 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
                   style={{ maxWidth: 150 }}
                   required
+                />
+                <input
+                  type="time"
+                  value={dayStartTimes[i] || ''}
+                  onChange={(e) => setDayStartTimes((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  aria-label={`Day ${i + 1} start time`}
+                  style={{ maxWidth: 130 }}
+                />
+                <input
+                  type="text"
+                  value={dayDurations[i] || ''}
+                  onChange={(e) => setDayDurations((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  placeholder="Duration, e.g. 5 hours"
+                  aria-label={`Day ${i + 1} duration`}
+                  style={{ maxWidth: 170 }}
                 />
                 <select
                   value={dayTrainers[i] || ''}
@@ -1058,7 +1087,7 @@ Their certificate and the training record it added to their employee file will b
         {session.start_time && (
           <div className="session-fact">
             <div className="session-fact-label">Start Time</div>
-            <div className="session-fact-value">{clockTime(session.start_time)}{session.total_days && !session.multi_training_day ? ' each day' : ''}</div>
+            <div className="session-fact-value">{clockTime(session.start_time)}{session.total_days && !session.multi_training_day ? ' (Day 1)' : ''}</div>
           </div>
         )}
         {session.multi_training_day ? (
@@ -1200,6 +1229,12 @@ Their certificate and the training record it added to their employee file will b
                       <td style={{ whiteSpace: 'nowrap' }}>
                         <strong>Day {d.day_number}</strong>
                         {d.date && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{formatShortDate(d.date)}</div>}
+                        {(session.day_start_times?.[d.day_number - 1] || (d.day_number === 1 && session.start_time)) && (
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Starts {clockTime(session.day_start_times?.[d.day_number - 1] || session.start_time)}</div>
+                        )}
+                        {session.day_durations?.[d.day_number - 1] && (
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{session.day_durations[d.day_number - 1]}</div>
+                        )}
                       </td>
                       <td>
                         {d.signed_trainer_name || d.assigned_trainer_name || '—'}
