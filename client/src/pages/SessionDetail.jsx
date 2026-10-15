@@ -1539,7 +1539,7 @@ Their certificate and the training record it added to their employee file will b
           {session.outline && (
             <div style={{ marginBottom: 16 }}>
               <strong style={{ fontSize: 13 }}>Outline</strong>
-              <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)' }}>{session.outline}</p>
+              <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{session.outline}</p>
             </div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

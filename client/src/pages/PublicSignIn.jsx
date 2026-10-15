@@ -713,18 +713,18 @@ export default function PublicSignIn() {
         {dayOutlineText ? (
           <div className="card" style={{ marginBottom: 16 }}>
             <strong style={{ fontSize: 13 }}>{t('today_outline')}</strong>
-            <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)' }}>{dayOutlineText}</p>
+            <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{dayOutlineText}</p>
           </div>
         ) : info.outline && (
           <div className="card" style={{ marginBottom: 16 }}>
             <strong style={{ fontSize: 13 }}>{t('today_outline')}</strong>
             {isBoth ? (
               <>
-                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)' }}>{info.outline}</p>
-                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)' }}>{outlineEs}</p>
+                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{info.outline}</p>
+                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{outlineEs}</p>
               </>
             ) : (
-              <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)' }}>
+              <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>
                 {isSpanish ? outlineEs : info.outline}
               </p>
             )}
