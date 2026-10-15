@@ -135,6 +135,60 @@ async function trainerFeedbackComments(employeeId) {
   );
 }
 
+// A trainer's feedback for the Training Portal (Keeley's request, 2026-10-15: "a nice section, not
+// just a long running list"), grouped by class, newest class first: each class's rating and
+// effectiveness averages and the written comments, plus how their ratings spread across 1-5 stars.
+// Only what was meant for them - their own per-trainer ratings and comments, plus old whole-session
+// feedback on classes they taught. Trainee names (the office's follow-up list) never appear.
+async function trainerFeedbackByClass(employeeId) {
+  const rows = await dbAll(
+    `SELECT sft.rating AS rating, sft.comment AS comment, sf.effectiveness_rating, sf.submitted_at,
+            ts.session_id, ts.training_type_label, ts.session_date, ts.day_dates, c.client_name
+     FROM session_feedback_trainers sft
+     JOIN session_feedback sf ON sf.feedback_id = sft.feedback_id
+     JOIN training_sessions ts ON ts.session_id = sf.session_id
+     JOIN clients c ON c.client_id = ts.client_id
+     WHERE sft.trainer_employee_id = $1
+     UNION ALL
+     SELECT sf.trainer_rating, sf.trainer_comment, sf.effectiveness_rating, sf.submitted_at,
+            ts.session_id, ts.training_type_label, ts.session_date, ts.day_dates, c.client_name
+     FROM session_feedback sf
+     JOIN training_sessions ts ON ts.session_id = sf.session_id
+     JOIN clients c ON c.client_id = ts.client_id
+     WHERE sf.session_id IN (${TAUGHT_SESSIONS_SQL}) AND ${NO_TRAINER_ROWS}
+     ORDER BY submitted_at DESC`,
+    [employeeId]
+  );
+  const classes = new Map();
+  const distribution = [0, 0, 0, 0, 0];
+  for (const r of rows) {
+    const rating = Number(r.rating);
+    if (rating >= 1 && rating <= 5) distribution[Math.round(rating) - 1] += 1;
+    const entry = classes.get(r.session_id) || {
+      session_id: r.session_id,
+      training: r.training_type_label,
+      client: r.client_name,
+      date: r.session_date,
+      day_dates: r.day_dates ? JSON.parse(r.day_dates) : null,
+      ratings: [],
+      effectiveness: [],
+      comments: [],
+    };
+    if (rating) entry.ratings.push(rating);
+    if (r.effectiveness_rating) entry.effectiveness.push(Number(r.effectiveness_rating));
+    if (r.comment && r.comment.trim()) entry.comments.push({ text: r.comment.trim(), rating: rating || null, submitted_at: r.submitted_at });
+    classes.set(r.session_id, entry);
+  }
+  const avg = (list) => (list.length ? Number((list.reduce((a, b) => a + b, 0) / list.length).toFixed(2)) : null);
+  return {
+    distribution: { 1: distribution[0], 2: distribution[1], 3: distribution[2], 4: distribution[3], 5: distribution[4] },
+    comment_count: [...classes.values()].reduce((n, c) => n + c.comments.length, 0),
+    classes: [...classes.values()]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .map(({ ratings, effectiveness, ...c }) => ({ ...c, responses: ratings.length, avg_rating: avg(ratings), avg_effectiveness: avg(effectiveness) })),
+  };
+}
+
 // Feedback left on a multi-day course before trainers were rated separately counted for every
 // trainer on it. Keeley's call (2026-10-05): credit each of those responses to whoever taught the
 // day it was submitted (Eastern date; after the last scheduled day, the last day's trainer), so
@@ -176,4 +230,6 @@ async function creditOldMultiDayFeedback({ dryRun = false } = {}) {
   return results;
 }
 
-module.exports = { TAUGHT_SESSIONS_SQL, sessionFeedbackSummary, trainerRatingSummary, trainerFeedbackComments, creditOldMultiDayFeedback };
+module.exports = {
+  TAUGHT_SESSIONS_SQL, sessionFeedbackSummary, trainerRatingSummary, trainerFeedbackComments, trainerFeedbackByClass, creditOldMultiDayFeedback,
+};

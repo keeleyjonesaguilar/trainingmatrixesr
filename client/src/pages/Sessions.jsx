@@ -9,7 +9,6 @@ import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { easternToday, sequentialDates } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
-import { trainerSummaryProblem } from '../lib/trainerSummary';
 import { courseDays, resizeDays, joinDayOutlines } from '../lib/courseDays';
 
 const SESSION_SORT_ACCESSORS = {
@@ -338,8 +337,6 @@ export default function Sessions() {
       if (session.translation_warning) {
         window.alert(`Session created, but the Spanish translation couldn't be generated: ${session.translation_warning}\n\nYou can edit the session later to retry.`);
       }
-      const summaryProblem = trainerSummaryProblem(session.trainer_summary);
-      if (summaryProblem) window.alert(`Session created. ${summaryProblem}`);
       navigate(`/sessions/${session.session_id}`);
     } catch (err) {
       setError(err.message);
@@ -797,7 +794,7 @@ export default function Sessions() {
                             </div>
                           ))}
                           <p className="page-subtitle" style={{ margin: 0 }}>
-                            Each day&apos;s trainer is emailed only their own day - its date, start time, duration, outline and WeTransfer link - when the session is created, and again at 5:00 AM that morning.
+                            Each day&apos;s trainer gets only their own day - its date, start time, duration, outline and WeTransfer link - when you press Email Class Summary on the session page, and again at 5:00 AM that morning.
                           </p>
                         </div>
                       )}

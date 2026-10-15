@@ -12,7 +12,7 @@ const { displayFirstLast } = require('./names');
 const { easternToday } = require('./dates');
 const { latestTrainings } = require('./employeeRecordCard');
 const { INTERNAL_CLIENT_ID } = require('./repo');
-const { TAUGHT_SESSIONS_SQL, trainerRatingSummary } = require('./sessionFeedback');
+const { TAUGHT_SESSIONS_SQL, trainerRatingSummary, trainerFeedbackByClass } = require('./sessionFeedback');
 const { getSessionDays } = require('./sessionDays');
 const { isMultiDay } = require('./sessionParts');
 
@@ -306,6 +306,8 @@ async function trainerView(employeeId) {
       trainer_avg: n ? Number(summary.avg_trainer_rating.toFixed(2)) : null,
       effectiveness_avg: summary.avg_effectiveness_rating !== null ? Number(summary.avg_effectiveness_rating.toFixed(2)) : null,
     },
+    // Their feedback by class, for the My Feedback section (2026-10-15).
+    feedback: await trainerFeedbackByClass(employeeId),
   };
 }
 

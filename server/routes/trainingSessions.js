@@ -9,7 +9,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { qrPngBuffer, publicSignInUrl, feedbackQrPngBuffer, publicFeedbackUrl } = require('../lib/qr');
 const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
 const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
-const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers, sessionTrainers } = require('../lib/sessionDays');
+const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers } = require('../lib/sessionDays');
 const { translateToSpanish } = require('../lib/translate');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
@@ -17,7 +17,7 @@ const { logActivity } = require('../lib/activityLog');
 const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = require('../lib/lateAttendees');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { totalDuration } = require('../lib/durations');
-const { sendTrainerSummary, sendTrainerSummarySafely } = require('../lib/trainerSummary');
+const { sendTrainerSummary } = require('../lib/trainerSummary');
 const { attendeeEmailOptions, sendAttendeeCertificates, sendCompanyCertificates } = require('../lib/certificateEmails');
 const { easternLocalToUtcText } = require('../lib/dates');
 const { labeledQrPng } = require('../lib/qrLabel');
@@ -504,9 +504,10 @@ router.post('/', async (req, res) => {
     req,
   });
   // Class summary to the trainer(s) - details, links, QR codes (2026-10-12). Not for toolbox talks.
-  const trainerSummary = await sendTrainerSummarySafely(session_id);
+  // The class summary is NOT emailed on create (Keeley's request, 2026-10-15: the office sends it
+  // with "Email Class Summary" once the details are ready).
   res.status(201).json({
-    ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning, trainer_summary: trainerSummary,
+    ...withParsedDayDates(session), public_url: publicSignInUrl(qr_token), translation_warning: warning,
   });
 });
 
@@ -517,8 +518,6 @@ router.post('/', async (req, res) => {
 router.put('/:id', requireAdmin, async (req, res) => {
   const existing = await dbGet('SELECT * FROM training_sessions WHERE session_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Session not found' });
-  // Who was already teaching it - anyone added by this edit gets the class summary.
-  const trainersBefore = new Set((await sessionTrainers(existing)).map((t) => t.employee_id).filter(Boolean));
   const merged = { ...existing, ...req.body };
   if (existing.session_kind === 'toolbox_talk') {
     const topic = String(merged.toolbox_topic || existing.toolbox_topic || '').trim();
@@ -703,11 +702,8 @@ router.put('/:id', requireAdmin, async (req, res) => {
     actor: req.user, action: 'session_updated', entityType: 'training_session', entityId: req.params.id,
     entityLabel: `${session.training_type_label} · ${session.client_name}`, req,
   });
-  const addedTrainers = (await sessionTrainers(session)).map((t) => t.employee_id).filter((tid) => tid && !trainersBefore.has(tid));
-  const trainerSummary = addedTrainers.length && session.status !== 'closed'
-    ? await sendTrainerSummarySafely(req.params.id, { onlyEmployeeIds: addedTrainers, added: true })
-    : null;
-  res.json({ ...withParsedDayDates(session), translation_warning: warning, trainer_summary: trainerSummary });
+  // Trainers added here aren't emailed automatically either (2026-10-15) - "Email Class Summary" does it.
+  res.json({ ...withParsedDayDates(session), translation_warning: warning });
 });
 
 // Two independent fulfillment checkboxes (Keeley's request, 2026-09-21) - whether this

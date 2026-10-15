@@ -5,6 +5,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import Modal from '../components/Modal.jsx';
+import PortalFeedback from '../components/PortalFeedback.jsx';
 import esrLogo from '../assets/brand/esr-logo-full.png';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { formatShortDate, parseTimestamp, EASTERN_TZ } from '../lib/dates';
@@ -412,6 +413,8 @@ function Profile({ profile, accountEmail, onChanged }) {
           </div>
         </div>
       )}
+
+      {t && <PortalFeedback ratings={t.ratings} feedback={t.feedback} />}
 
       <div className="card">
         <h2>My Trainings ({profile.trainings.length})</h2>

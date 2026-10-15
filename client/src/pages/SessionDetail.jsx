@@ -427,10 +427,6 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       if (updated.translation_warning) {
         window.alert(`Saved, but the Spanish translation couldn't be generated: ${updated.translation_warning}`);
       }
-      // Trainers added by this edit were just emailed the class summary.
-      if (updated.trainer_summary?.sent_to?.length) window.alert(`Class summary emailed to the trainer(s) you added: ${updated.trainer_summary.sent_to.join(', ')}`);
-      const summaryProblem = trainerSummaryProblem(updated.trainer_summary);
-      if (summaryProblem) window.alert(summaryProblem);
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -1407,10 +1403,17 @@ Their certificate and the training record it added to their employee file will b
                 {sendingSummary ? 'Sending…' : 'Email Class Summary'}
               </button>
             )}
-            {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && session.trainer_summary_sent_at && (
-              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '6px 0 0' }}>
-                Last emailed to the trainer(s) {formatEasternDateTime(session.trainer_summary_sent_at)}
-              </p>
+            {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && (
+              session.trainer_summary_sent_at ? (
+                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '6px 0 0' }}>
+                  Last emailed to the trainer(s) {formatEasternDateTime(session.trainer_summary_sent_at)}
+                </p>
+              ) : (
+                // Nothing goes to the trainers until the office sends it (2026-10-15).
+                <p style={{ fontSize: 12, color: 'var(--status-missing-text)', background: 'var(--status-missing-bg)', borderRadius: 6, padding: '6px 8px', margin: '6px 0 0', textAlign: 'left' }}>
+                  Not sent to the trainers yet. Press Email Class Summary when the details are ready. The 5 AM day-of email starts after that.
+                </p>
+              )
             )}
             {isAdmin && session.status !== 'closed' && session.session_kind !== 'toolbox_talk' && (
               <ScheduleSummary sessionId={id} />

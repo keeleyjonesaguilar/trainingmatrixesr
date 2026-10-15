@@ -1,7 +1,9 @@
 // Class summary emails sent on a schedule (Keeley's request, 2026-10-14; the email itself is
 // lib/trainerSummary.js):
 //  - 5:00 AM Eastern on the day of training, to whoever teaches that day - on a multi-day course,
-//    that day's trainer (and any co-trainers), showing only that day.
+//    that day's trainer (and any co-trainers), showing only that day. Only once the office has sent
+//    the class summary itself (Keeley, 2026-10-15: nothing goes to trainers until the office
+//    presses "Email Class Summary" or a scheduled send goes out).
 //  - TEMPORARY: summaries the office schedules for a set time from the session page ("we will take
 //    it out after I am done"). Checked every minute. To remove: this file's runScheduledSummaries,
 //    the scheduled-summaries routes in routes/trainingSessions.js, ScheduleSummary in
@@ -30,11 +32,14 @@ async function claimMorning(sessionId, dayNumber, today) {
   return claimed.changes > 0;
 }
 
-async function runMorningSummaries(today = easternToday()) {
-  const sessions = await dbAll(
-    "SELECT * FROM training_sessions WHERE status = 'open' AND session_kind <> 'toolbox_talk' AND (session_date = ? OR day_dates LIKE ?)",
+// `sessionIds` limits a run to those sessions - for tests, which share the live database and must
+// never mark a real class's morning email as sent.
+async function runMorningSummaries(today = easternToday(), { sessionIds = null } = {}) {
+  const sessions = (await dbAll(
+    `SELECT * FROM training_sessions WHERE status = 'open' AND session_kind <> 'toolbox_talk' AND trainer_summary_sent_at IS NOT NULL
+       AND (session_date = ? OR day_dates LIKE ?)`,
     [today, `%"${today}"%`]
-  );
+  )).filter((x) => !sessionIds || sessionIds.includes(x.session_id));
   for (const session of sessions) {
     try {
       if (isMultiDay(session)) {
@@ -70,11 +75,12 @@ function resultText(result) {
 }
 
 // TEMPORARY - see the note at the top.
-async function runScheduledSummaries() {
-  const due = await dbAll(
+// `sessionIds` limits a run to those sessions (tests - same reason as runMorningSummaries).
+async function runScheduledSummaries({ sessionIds = null } = {}) {
+  const due = (await dbAll(
     'SELECT * FROM scheduled_trainer_summaries WHERE sent_at IS NULL AND cancelled_at IS NULL AND send_at <= now_utc_text() ORDER BY send_at',
     []
-  );
+  )).filter((x) => !sessionIds || sessionIds.includes(x.session_id));
   for (const row of due) {
     // eslint-disable-next-line no-await-in-loop
     const claimed = await dbRun(
