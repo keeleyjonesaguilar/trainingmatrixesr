@@ -42,7 +42,7 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
         client_id: clientId,
         first_name: firstName.trim(),
         last_name: lastName.trim(),
-        employee_number: phone.trim(),
+        employee_number: phone.trim() || null,
         email: email.trim() || null,
       });
       onAdded(employee);
@@ -57,7 +57,8 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
   // request, 2026-08-20) - catches an accidental duplicate at the moment it would be created.
   const submit = async (e) => {
     e.preventDefault();
-    if (!clientId || !firstName.trim() || !lastName.trim() || !phone.trim()) return;
+    // Phone is optional (Keeley's request, 2026-10-19) - she was typing zeros just to get past it.
+    if (!clientId || !firstName.trim() || !lastName.trim()) return;
     setSaving(true);
     setError('');
     try {
@@ -98,8 +99,8 @@ function AddEmployeeForm({ clients, onAdded, onCancel }) {
           <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
         </div>
         <div className="field-row">
-          <label>Phone Number</label>
-          <input type="text" placeholder="(555) 123-4567" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+          <label>Phone Number (optional)</label>
+          <input type="text" placeholder="(555) 123-4567" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
         <div className="field-row">
           <label>Email (optional)</label>
