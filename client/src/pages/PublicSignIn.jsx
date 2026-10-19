@@ -90,6 +90,10 @@ const STRINGS = {
   err_first_name: { en: 'Please enter your first name.', es: 'Por favor ingrese su nombre.' },
   err_last_name: { en: 'Please enter your last name.', es: 'Por favor ingrese su apellido.' },
   err_phone: { en: 'Please enter your phone number.', es: 'Por favor ingrese su número de teléfono.' },
+  err_phone_digits: {
+    en: 'Phone number must be 10 digits, numbers only (example: 555 123 4567).',
+    es: 'El número de teléfono debe tener 10 dígitos, solo números (ejemplo: 555 123 4567).',
+  },
   err_job_title: { en: 'Please enter your job title.', es: 'Por favor ingrese su puesto de trabajo.' },
   err_email: { en: 'Please enter a valid email address.', es: 'Por favor ingrese un correo electrónico válido.' },
   err_signature: { en: 'Please sign before submitting.', es: 'Por favor firme antes de enviar.' },
@@ -185,8 +189,10 @@ const STRINGS = {
   roster_not_today: { en: 'Not signed in today', es: 'No registrado hoy' },
   roster_here_training: { en: 'Checked in', es: 'Registrado' },
   roster_not_training: { en: 'Not checked in yet', es: 'Aún no registrado' },
-  roster_today_count: { en: '{n} of {total} signed in for today', es: '{n} de {total} registrados hoy' },
-  roster_training_count: { en: '{n} of {total} checked in for {training}', es: '{n} de {total} registrados para {training}' },
+  // Worded so the course total never reads as a class-size cap (2026-10-19: "10 de 10" was taken
+  // for a 10-person maximum - there is no limit on how many people can sign in).
+  roster_today_count: { en: 'Signed in today: {n} · On this course: {total}', es: 'Registrados hoy: {n} · En este curso: {total}' },
+  roster_training_count: { en: 'Checked in for {training}: {n} · On this course: {total}', es: 'Registrados para {training}: {n} · En este curso: {total}' },
   roster_days: { en: 'Days', es: 'Días' },
   roster_duplicate: { en: 'Possible duplicate', es: 'Posible duplicado' },
   roster_duplicate_note: {
@@ -533,6 +539,10 @@ export default function PublicSignIn() {
     if (!firstName.trim()) return setFormError(t('err_first_name'));
     if (!lastName.trim()) return setFormError(t('err_last_name'));
     if (!phone.trim()) return setFormError(t('err_phone'));
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (!(phoneDigits.length === 10 || (phoneDigits.length === 11 && phoneDigits.startsWith('1')))) {
+      return setFormError(t('err_phone_digits'));
+    }
     if (!jobTitle.trim()) return setFormError(t('err_job_title'));
     if (!email.trim() || !EMAIL_PATTERN.test(email.trim())) return setFormError(t('err_email'));
     if (sigRef.current?.isEmpty()) return setFormError(t('err_signature'));
@@ -948,7 +958,16 @@ export default function PublicSignIn() {
                     </div>
                     <div className="field">
                       <label>{t('phone_number')}</label>
-                      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" />
+                      {/* Number keypad, and letters never land in the box (2026-10-19: an attendee's
+                          stray "i" left a 9-digit number the server refused, in English only). */}
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/[^\d\s()+.-]/g, ''))}
+                        placeholder="(555) 123-4567"
+                      />
                     </div>
                     <div className="field">
                       <label>{t('job_title')}</label>
