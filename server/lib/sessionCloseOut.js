@@ -89,13 +89,10 @@ async function regenerateRosters(sessionRow, attendees, additionalTrainings) {
     if (isMultiTrainingDay(session) || additionalTrainings.some((t) => t.duration)) {
       rosterSession.training_parts = await trainingParts(session, additionalTrainings);
     }
-    if (isMultiTrainingDay(session)) {
-      rosterSession.training_part_checkins = true;
-      const checkins = await dbAll('SELECT attendee_id, day_number, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
-      rosterAttendees = attendees.map((a) => ({ ...a, part_checkins: checkins.filter((c) => c.attendee_id === a.attendee_id) }));
-    } else if (isMultiDay(session)) {
-      // OSHA 10/30 etc. (Keeley's request, 2026-10-20): every day's own signature and time on the
-      // roster, not just the attendee's first sign-in.
+    if (isMultiTrainingDay(session)) rosterSession.training_part_checkins = true;
+    if (isMultiTrainingDay(session) || isMultiDay(session)) {
+      // OSHA 10/30 and every other multi-day class or Multi Training Day (Keeley's request,
+      // 2026-10-20): each day's own signature and time on the roster, not just the first sign-in.
       const signins = await dbAll('SELECT attendee_id, day_number, signature, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
       rosterAttendees = attendees.map((a) => ({ ...a, day_signins: signins.filter((s) => s.attendee_id === a.attendee_id) }));
     }

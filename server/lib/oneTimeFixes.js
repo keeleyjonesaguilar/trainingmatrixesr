@@ -172,6 +172,24 @@ async function runOneTimeFixes() {
       const rewritten = await switchSessionTraining('3f16b675-13b9-4db8-80da-8de59c15ed80', '501d3831-1b7c-42b7-822a-29c46414b80e', 'TRN-099', 'TRN-092');
       console.log(`LeoTerra 10/12/2026: ${rewritten === null ? 'already changed - left alone' : `${rewritten} Silica certificate(s) written`}.`);
     });
+
+    // Multi-day rosters now print each day's signature and time (Keeley's request, 2026-10-20):
+    // rebuild every closed OSHA / multi-day / Multi Training Day roster so the old ones match.
+    // Rosters only - no emails, certificates or records change.
+    await runOnce('fix_rebuild_multiday_rosters_v1', 'rebuilt closed multi-day rosters with every day\'s signature', async () => {
+      const { getSessionWithClient, regenerateRosters } = require('./sessionCloseOut'); // eslint-disable-line global-require
+      const rows = await dbAll(`SELECT session_id FROM training_sessions WHERE status = 'closed' AND total_days IS NOT NULL`);
+      let rebuilt = 0;
+      for (const { session_id: id } of rows) {
+        /* eslint-disable no-await-in-loop */
+        const session = await getSessionWithClient(id);
+        const attendees = await dbAll('SELECT * FROM session_attendees WHERE session_id = ? ORDER BY signed_at', [id]);
+        const additionalTrainings = await dbAll('SELECT * FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [id]);
+        if ((await regenerateRosters(session, attendees, additionalTrainings)).rosterPath) rebuilt += 1;
+        /* eslint-enable no-await-in-loop */
+      }
+      console.log(`Multi-day rosters: ${rebuilt} of ${rows.length} rebuilt.`);
+    });
   }
 }
 

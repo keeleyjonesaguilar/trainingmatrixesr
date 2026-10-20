@@ -277,7 +277,22 @@ function generateRosterPdf(session, attendees) {
   doc.text(`Date: ${formatDate(session.session_date)}`);
   // Duration on the printed roster (Keeley's report, 2026-10-05: it was missing).
   if (!parts && session.duration) doc.text(pdfSafeText(`Duration: ${session.duration}`));
-  if (session.outline) {
+  // A multi-day course with its own outline per day prints those, by day, instead of the overall
+  // outline (Keeley's request, 2026-10-20) - the overall one is usually the days combined.
+  let dayOutlines = session.day_outlines;
+  if (typeof dayOutlines === 'string') {
+    try { dayOutlines = JSON.parse(dayOutlines); } catch { dayOutlines = null; }
+  }
+  if (!session.training_part_checkins && Array.isArray(dayOutlines) && dayOutlines.some((o) => String(o || '').trim())) {
+    doc.moveDown(0.3);
+    doc.font('Helvetica-Bold').text('Outline / Topics Covered:');
+    dayOutlines.forEach((o, i) => {
+      const date = session.session_days?.find((d) => d.day_number === i + 1)?.date;
+      doc.moveDown(0.2);
+      doc.font('Helvetica-Bold').text(pdfSafeText(`Day ${i + 1}${date ? ` - ${formatDate(date)}` : ''}`));
+      doc.font('Helvetica').text(pdfSafeText(String(o || '').trim() || '—'));
+    });
+  } else if (session.outline) {
     doc.moveDown(0.3);
     doc.font('Helvetica-Bold').text('Outline / Topics Covered:');
     doc.font('Helvetica').text(pdfSafeText(session.outline));
@@ -295,21 +310,28 @@ function generateRosterPdf(session, attendees) {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#111111').text(pdfSafeText(`${i + 1}. ${a.trainee_name}`));
     doc.font('Helvetica').fontSize(10).fillColor('#333333');
     if (a.day_signins) {
-      // Multi-day course: one column per day with that day's signature and time.
+      // Multi-day course, or a Multi Training Day's trainings: one column per day (or training)
+      // with that day's own signature and time.
       doc.text(`Phone: ${pdfSafeText(a.trainee_phone) || '—'}    Email: ${pdfSafeText(a.trainee_email) || '—'}`);
-      const totalDays = session.total_days || session.session_days?.length || 1;
+      const partCheckins = Boolean(parts && session.training_part_checkins);
+      const totalDays = partCheckins ? parts.length : session.total_days || session.session_days?.length || 1;
       const colW = Math.min(SIG_W + 10, (doc.page.width - 80) / totalDays);
       const top = doc.y + 3;
+      const headings = Array.from({ length: totalDays }, (_, i) => {
+        const date = session.session_days?.find((d) => d.day_number === i + 1)?.date;
+        return pdfSafeText(partCheckins ? parts[i].label : `Day ${i + 1}${date ? ` - ${formatDate(date)}` : ''}`);
+      });
+      // Same height for every heading, so the signatures line up even when a long training name wraps.
+      doc.font('Helvetica-Bold').fontSize(9);
+      const headingH = Math.max(...headings.map((h) => doc.heightOfString(h, { width: colW - 10 })));
       let bottom = top;
       for (let day = 1; day <= totalDays; day++) {
         const x = rowLeft + (day - 1) * colW;
         const signin = a.day_signins.find((s) => s.day_number === day);
-        const date = session.session_days?.find((d) => d.day_number === day)?.date;
-        let how = signin ? `Signed ${formatDateTime(signin.signed_at)}` : 'Not signed in';
+        let how = signin ? `${partCheckins ? 'Checked in' : 'Signed'} ${formatDateTime(signin.signed_at)}` : partCheckins ? 'Not checked in' : 'Not signed in';
         if (signin?.marked_by) how = /^Trainer:/.test(signin.marked_by) ? `Added by the trainer (${signin.marked_by.replace(/^Trainer:\s*/, '')})` : 'Marked present by office';
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111111')
-          .text(pdfSafeText(`Day ${day}${date ? ` - ${formatDate(date)}` : ''}`), x, top, { width: colW - 10 });
-        doc.font('Helvetica').fontSize(8.5).fillColor('#333333').text(pdfSafeText(how), x, doc.y, { width: colW - 10 });
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111111').text(headings[day - 1], x, top, { width: colW - 10 });
+        doc.font('Helvetica').fontSize(8.5).fillColor('#333333').text(pdfSafeText(how), x, top + headingH, { width: colW - 10 });
         let colBottom = doc.y;
         const daySig = b64ToBuffer(signin?.signature);
         if (daySig) {
@@ -328,14 +350,6 @@ function generateRosterPdf(session, attendees) {
       return;
     }
     doc.text(`Phone: ${pdfSafeText(a.trainee_phone) || '—'}    Email: ${pdfSafeText(a.trainee_email) || '—'}    Signed: ${formatDateTime(a.signed_at)}`);
-    if (parts && session.training_part_checkins) {
-      parts.forEach((p) => {
-        const checkin = (a.part_checkins || []).find((c) => c.day_number === p.number);
-        let how = checkin ? `Checked in ${formatDateTime(checkin.signed_at)}` : 'Not checked in';
-        if (checkin?.marked_by) how = /^Trainer:/.test(checkin.marked_by) ? `Added by the trainer (${checkin.marked_by.replace(/^Trainer:\s*/, '')})` : 'Marked present by office';
-        doc.text(pdfSafeText(`   ${checkin ? '[X]' : '[  ]'} ${p.label}: ${how}`));
-      });
-    }
     const imageTop = doc.y + 2;
     const sig = b64ToBuffer(a.signature);
     let bottom = imageTop;
