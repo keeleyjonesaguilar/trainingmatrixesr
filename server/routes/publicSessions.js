@@ -20,6 +20,7 @@ const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessio
 const { certifyTrainingParts } = require('../lib/lateAttendees');
 const { parseName, firstLast } = require('../lib/names');
 const { liveRoster } = require('../lib/liveRoster');
+const { englishComment } = require('../lib/translate');
 
 // An attendee's name as first/last parts plus the "First Last" trainee_name printed on their
 // certificate - separate parts when the form sent them, otherwise split from one combined field.
@@ -656,9 +657,11 @@ router.post('/:token/feedback', async (req, res) => {
     const rating = Number(entry.rating);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: `Please rate ${trainer.name} from 1 to 5 stars.` });
     const comment = entry.comment ? String(entry.comment).trim().slice(0, 2000) : '';
-    ratings.push({ trainer, rating, comment: comment || null });
+    ratings.push({ trainer, rating, comment: comment || null, original: null });
   }
   if (!ratings.length) return res.status(400).json({ error: 'Please rate the trainer.' });
+  // Spanish comments are saved in English, keeping the trainee's own words (lib/translate.js).
+  await Promise.all(ratings.map(async (r) => Object.assign(r, await englishComment(r.comment))));
 
   // The session-level columns keep working for anything that reads the session as a whole: the
   // average of the trainers' ratings, and the comment when there's only one trainer.
@@ -666,8 +669,8 @@ router.post('/:token/feedback', async (req, res) => {
   const feedbackId = uuidv4();
   await dbRun(
     `INSERT INTO session_feedback
-       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment, contact_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment, trainer_comment_original, contact_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feedbackId,
       session.session_id,
@@ -677,14 +680,15 @@ router.post('/:token/feedback', async (req, res) => {
       effectiveness,
       average,
       ratings.length === 1 ? ratings[0].comment : null,
+      ratings.length === 1 ? ratings[0].original : null,
       contactName || null,
     ]
   );
   for (const r of ratings) {
     // eslint-disable-next-line no-await-in-loop
     await dbRun(
-      'INSERT INTO session_feedback_trainers (id, feedback_id, trainer_name, trainer_employee_id, rating, comment) VALUES (?, ?, ?, ?, ?, ?)',
-      [uuidv4(), feedbackId, r.trainer.name, r.trainer.employee_id, r.rating, r.comment]
+      'INSERT INTO session_feedback_trainers (id, feedback_id, trainer_name, trainer_employee_id, rating, comment, comment_original) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [uuidv4(), feedbackId, r.trainer.name, r.trainer.employee_id, r.rating, r.comment, r.original]
     );
   }
   // Flagged on the office's bell so someone can follow up.

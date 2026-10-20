@@ -29,4 +29,47 @@ async function translateToSpanish(text) {
   return data.translations?.[0]?.text || '';
 }
 
-module.exports = { translateToSpanish };
+// Trainee feedback comments written in Spanish (or any other language) come back in English, so
+// the office doesn't translate them by hand (Keeley's request, 2026-10-20). DeepL detects the
+// language; English text returns null (nothing to translate), as does a "translation" that only
+// changes letter case or punctuation.
+async function translateToEnglish(text) {
+  // Too short to tell the language ("ok", "na") - left as written.
+  if (!text || text.replace(/[^\p{L}]/gu, '').length < 4) return null;
+  const apiKey = process.env.DEEPL_API_KEY;
+  if (!apiKey) throw new Error('Translation is not set up (DEEPL_API_KEY is missing).');
+  const res = await fetch(endpointFor(apiKey), {
+    method: 'POST',
+    headers: {
+      Authorization: `DeepL-Auth-Key ${apiKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ text, target_lang: 'EN-US' }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Translation request failed (${res.status}): ${body || 'no details'}`);
+  }
+  const data = await res.json();
+  const result = data.translations?.[0];
+  if (!result?.text || String(result.detected_source_language || '').toUpperCase() === 'EN') return null;
+  const plain = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  return plain(result.text) === plain(text) ? null : result.text;
+}
+
+// A feedback comment as it's saved: { comment: English, original: the trainee's words, or null
+// when it was already English }. A failed translation keeps the comment as written - feedback is
+// never lost over it.
+async function englishComment(text) {
+  if (!text) return { comment: text, original: null };
+  try {
+    const english = await translateToEnglish(text);
+    return english ? { comment: english, original: text } : { comment: text, original: null };
+  } catch (err) {
+    console.error('Feedback comment translation failed:', err.message); // eslint-disable-line no-console
+    return { comment: text, original: null };
+  }
+}
+
+module.exports = { translateToSpanish, translateToEnglish, englishComment };

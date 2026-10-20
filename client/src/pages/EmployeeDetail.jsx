@@ -204,6 +204,9 @@ function TrainerFeedbackComments({ comments }) {
           {shown.map((c) => (
             <div key={c.feedback_id} style={{ borderLeft: '3px solid var(--esr-gold)', background: 'var(--color-bg)', padding: '10px 14px', borderRadius: '0 4px 4px 0' }}>
               <div style={{ fontStyle: 'italic', fontSize: 14 }}>&ldquo;{c.trainer_comment}&rdquo;</div>
+              {c.trainer_comment_original && (
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>Translated · original: &ldquo;{c.trainer_comment_original}&rdquo;</div>
+              )}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 6, fontSize: 12, color: 'var(--color-text-muted)' }}>
                 <span>Trainer <span style={{ color: 'var(--esr-gold)' }}>{starText(c.trainer_rating)}</span></span>
                 <span>Effectiveness <span style={{ color: 'var(--esr-gold)' }}>{starText(c.effectiveness_rating)}</span></span>

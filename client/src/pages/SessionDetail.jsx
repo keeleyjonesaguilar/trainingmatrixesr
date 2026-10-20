@@ -167,6 +167,22 @@ function MultiTrainingResult({ attendee, total }) {
   return <span className={`badge ${cls}`}>{certified >= total ? 'Certified for all' : `Certified ${certified} of ${total}`}</span>;
 }
 
+// A trainer's name links to their employee page when they have a profile (Keeley's request, 2026-10-20).
+function TrainerLink({ name, employeeId }) {
+  if (!name) return '—';
+  return employeeId ? <Link to={`/employees/${employeeId}`}>{name}</Link> : name;
+}
+
+// A feedback comment the server translated to English shows the trainee's own words under it.
+function TranslatedFrom({ original }) {
+  if (!original) return null;
+  return (
+    <span style={{ display: 'block', fontStyle: 'normal', fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>
+      Translated · original: &ldquo;{original}&rdquo;
+    </span>
+  );
+}
+
 function RecordStatusBadge({ status }) {
   const labels = {
     linked: 'Added to employee file',
@@ -1101,8 +1117,10 @@ Their certificate and the training record it added to their employee file will b
         <div className="session-fact">
           <div className="session-fact-label">{session.co_trainers?.length ? 'Trainers' : 'Trainer'}</div>
           <div className="session-fact-value">
-            {session.trainer_signed_name || session.trainer_name}
-            {session.co_trainers?.length > 0 && <>, {session.co_trainers.map((t) => t.trainer_name).join(', ')}</>}
+            <TrainerLink name={session.trainer_signed_name || session.trainer_name} employeeId={session.trainer_employee_id} />
+            {(session.co_trainers || []).map((t) => (
+              <span key={t.trainer_employee_id || t.trainer_name}>, <TrainerLink name={t.trainer_name} employeeId={t.trainer_employee_id} /></span>
+            ))}
             {session.trainer_email && <div className="session-fact-sub">{session.trainer_email}</div>}
           </div>
         </div>
@@ -1233,9 +1251,11 @@ Their certificate and the training record it added to their employee file will b
                         )}
                       </td>
                       <td>
-                        {d.signed_trainer_name || d.assigned_trainer_name || '—'}
+                        {d.signed_trainer_name
+                          ? <TrainerLink name={d.signed_trainer_name} employeeId={d.signed_trainer_employee_id} />
+                          : <TrainerLink name={d.assigned_trainer_name} employeeId={d.assigned_trainer_employee_id} />}
                         {substitute && (
-                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Filled in for {d.assigned_trainer_name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Filled in for <TrainerLink name={d.assigned_trainer_name} employeeId={d.assigned_trainer_employee_id} /></div>
                         )}
                       </td>
                       <td>
@@ -1775,10 +1795,14 @@ Their certificate and the training record it added to their employee file will b
                   ? f.trainer_ratings.filter((r) => r.comment).map((r) => (
                     <p key={r.id} style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>
                       {f.trainer_ratings.length > 1 && <span style={{ fontStyle: 'normal', fontWeight: 600 }}>About {r.trainer_name}: </span>}&ldquo;{r.comment}&rdquo;
+                      <TranslatedFrom original={r.comment_original} />
                     </p>
                   ))
                   : f.trainer_comment && (
-                    <p style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>&ldquo;{f.trainer_comment}&rdquo;</p>
+                    <p style={{ fontSize: 13, margin: '8px 0 0', fontStyle: 'italic' }}>
+                      &ldquo;{f.trainer_comment}&rdquo;
+                      <TranslatedFrom original={f.trainer_comment_original} />
+                    </p>
                   )}
               </div>
             ))}

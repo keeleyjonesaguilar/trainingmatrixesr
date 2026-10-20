@@ -190,6 +190,30 @@ async function runOneTimeFixes() {
       }
       console.log(`Multi-day rosters: ${rebuilt} of ${rows.length} rebuilt.`);
     });
+
+    // Feedback comments already saved in Spanish get the same English translation new ones do
+    // (Keeley's request, 2026-10-20) - lib/translate.js. Live only: the DeepL key is set there.
+    await runOnce('fix_translate_feedback_comments_v1', 'translated existing non-English feedback comments to English', async () => {
+      const { englishComment } = require('./translate'); // eslint-disable-line global-require
+      let translated = 0;
+      const trainerRows = await dbAll(`SELECT id, comment FROM session_feedback_trainers WHERE TRIM(COALESCE(comment, '')) <> '' AND comment_original IS NULL`);
+      for (const r of trainerRows) {
+        const { comment, original } = await englishComment(r.comment); // eslint-disable-line no-await-in-loop
+        if (original) {
+          await dbRun('UPDATE session_feedback_trainers SET comment = ?, comment_original = ? WHERE id = ?', [comment, original, r.id]); // eslint-disable-line no-await-in-loop
+          translated += 1;
+        }
+      }
+      const sessionRows = await dbAll(`SELECT feedback_id, trainer_comment FROM session_feedback WHERE TRIM(COALESCE(trainer_comment, '')) <> '' AND trainer_comment_original IS NULL`);
+      for (const r of sessionRows) {
+        const { comment, original } = await englishComment(r.trainer_comment); // eslint-disable-line no-await-in-loop
+        if (original) {
+          await dbRun('UPDATE session_feedback SET trainer_comment = ?, trainer_comment_original = ? WHERE feedback_id = ?', [comment, original, r.feedback_id]); // eslint-disable-line no-await-in-loop
+          translated += 1;
+        }
+      }
+      console.log(`Feedback comments: ${translated} of ${trainerRows.length + sessionRows.length} translated to English.`);
+    });
   }
 }
 
