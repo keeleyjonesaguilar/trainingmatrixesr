@@ -93,6 +93,11 @@ async function regenerateRosters(sessionRow, attendees, additionalTrainings) {
       rosterSession.training_part_checkins = true;
       const checkins = await dbAll('SELECT attendee_id, day_number, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
       rosterAttendees = attendees.map((a) => ({ ...a, part_checkins: checkins.filter((c) => c.attendee_id === a.attendee_id) }));
+    } else if (isMultiDay(session)) {
+      // OSHA 10/30 etc. (Keeley's request, 2026-10-20): every day's own signature and time on the
+      // roster, not just the attendee's first sign-in.
+      const signins = await dbAll('SELECT attendee_id, day_number, signature, signed_at, marked_by FROM session_attendance_days WHERE session_id = ?', [session.session_id]);
+      rosterAttendees = attendees.map((a) => ({ ...a, day_signins: signins.filter((s) => s.attendee_id === a.attendee_id) }));
     }
     rosterPath = await generateRosterPdf(rosterSession, rosterAttendees);
     await dbRun('UPDATE training_sessions SET roster_pdf_path = ? WHERE session_id = ?', [rosterPath, session.session_id]);
