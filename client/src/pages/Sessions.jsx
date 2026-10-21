@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { displayFirstLast } from '../lib/names.js';
@@ -47,6 +47,17 @@ function TrainerCell({ session: s }) {
 
 const EMPTY_LIST_FILTERS = { training_id: '', trainer_id: '', date_from: '', date_to: '' };
 
+// The last filters picked, kept for this browser tab (Keeley, 2026-10-21: going back from a
+// session reset Closed to Open every time). A fresh tab still opens on Open sessions.
+const SAVED_FILTERS_KEY = 'sessions-filters';
+function savedFilters() {
+  try {
+    return JSON.parse(sessionStorage.getItem(SAVED_FILTERS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
 function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
 }
@@ -68,7 +79,7 @@ export default function Sessions() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   // Training / trainer / date filters (Keeley's request, 2026-10-05) - applied here to the loaded
   // list; client and status still go to the server like before.
-  const [listFilters, setListFilters] = useState(EMPTY_LIST_FILTERS);
+  const [listFilters, setListFilters] = useState(() => ({ ...EMPTY_LIST_FILTERS, ...savedFilters().listFilters }));
   const filteredSessions = useMemo(() => sessions.filter((s) => (
     (!listFilters.training_id || (s.training_ids || [s.master_training_id]).includes(listFilters.training_id))
     && (!listFilters.trainer_id || (s.trainer_ids || [s.trainer_employee_id]).includes(listFilters.trainer_id))
@@ -98,7 +109,16 @@ export default function Sessions() {
   // capitalization/spelling); a ?client_id= link from a client's page pre-selects it.
   // Opens on Open sessions (Keeley, 2026-10-06: the closed ones make the list overwhelming) -
   // "All statuses" or "Closed" is one pick away, and Reset Filters comes back here.
-  const [filters, setFilters] = useState({ client_id: clientIdFilter, status: 'open' });
+  const [filters, setFilters] = useState(() => {
+    const saved = savedFilters().filters || {};
+    // A ?client_id= link wins over the saved client.
+    return { client_id: clientIdFilter || saved.client_id || '', status: saved.status || 'open' };
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify({ filters, listFilters }));
+    } catch { /* storage blocked - filters just won't be remembered */ }
+  }, [filters, listFilters]);
   // Auto-opens the create form when linked here from the Dashboard's "Create New Training
   // Session" button (?new=1).
   const [showForm, setShowForm] = useState(searchParams.get('new') === '1');
@@ -224,8 +244,14 @@ export default function Sessions() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only the primitive filter values matter, not object identity
   useEffect(load, [filters.client_id, filters.status]);
-  // Following a link from a client's page while this page is already open.
-  useEffect(() => { setFilters((f) => ({ ...f, client_id: clientIdFilter })); }, [clientIdFilter]);
+  // Following a link from a client's page while this page is already open (not on first load,
+  // which would wipe a remembered client).
+  const lastClientParam = useRef(clientIdFilter);
+  useEffect(() => {
+    if (lastClientParam.current === clientIdFilter) return;
+    lastClientParam.current = clientIdFilter;
+    setFilters((f) => ({ ...f, client_id: clientIdFilter }));
+  }, [clientIdFilter]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only the client filter matters here
   useEffect(loadUpcomingCount, [filters.client_id]);
 
