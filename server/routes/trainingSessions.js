@@ -715,20 +715,22 @@ router.put('/:id', requireAdmin, async (req, res) => {
 router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
   const existing = await dbGet('SELECT session_id FROM training_sessions WHERE session_id = ?', [req.params.id]);
   if (!existing) return res.status(404).json({ error: 'Session not found' });
-  const { sent_to_client, saved_to_server } = req.body || {};
+  const { sent_to_client, sent_to_trainees, saved_to_server } = req.body || {};
   await dbRun(
     `UPDATE training_sessions SET
        sent_to_client = COALESCE(?, sent_to_client),
+       sent_to_trainees = COALESCE(?, sent_to_trainees),
        saved_to_server = COALESCE(?, saved_to_server)
      WHERE session_id = ?`,
     [
       sent_to_client === undefined ? null : (sent_to_client ? 1 : 0),
+      sent_to_trainees === undefined ? null : (sent_to_trainees ? 1 : 0),
       saved_to_server === undefined ? null : (saved_to_server ? 1 : 0),
       req.params.id,
     ]
   );
   if (sent_to_client) await clearSendToClientAlert(req.params.id);
-  res.json(await dbGet('SELECT sent_to_client, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
+  res.json(await dbGet('SELECT sent_to_client, sent_to_trainees, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
 });
 
 // The trainer/admin advances a multi-day session to the next day (Keeley's request, 2026-09-21) -

@@ -1184,6 +1184,15 @@ Their certificate and the training record it added to their employee file will b
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input
               type="checkbox"
+              checked={!!session.sent_to_trainees}
+              disabled={savingFulfillment === 'sent_to_trainees'}
+              onChange={(e) => toggleFulfillment('sent_to_trainees', e.target.checked)}
+            />
+            Sent to Trainees
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
               checked={!!session.saved_to_server}
               disabled={savingFulfillment === 'saved_to_server'}
               onChange={(e) => toggleFulfillment('saved_to_server', e.target.checked)}

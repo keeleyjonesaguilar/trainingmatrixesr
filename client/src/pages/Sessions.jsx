@@ -18,7 +18,7 @@ const SESSION_SORT_ACCESSORS = {
   trainer_name: (s) => (s.trainer_names || s.trainer_signed_name || s.trainer_name || '').toLowerCase(),
   attendee_count: (s) => s.attendee_count || 0,
   status: (s) => (s.status || '').toLowerCase(),
-  fulfillment: (s) => (s.sent_to_client ? 2 : 0) + (s.saved_to_server ? 1 : 0),
+  fulfillment: (s) => (s.sent_to_client ? 4 : 0) + (s.sent_to_trainees ? 2 : 0) + (s.saved_to_server ? 1 : 0),
 };
 
 // The Training column (Keeley's request, 2026-10-05): a Multi Training Day says so, with its
@@ -62,14 +62,21 @@ function StatusBadge({ status }) {
   return <span className={`badge badge-${status}`}>{status === 'open' ? 'Open' : 'Closed'}</span>;
 }
 
-// Whether this session's roster/certs were sent to the client and/or saved to the server
-// (Keeley's request, 2026-09-21) - two independent checkboxes on the session's own page,
-// summarized here as a single badge so the list stays scannable.
-function FulfillmentBadge({ sentToClient, savedToServer }) {
-  if (sentToClient && savedToServer) return <span className="badge badge-current">Sent & Saved</span>;
-  if (sentToClient) return <span className="badge badge-noexpiration">Sent to Client</span>;
-  if (savedToServer) return <span className="badge badge-pendingreview">Saved to Server</span>;
-  return <span className="page-subtitle" style={{ margin: 0 }}>—</span>;
+// Whether this session's roster/certs were sent to the client and/or trainees, and saved to the
+// server (Keeley's requests, 2026-09-21 and 2026-10-21) - checkboxes on the session's own page,
+// summarized here: who it was sent to on one badge, Saved to Server on its own.
+function FulfillmentBadge({ sentToClient, sentToTrainees, savedToServer }) {
+  const sentTo = sentToClient && sentToTrainees ? 'Sent to Client & Trainees'
+    : sentToClient ? 'Sent to Client'
+    : sentToTrainees ? 'Sent to Trainees'
+    : '';
+  if (!sentTo && !savedToServer) return <span className="page-subtitle" style={{ margin: 0 }}>—</span>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+      {sentTo && <span className={`badge ${sentToClient && sentToTrainees ? 'badge-current' : 'badge-noexpiration'}`}>{sentTo}</span>}
+      {savedToServer ? <span className="badge badge-pendingreview">Saved to Server</span> : null}
+    </div>
+  );
 }
 
 export default function Sessions() {
@@ -938,7 +945,7 @@ export default function Sessions() {
                   <StatusBadge status={s.status} />
                 </td>
                 <td>
-                  <FulfillmentBadge sentToClient={s.sent_to_client} savedToServer={s.saved_to_server} />
+                  <FulfillmentBadge sentToClient={s.sent_to_client} sentToTrainees={s.sent_to_trainees} savedToServer={s.saved_to_server} />
                 </td>
               </tr>
             ))}

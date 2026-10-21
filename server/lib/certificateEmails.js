@@ -305,6 +305,7 @@ async function sendAttendeeCertificates(sessionId, recipients, user) {
     }
     sent.push({ name: attendee.trainee_name, email });
   }
+  if (sent.length) await dbRun('UPDATE training_sessions SET sent_to_trainees = 1 WHERE session_id = ?', [sessionId]);
   return { session, sent, skipped, failed };
 }
 
