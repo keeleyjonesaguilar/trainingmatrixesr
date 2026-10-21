@@ -49,6 +49,9 @@ async function start() {
   // The class summary at 5:00 AM on the day of training, and office-scheduled sends (Keeley's
   // request, 2026-10-14) - live site only; see server/lib/trainerSummaryScheduler.js.
   require('./lib/trainerSummaryScheduler').start();
+  // "Send the training to the client" bell alert 24 hours after a session closes (Keeley's
+  // request, 2026-10-21) - live site only; see server/lib/sendToClientAlerts.js.
+  require('./lib/sendToClientAlerts').start();
 
   const { attachUser, requireAuth, requireSuperAdmin } = require('./middleware/auth');
 

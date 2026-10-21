@@ -17,6 +17,7 @@ const { listCertificateFiles, certificateZipName, certificateZipBuffer } = requi
 const { buildCertificateFilename, buildRosterFilename, stripTrainingIdPrefix } = require('./certificateFilename');
 const { parseName, displayFirstLast } = require('./names');
 const { buildRecordCertificate, computeFilenameForRecord } = require('./recordCertificates');
+const { clearSendToClientAlert } = require('./sendToClientAlerts');
 const {
   esc, longDate, sessionDates, GREEN, GOLD, TEXT, MUTED, BORDER, BG, FONT,
 } = require('./sessionCompleteEmail');
@@ -388,6 +389,7 @@ async function sendCompanyCertificates(sessionId, { emails, includeRoster = true
     'UPDATE training_sessions SET sent_to_client = 1, certificates_emailed_to_client_at = ?, certificates_emailed_to_client = ? WHERE session_id = ?',
     [new Date().toISOString(), to.join(', '), sessionId]
   );
+  await clearSendToClientAlert(sessionId);
   if (saveAsDefault) await dbRun('UPDATE clients SET certificate_emails = ? WHERE client_id = ?', [to.join(', '), session.client_id]);
   return { session, sent_to: to, certificates: certified.length, attachments: attachments.map((a) => a.filename) };
 }

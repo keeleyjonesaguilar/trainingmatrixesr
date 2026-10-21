@@ -88,6 +88,7 @@ const { parseName, firstLast } = require('../lib/names');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const { clearSendToClientAlert } = require('../lib/sendToClientAlerts');
 
 const router = express.Router();
 
@@ -726,6 +727,7 @@ router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
+  if (sent_to_client) await clearSendToClientAlert(req.params.id);
   res.json(await dbGet('SELECT sent_to_client, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
 });
 

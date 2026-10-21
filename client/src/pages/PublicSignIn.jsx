@@ -40,6 +40,14 @@ const STRINGS = {
     es: '¡El Día {day} está firmado. Gracias! El Día {next} ya está abierto para registros.',
   },
   signed_in_banner: { en: "You're signed in!", es: '¡Ya está registrado!' },
+  // The big "done" screen after signing in (Keeley, 2026-10-21: people kept signing in again).
+  already_signed_in_title: { en: "You're already signed in", es: 'Ya está registrado' },
+  already_signed_in_note: {
+    en: 'We already have your sign-in for this class. You do not need to sign in again.',
+    es: 'Ya tenemos su registro para esta clase. No necesita registrarse de nuevo.',
+  },
+  all_set: { en: "You're all set — you can close this page.", es: 'Listo — puede cerrar esta página.' },
+  sign_in_another: { en: 'Sign in a different person', es: 'Registrar a otra persona' },
   first_name: { en: 'First name', es: 'Nombre' },
   last_name: { en: 'Last name', es: 'Apellido' },
   phone_number: { en: 'Phone number', es: 'Número de teléfono' },
@@ -220,6 +228,43 @@ function makeTranslator(language) {
   };
 }
 
+// Full-card "you're done" screen shown in place of the form once someone signs or checks in
+// (Keeley, 2026-10-21) - the old small banner sat above a blank form (and never showed at all on
+// one-day classes), so people thought it hadn't worked and signed in again.
+function SignedInConfirmation({ language, title, note, name, training, date, t, onAnother }) {
+  // English/Spanish classes show the two headlines on their own lines instead of "en/es".
+  const lines = (entry) => (language === 'both' ? [entry.en, entry.es] : [language === 'spanish' ? entry.es : entry.en]);
+  return (
+    <div style={{ textAlign: 'center', padding: '12px 4px 4px' }}>
+      <div style={{
+        width: 96, height: 96, borderRadius: '50%', margin: '0 auto 18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--esr-green)',
+      }}>
+        <svg width="54" height="54" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </div>
+      {lines(title).map((line) => (
+        <div key={line} style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.2, color: 'var(--esr-green)', marginBottom: 4 }}>{line}</div>
+      ))}
+      {name && <div style={{ fontSize: 22, fontWeight: 700, marginTop: 12, overflowWrap: 'anywhere' }}>{name}</div>}
+      <div style={{ fontSize: 15, color: 'var(--color-text-muted)', marginTop: 6 }}>
+        {training}{date ? ` · ${date}` : ''}
+      </div>
+      {note && <p style={{ fontSize: 15, margin: '16px 0 0' }}>{t(note)}</p>}
+      <p style={{
+        fontSize: 16, fontWeight: 600, margin: '18px 0 0', padding: '12px 14px', borderRadius: 8,
+        background: 'var(--status-current-bg)', color: 'var(--status-current-text)',
+      }}>
+        {t('all_set')}
+      </p>
+      <button type="button" className="btn btn-secondary" style={{ marginTop: 22 }} onClick={onAnother}>
+        {t('sign_in_another')}
+      </button>
+    </div>
+  );
+}
+
 // "Day {day} of {total}" has to fill in numbers, so it can't be a plain STRINGS lookup like
 // everything else on this page.
 function dayProgressLabel(t, day, total) {
@@ -268,7 +313,7 @@ function ReturningAttendeeFlow({ token, t, onBack, onDone, trainings = null, cur
       await api.publicCheckinAttendee(token, selected.attendee_id, {
         signature: sigRef.current.toDataURL(),
       });
-      onDone();
+      onDone(selected.trainee_name);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -493,7 +538,9 @@ export default function PublicSignIn() {
   const [trainerNotes, setTrainerNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
-  const [justSigned, setJustSigned] = useState(false);
+  // Who just signed/checked in - swaps the form for the big confirmation screen.
+  // kind: 'signed' | 'already' | 'checkedin'
+  const [done, setDone] = useState(null);
   const [closedNow, setClosedNow] = useState(false);
   // The day this trainer just signed off (multi-day), for the confirmation banner.
   const [signedOffDay, setSignedOffDay] = useState(null);
@@ -505,7 +552,6 @@ export default function PublicSignIn() {
   // attendee first picks whether this is their first time on this course or they're returning to
   // check in for today - single-day sessions skip this entirely and go straight to 'new' below.
   const [signInStep, setSignInStep] = useState('choice'); // 'choice' | 'new' | 'returning'
-  const [justCheckedIn, setJustCheckedIn] = useState(false);
 
   // AHA Heartsaver Course Roster fields (Keeley's request, 2026-09-21) - only ever shown/sent
   // when this session's training is First Aid/CPR/AED; every other training ignores them.
@@ -548,7 +594,7 @@ export default function PublicSignIn() {
     if (sigRef.current?.isEmpty()) return setFormError(t('err_signature'));
     setSubmitting(true);
     try {
-      await api.publicSignIn(token, {
+      const result = await api.publicSignIn(token, {
         trainee_name: `${firstName.trim()} ${lastName.trim()}`.trim(),
         trainee_first_name: firstName.trim(),
         trainee_last_name: lastName.trim(),
@@ -557,7 +603,11 @@ export default function PublicSignIn() {
         trainee_email: email.trim(),
         signature: sigRef.current.toDataURL(),
       });
-      setJustSigned(true);
+      setDone({
+        kind: result?.already_signed_in ? 'already' : result?.checked_in ? 'checkedin' : 'signed',
+        name: `${firstName.trim()} ${lastName.trim()}`,
+      });
+      window.scrollTo(0, 0);
       setFirstName('');
       setLastName('');
       setPhone('');
@@ -696,6 +746,14 @@ export default function PublicSignIn() {
     .replaceAll('{total}', info.total_days);
   const fill = (key) => t(key).replaceAll('{day}', info.current_day).replaceAll('{next}', info.current_day + 1);
   const todaysTrainer = info.days?.[info.current_day - 1]?.assigned_trainer_name;
+  const fillEntry = (entry) => ({
+    en: entry.en.replaceAll('{training}', shortTraining(currentTraining?.label)),
+    es: entry.es.replaceAll('{training}', shortTraining(currentTraining?.label)),
+  });
+  const confirmationTitle = !done ? null
+    : done.kind === 'already' ? STRINGS.already_signed_in_title
+    : done.kind === 'signed' ? STRINGS.signed_in_banner
+    : fillEntry(isMultiTraining ? STRINGS.mtd_checkin_success : STRINGS.checkin_success_banner);
 
   return (
     <div className="public-shell">
@@ -765,6 +823,7 @@ export default function PublicSignIn() {
                 className={mode === 'trainer' ? 'btn btn-accent' : 'btn btn-secondary'}
                 onClick={() => {
                   setMode('trainer');
+                  setDone(null);
                   setFormError('');
                 }}
               >
@@ -779,21 +838,26 @@ export default function PublicSignIn() {
               </p>
             )}
 
-            {justSigned && mode === 'trainee' && signInStep === 'new' && (
-              <p className="success-banner">{t('signed_in_banner')}</p>
-            )}
             {openedTraining && mode === 'trainee' && (
               <p className="success-banner">{t('mtd_next_banner').replaceAll('{next}', openedTraining)}</p>
-            )}
-            {justCheckedIn && mode === 'trainee' && (
-              <p className="success-banner">{isMultiTraining ? fillTraining('mtd_checkin_success') : t('checkin_success_banner')}</p>
             )}
 
             {mode === 'trainer' && (
               <LiveRoster token={token} t={t} pin={pin} setPin={setPin} info={info} trainings={isMultiTraining ? info.trainings : null} />
             )}
 
-            {mode === 'trainee' ? (
+            {mode === 'trainee' && done ? (
+              <SignedInConfirmation
+                language={info.language}
+                title={confirmationTitle}
+                note={done.kind === 'already' ? 'already_signed_in_note' : null}
+                name={done.name}
+                training={isMultiTraining ? shortTraining(currentTraining?.label) : isSpanish ? trainingLabelEs : info.training_type_label}
+                date={formatDate(info.day_dates?.[info.current_day - 1] || info.session_date)}
+                t={t}
+                onAnother={() => { setDone(null); setSignInStep('choice'); }}
+              />
+            ) : mode === 'trainee' ? (
               <>
                 {isMultiTraining && (
                   <div className="card" style={{ marginBottom: 16 }}>
@@ -887,7 +951,7 @@ export default function PublicSignIn() {
                       type="button"
                       className="btn btn-secondary choice-button"
                       style={{ textAlign: 'left', justifyContent: 'flex-start', gap: 14, padding: '14px 16px', height: 'auto' }}
-                      onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('new'); }}
+                      onClick={() => setSignInStep('new')}
                     >
                       <span style={{
                         width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -915,7 +979,7 @@ export default function PublicSignIn() {
                         // From Day 2 on, most people are returning - put this option first and outline it.
                         ...(info.current_day > 1 ? { order: -1, border: '2px solid var(--status-current-text)' } : {}),
                       }}
-                      onClick={() => { setJustSigned(false); setJustCheckedIn(false); setSignInStep('returning'); }}
+                      onClick={() => setSignInStep('returning')}
                     >
                       <span style={{
                         width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1002,9 +1066,10 @@ export default function PublicSignIn() {
                     trainings={isMultiTraining ? info.trainings : null}
                     currentDay={info.current_day}
                     onBack={() => setSignInStep('choice')}
-                    onDone={() => {
+                    onDone={(name) => {
                       setOpenedTraining('');
-                      setJustCheckedIn(true);
+                      setDone({ kind: 'checkedin', name });
+                      window.scrollTo(0, 0);
                       setSignInStep('choice');
                       load();
                     }}

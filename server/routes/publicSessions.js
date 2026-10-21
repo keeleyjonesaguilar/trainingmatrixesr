@@ -280,6 +280,29 @@ router.post('/:token/attendees', async (req, res) => {
   if (!isValidSignature(signature)) {
     return res.status(400).json({ error: 'A signature is required.' });
   }
+  // Same name AND same phone already on this session = the same person pressing Sign In again
+  // (Keeley, 2026-10-21: people were signing in several times) - don't add a second row. On a
+  // multi-day course it still counts them for today if they hadn't been yet.
+  const phoneDigits = (value) => String(value || '').replace(/\D/g, '').slice(-10);
+  const repeat = (await dbAll('SELECT attendee_id, trainee_name, trainee_phone FROM session_attendees WHERE session_id = ?', [session.session_id]))
+    .find((r) => nameKey(r.trainee_name) === nameKey(traineeName.full) && phoneDigits(r.trainee_phone) === phoneDigits(trainee_phone));
+  if (repeat) {
+    if (session.total_days) {
+      const today = await dbGet(
+        'SELECT id FROM session_attendance_days WHERE session_id = ? AND attendee_id = ? AND day_number = ?',
+        [session.session_id, repeat.attendee_id, session.current_day]
+      );
+      if (!today) {
+        await dbRun(
+          `INSERT INTO session_attendance_days (id, session_id, attendee_id, day_number, signature)
+           VALUES (?, ?, ?, ?, ?)`,
+          [uuidv4(), session.session_id, repeat.attendee_id, session.current_day, signature]
+        );
+        return res.status(201).json({ ok: true, checked_in: true });
+      }
+    }
+    return res.json({ ok: true, already_signed_in: true });
+  }
   const attendee_id = uuidv4();
   await dbRun(
     `INSERT INTO session_attendees (attendee_id, session_id, trainee_name, trainee_first_name, trainee_last_name, trainee_phone, trainee_job_title, trainee_email, signature)

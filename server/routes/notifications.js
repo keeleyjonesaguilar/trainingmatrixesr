@@ -15,6 +15,7 @@ const READ_CUTOFF_SQL = "to_char((now() AT TIME ZONE 'utc') - interval '24 hours
 // information. A new notification type lands in Updates until it's added here.
 const ATTENTION_TYPES = [
   'feedback_needs_training', 'trainer_summary_missing_email', 'session_email_problem', 'session_reminder', 'trainer_notes',
+  'send_to_client',
 ];
 const COMPLETED_TYPES = ['session_completed'];
 const GROUPS = ['attention', 'completed', 'updates'];

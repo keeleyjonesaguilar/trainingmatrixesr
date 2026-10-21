@@ -24,6 +24,7 @@ const TYPE_TAGS = {
   session_email_problem: 'Not delivered',
   session_reminder: 'Not closed',
   trainer_notes: 'Trainer notes',
+  send_to_client: 'Send to client',
   session_completed: 'Closed',
   portal_profile_updated: 'Portal',
 };
