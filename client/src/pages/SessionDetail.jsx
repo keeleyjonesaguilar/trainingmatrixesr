@@ -965,7 +965,8 @@ Their certificate and the training record it added to their employee file will b
   // it after a change (date, location, files).
   const [sendingSummary, setSendingSummary] = useState(false);
   // Email Certificates to Employees / to Company (2026-10-14) - 'employees' | 'company' | null.
-  const [emailingCerts, setEmailingCerts] = useState(null);
+  // The "send to client" alert email's quick link (?send=company) opens the company pop-up straight away.
+  const [emailingCerts, setEmailingCerts] = useState(() => (new URLSearchParams(window.location.search).get('send') === 'company' ? 'company' : null));
   const emailTrainerSummary = async () => {
     const lastSent = session.trainer_summary_sent_at ? `\n\nIt was already emailed ${formatEasternDateTime(session.trainer_summary_sent_at)} - this sends it again.` : '';
     if (!window.confirm(`Email the class summary (details, instructions, outline, QR codes, WeTransfer link) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.${lastSent}`)) return;
