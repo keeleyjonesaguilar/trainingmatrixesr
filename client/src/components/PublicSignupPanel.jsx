@@ -82,9 +82,14 @@ export default function PublicSignupPanel({ sessionId, sessionLabel, onSetUp, on
   };
 
   const exportCsv = () => {
-    const rows = data.registrations.flatMap((r) => r.attendees.map((a) => ({
-      Person: fullName(a.first_name, a.last_name),
-      'Signed In': a.signed_in ? 'Yes' : 'No',
+    // One row per person - names are optional, so anyone without one still gets a row.
+    const people = (r) => [
+      ...r.attendees.map((a) => ({ name: fullName(a.first_name, a.last_name), signedIn: a.signed_in ? 'Yes' : 'No' })),
+      ...Array.from({ length: Math.max(0, r.seats - r.attendees.length) }, () => ({ name: '(no name given)', signedIn: '' })),
+    ];
+    const rows = data.registrations.flatMap((r) => people(r).map((p) => ({
+      Person: p.name,
+      'Signed In': p.signedIn,
       'Signed Up By': fullName(r.contact_first_name, r.contact_last_name),
       Email: r.contact_email,
       Phone: r.contact_phone,
@@ -194,6 +199,11 @@ export default function PublicSignupPanel({ sessionId, sessionLabel, onSetUp, on
                               {a.signed_in && <span className="badge badge-current" style={{ marginLeft: 6, fontSize: 11 }}>Signed in</span>}
                             </div>
                           ))}
+                          {r.seats > r.attendees.length && (
+                            <div style={{ color: 'var(--color-text-muted)' }}>
+                              {r.attendees.length ? '+ ' : ''}{r.seats - r.attendees.length} {r.attendees.length ? 'more' : (r.seats === 1 ? 'person' : 'people')} (no name given)
+                            </div>
+                          )}
                         </td>
                         <td>
                           <button type="button" className="link-button" style={{ color: 'var(--status-expired-text)' }} disabled={busyId === r.registration_id} onClick={() => remove(r)}>

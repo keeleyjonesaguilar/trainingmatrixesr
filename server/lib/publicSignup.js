@@ -122,8 +122,14 @@ function button(href, label) {
   return `<a href="${esc(href)}" style="display:inline-block;background:${GREEN};color:#ffffff;${FONT}font-size:15px;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:8px;margin:4px 0 8px;">${esc(label)}</a>`;
 }
 
-function nameList(attendees) {
-  return attendees.map((a) => esc(firstLast(a.first_name, a.last_name))).join('<br>');
+// The names given, then how many came without one - names are optional for everyone but the
+// person who filled in the form (Keeley, 2026-10-23).
+function nameList(attendees, total) {
+  const unnamed = Math.max(0, total - attendees.length);
+  return [
+    ...attendees.map((a) => esc(firstLast(a.first_name, a.last_name))),
+    ...(unnamed ? [`${attendees.length ? '+ ' : ''}${unnamed} ${attendees.length ? 'more' : (unnamed === 1 ? 'person' : 'people')} (no name given)`] : []),
+  ].join('<br>');
 }
 
 function classRows(session) {
@@ -137,19 +143,18 @@ function classRows(session) {
 
 function buildConfirmationEmail(session, registration, attendees) {
   const subject = `Thanks for your interest: ${trainingName(session)}`;
-  const contact = firstLast(registration.contact_first_name, registration.contact_last_name);
   const body = `
           <p style="margin:0 0 14px;">Hi ${esc(registration.contact_first_name)}, thanks for your interest in this class. We've received your information and will be in touch with next steps.</p>
           <table role="presentation" cellpadding="0" cellspacing="0" style="background:${BG};border-radius:10px;border-left:4px solid ${GREEN};width:100%;">
             <tr><td style="padding:12px 16px;"><table role="presentation" cellpadding="0" cellspacing="0">
               ${detailRows([
                 ...classRows(session),
-                [registration.seats > 1 ? 'People' : 'Person', nameList(attendees)],
+                [registration.seats > 1 ? 'Names' : 'Name', nameList(attendees, registration.seats)],
               ])}
             </table></td></tr>
           </table>
           ${session.public_details ? `<p style="margin:16px 0 0;white-space:pre-line;">${esc(session.public_details)}</p>` : ''}
-          <p style="margin:14px 0 0;color:${MUTED};font-size:13px;">Sent for ${esc(contact)}${registration.company ? `, ${esc(registration.company)}` : ''}. Questions? Just reply to this email.</p>`;
+          <p style="margin:14px 0 0;color:${MUTED};font-size:13px;">Questions? Just reply to this email.</p>`;
   return { subject, html: frame({ subject, kicker: 'Interest Received', title: trainingName(session), body }) };
 }
 
@@ -164,7 +169,7 @@ function buildOfficeEmail(session, registration, attendees, totalPeople) {
               ['Email', esc(registration.contact_email)],
               ['Phone', esc(registration.contact_phone)],
               ['Company', esc(registration.company)],
-              [registration.seats > 1 ? 'People' : 'Person', nameList(attendees)],
+              [registration.seats > 1 ? 'People' : 'Person', nameList(attendees, registration.seats)],
               ['Total interest', `${totalPeople} ${totalPeople === 1 ? 'person' : 'people'} so far`],
             ])}
           </table>

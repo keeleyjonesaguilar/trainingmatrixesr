@@ -58,10 +58,12 @@ function validate(body) {
   const list = Array.isArray(body.attendees) ? body.attendees : [];
   if (!list.length) return { error: 'Please choose how many people are interested.' };
   if (list.length > MAX_PEOPLE) return { error: `Please sign up ${MAX_PEOPLE} people or fewer at a time.` };
-  const attendees = list.map((a) => ({ first: clean(a?.first_name, 80), last: clean(a?.last_name, 80) }));
-  const missing = attendees.findIndex((a) => !a.first || !a.last);
-  if (missing !== -1) return { error: `Please enter a first and last name for person ${missing + 1}.` };
-  return { contact, attendees };
+  // Each person's name is optional (Keeley, 2026-10-23: "we only technically need 1 POC") - the
+  // list's length is how many are interested; only the names given are kept, in their order.
+  const attendees = list
+    .map((a, i) => ({ seat: i + 1, first: clean(a?.first_name, 80), last: clean(a?.last_name, 80) }))
+    .filter((a) => a.first || a.last);
+  return { contact, attendees, count: list.length };
 }
 
 router.post('/:token', async (req, res) => {
@@ -73,7 +75,7 @@ router.post('/:token', async (req, res) => {
 
   const parsed = validate(req.body || {});
   if (parsed.error) return res.status(400).json({ error: parsed.error });
-  const { contact, attendees } = parsed;
+  const { contact, attendees, count } = parsed;
   const reason = closedReason(session);
   if (reason) return res.status(409).json({ error: reason });
 
@@ -82,14 +84,14 @@ router.post('/:token', async (req, res) => {
     // same people - hand back the first sign-up rather than saving it again.
     const recent = await dbAll(
       `SELECT pr.registration_id, pr.seats,
-         (SELECT string_agg(lower(first_name || ' ' || last_name), '|' ORDER BY seat_number) FROM public_registration_attendees WHERE registration_id = pr.registration_id) AS names
+         COALESCE((SELECT string_agg(lower(first_name || ' ' || last_name), '|' ORDER BY seat_number) FROM public_registration_attendees WHERE registration_id = pr.registration_id), '') AS names
        FROM public_registrations pr
        WHERE pr.session_id = ? AND lower(pr.contact_email) = ?
          AND pr.created_at >= to_char((now() AT TIME ZONE 'utc') - interval '10 minutes', 'YYYY-MM-DD HH24:MI:SS')`,
       [session.session_id, contact.email]
     );
     const names = attendees.map((a) => `${a.first} ${a.last}`.toLowerCase()).join('|');
-    const repeat = recent.find((r) => Number(r.seats) === attendees.length && r.names === names);
+    const repeat = recent.find((r) => Number(r.seats) === count && r.names === names);
     if (repeat) return { registrationId: repeat.registration_id, repeat: true };
 
     const registrationId = uuidv4();
@@ -97,13 +99,13 @@ router.post('/:token', async (req, res) => {
       `INSERT INTO public_registrations
          (registration_id, session_id, contact_first_name, contact_last_name, contact_email, contact_phone, company, seats)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [registrationId, session.session_id, contact.first, contact.last, contact.email, formatPhoneNumber(contact.phone), contact.company || null, attendees.length]
+      [registrationId, session.session_id, contact.first, contact.last, contact.email, formatPhoneNumber(contact.phone), contact.company || null, count]
     );
-    for (const [index, a] of attendees.entries()) {
+    for (const a of attendees) {
       // eslint-disable-next-line no-await-in-loop
       await dbRun(
         'INSERT INTO public_registration_attendees (id, registration_id, seat_number, first_name, last_name) VALUES (?, ?, ?, ?, ?)',
-        [uuidv4(), registrationId, index + 1, a.first, a.last]
+        [uuidv4(), registrationId, a.seat, a.first, a.last]
       );
     }
     return { registrationId, repeat: false };

@@ -16,6 +16,14 @@ function dayLabel(isoDate) {
 
 const blankPerson = () => ({ first_name: '', last_name: '' });
 
+// "Ann Lee, Bo Diaz + 1 more" - names are optional for everyone but the person filling it in.
+function doneSummary(people) {
+  const named = people.map((p) => `${p.first_name} ${p.last_name}`.trim()).filter(Boolean);
+  const unnamed = people.length - named.length;
+  return [named.join(', '), unnamed ? `${named.length ? '+ ' : ''}${unnamed} ${named.length ? 'more' : (unnamed === 1 ? 'person' : 'people')}` : '']
+    .filter(Boolean).join(' ');
+}
+
 function Fact({ label, children }) {
   return (
     <div style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
@@ -128,7 +136,7 @@ export default function PublicSignup() {
             </div>
             <h2 style={{ margin: '0 0 6px' }}>Thank you!</h2>
             <p style={{ margin: '0 0 12px', color: 'var(--color-text-muted)', fontSize: 14 }}>
-              {done.names.map((p) => `${p.first_name} ${p.last_name}`.trim()).join(', ')}
+              {doneSummary(done.names)}
             </p>
             <p style={{ margin: 0, fontSize: 14 }}>
               We&apos;ve received your information and will be in touch with next steps. A copy is on its way to <strong>{done.email}</strong>.
@@ -185,12 +193,17 @@ export default function PublicSignup() {
               I&apos;d attend this class myself
             </label>
 
+            {personList.some((p, i) => !(attending && i === 0)) && (
+              <p style={{ fontSize: 13, color: 'var(--color-text-muted)', margin: '0 0 10px' }}>
+                Names for the other people are <strong>optional</strong>. We only need your contact information above, and you can send names later.
+              </p>
+            )}
             {personList.map((p, i) => {
               const isMe = attending && i === 0;
               return (
                 <div key={i} style={{ background: 'var(--color-bg)', borderRadius: 8, padding: '10px 12px 2px', marginBottom: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-                    Person {i + 1}{isMe ? ' (you)' : ''}
+                    Person {i + 1}{isMe ? ' (you)' : <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}> (optional)</span>}
                   </div>
                   {isMe ? (
                     <p style={{ margin: '0 0 10px', fontSize: 14 }}>{`${contact.first_name} ${contact.last_name}`.trim() || 'Your name from above'}</p>
@@ -198,11 +211,11 @@ export default function PublicSignup() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0 12px' }}>
                       <div className="field">
                         <label>First name</label>
-                        <input value={p.first_name} onChange={setPersonField(i, 'first_name')} required />
+                        <input value={p.first_name} onChange={setPersonField(i, 'first_name')} />
                       </div>
                       <div className="field">
                         <label>Last name</label>
-                        <input value={p.last_name} onChange={setPersonField(i, 'last_name')} required />
+                        <input value={p.last_name} onChange={setPersonField(i, 'last_name')} />
                       </div>
                     </div>
                   )}
