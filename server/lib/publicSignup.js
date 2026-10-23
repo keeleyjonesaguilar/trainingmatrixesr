@@ -10,9 +10,10 @@ const { notifyAllUsers } = require('./notifications');
 const { stripTrainingIdPrefix } = require('./certificateFilename');
 const { firstLast, nameKey } = require('./names');
 
-// Who hears about each new sign-up - all three on one email (Keeley, 2026-10-23: "keeley emily
-// and jeff"). PUBLIC_SIGNUP_ALERT_EMAILS (comma-separated) replaces the list without a code change.
-const ALERT_EMAILS = (process.env.PUBLIC_SIGNUP_ALERT_EMAILS || 'keeley@esr-safety.com, emily@esr-safety.com, jeff@esr-safety.com')
+// Who hears about each new sign-up - both on one email (Keeley, 2026-10-23: "keeley emily and
+// jeff", then "dont worry about sending emails to emily"). PUBLIC_SIGNUP_ALERT_EMAILS
+// (comma-separated) replaces the list without a code change.
+const ALERT_EMAILS = (process.env.PUBLIC_SIGNUP_ALERT_EMAILS || 'keeley@esr-safety.com, jeff@esr-safety.com')
   .split(',').map((e) => e.trim()).filter(Boolean);
 // Where the person's replies to their confirmation email go - the sending address isn't read.
 const REPLY_TO = process.env.PUBLIC_SIGNUP_REPLY_TO || 'keeley@esr-safety.com';
