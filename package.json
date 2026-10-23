@@ -5,7 +5,7 @@
   "main": "server/index.js",
   "type": "commonjs",
   "engines": {
-    "node": "22.x"
+    "node": ">=22.23.4 <23"
   },
   "scripts": {
     "start": "node server/index.js",
