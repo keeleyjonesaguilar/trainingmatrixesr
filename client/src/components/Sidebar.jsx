@@ -12,14 +12,11 @@ const NAV_ITEMS = [
   { to: '/trainers', label: 'Trainers' },
   { to: '/sessions', label: 'Training Sessions' },
   { to: '/training-types', label: 'Training Types' },
-  // Import and user management are admin-only (Keeley's request, 2026-09-16) - the plain 'user'
-  // role is for people finding employees for job placements (filtering the matrix by trainings
-  // completed) who can add a client/trainer/employee/session they encounter, but doesn't manage
-  // accounts or bulk-import data.
-  { to: '/import', label: 'Import Data', adminOnly: true },
-  { to: '/admin/users', label: 'Manage Users', adminOnly: true },
-  // Changes and updates people would find useful, kept in one place (2026-10-12).
-  { to: '/requests', label: 'Requests' },
+  // Import, user management and Requests are Super Admin only (Keeley's request, 2026-10-23 -
+  // were admin-only since 2026-09-16, Requests open to everyone since 2026-10-12).
+  { to: '/import', label: 'Import Data', superAdminOnly: true },
+  { to: '/admin/users', label: 'Manage Users', superAdminOnly: true },
+  { to: '/requests', label: 'Requests', superAdminOnly: true },
   { to: '/account', label: 'My Account' },
   // Super Admin only - login/IP audit trail. Hidden rather than shown-disabled for everyone
   // else, same as this app hides other things a given role can't reach.
@@ -29,8 +26,7 @@ const NAV_ITEMS = [
 // Username/role/log-out live in TopBar.jsx now (Keeley's request, 2026-09-17), alongside the
 // notification bell - the sidebar is nav-only.
 export default function Sidebar({ role, isTrainer = false }) {
-  const isAdmin = role === 'admin' || role === 'super_admin';
-  const visibleItems = NAV_ITEMS.filter((item) => (!item.adminOnly || isAdmin) && (!item.superAdminOnly || role === 'super_admin'));
+  const visibleItems = NAV_ITEMS.filter((item) => !item.superAdminOnly || role === 'super_admin');
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">

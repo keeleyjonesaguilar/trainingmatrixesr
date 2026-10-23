@@ -161,7 +161,7 @@ async function start() {
   app.use('/api/auth', require('./routes/auth'));
   app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-  app.use('/api/users', requireAuth, require('./routes/users'));
+  app.use('/api/users', requireAuth, requireSuperAdmin, require('./routes/users'));
   app.use('/api/clients', requireAuth, require('./routes/clients'));
   app.use('/api/master-trainings', requireAuth, require('./routes/masterTrainings'));
   app.use('/api/employees', requireAuth, require('./routes/employees'));
@@ -170,17 +170,19 @@ async function start() {
   app.use('/api/training-records', requireAuth, require('./routes/trainingRecords'));
   app.use('/api/matrix', requireAuth, require('./routes/matrix'));
   app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
-  app.use('/api/import', requireAuth, require('./routes/import'));
+  app.use('/api/import', requireAuth, requireSuperAdmin, require('./routes/import'));
   app.use('/api/reports', requireAuth, require('./routes/reports'));
   app.use('/api/feedback-settings', requireAuth, require('./routes/feedbackSettings'));
   app.use('/api/trainer-close-pin-settings', requireAuth, require('./routes/trainerClosePinSettings'));
   app.use('/api/audit', requireAuth, requireSuperAdmin, require('./routes/audit'));
   app.use('/api/notifications', requireAuth, require('./routes/notifications'));
-  app.use('/api/change-requests', requireAuth, require('./routes/changeRequests'));
+  // Manage Users, Import Data and Requests are Super Admin only (Keeley's request, 2026-10-23).
+  app.use('/api/change-requests', requireAuth, requireSuperAdmin, require('./routes/changeRequests'));
 
   // Training Sign-In (merged in 2026-08-19): admin/staff session management requires the same
   // login as everything else above. /api/public is the trainee-facing side and is deliberately
   // NOT behind requireAuth - a trainee scanning a QR code never has a login.
+  app.use('/api/training-sessions', requireAuth, require('./routes/publicSignupAdmin'));
   app.use('/api/training-sessions', requireAuth, require('./routes/trainingSessions'));
   // The trainer's live roster shows attendee names behind the trainer PIN - only wrong PINs
   // count toward this limit, so a trainer refreshing the list never hits it.
@@ -213,6 +215,17 @@ async function start() {
     message: { error: 'Too many requests from this network. Please try again later.' },
   });
   app.use('/api/public-record', publicRecordRateLimiter, require('./routes/publicRecord'));
+  // Public class sign-up (routes/publicSignup.js) - no login. Sign-ups get a tight limit against
+  // spam; viewing the page a looser one.
+  const signupRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many sign-ups from this network. Please try again in a few minutes.' },
+  });
+  app.post('/api/register/:token', signupRateLimiter);
+  app.use('/api/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }), require('./routes/publicSignup'));
   // Employee/trainer portal (routes/portal.js) - its own sign-in, not the office login. The code
   // routes get a tight limit so codes can't be guessed or spammed.
   const portalCodeRateLimiter = rateLimit({

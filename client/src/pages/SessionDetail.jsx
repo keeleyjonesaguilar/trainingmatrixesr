@@ -12,6 +12,7 @@ import SignaturePad from '../components/SignaturePad.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
+import PublicSignupPanel from '../components/PublicSignupPanel.jsx';
 import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCertificatesModal.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
@@ -835,6 +836,7 @@ export default function SessionDetail() {
   const [copiedLink, setCopiedLink] = useState('');
   const [savingFulfillment, setSavingFulfillment] = useState('');
   const [showAddAttendee, setShowAddAttendee] = useState(false);
+  const [settingUpSignup, setSettingUpSignup] = useState(false);
 
   const load = () => {
     api.getTrainingSession(id).then(setSession).catch((err) => setError(err.message));
@@ -1163,6 +1165,10 @@ Their certificate and the training record it added to their employee file will b
         {isAdmin && !editingSession && (
           <>{' '}· <button type="button" className="link-button" onClick={() => setEditingSession(true)}>Edit session details</button></>
         )}
+        {/* Just a link until the class has a public sign-up - the full section shows after that. */}
+        {isAdmin && session.session_kind !== 'toolbox_talk' && !session.public_signup_token && !settingUpSignup && (
+          <>{' '}· <button type="button" className="link-button" onClick={() => setSettingUpSignup(true)}>Set up public sign-up</button></>
+        )}
       </p>
 
       {isAdmin && (
@@ -1391,6 +1397,15 @@ Their certificate and the training record it added to their employee file will b
           onSaved={() => { setEditingSession(false); load(); }}
           onCancel={() => setEditingSession(false)}
           onDeleted={() => navigate('/sessions')}
+        />
+      )}
+
+      {isAdmin && session.session_kind !== 'toolbox_talk' && (session.public_signup_token || settingUpSignup) && (
+        <PublicSignupPanel
+          sessionId={id}
+          sessionLabel={session.training_type_label}
+          onSetUp={() => { setSettingUpSignup(false); load(); }}
+          onCancelSetUp={() => setSettingUpSignup(false)}
         />
       )}
 

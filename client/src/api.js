@@ -269,6 +269,13 @@ export const api = {
 
   // Public sign-in (no auth) - reached only via a session's QR code at /s/:token.
   publicSessionInfo: (token) => request(`/public/${token}`),
+  // Public class interest sign-up (no auth) - /register/:token, and the office side on the session page.
+  publicSignupInfo: (token) => request(`/register/${token}`),
+  publicSignup: (token, payload) => request(`/register/${token}`, { method: 'POST', body: JSON.stringify(payload) }),
+  getPublicSignup: (sessionId) => request(`/training-sessions/${sessionId}/public-signup`),
+  savePublicSignup: (sessionId, payload) => request(`/training-sessions/${sessionId}/public-signup`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deletePublicRegistration: (sessionId, registrationId) =>
+    request(`/training-sessions/${sessionId}/public-registrations/${registrationId}`, { method: 'DELETE' }),
   // Employee/trainer portal (its own email + code sign-in) - /portal.
   portalRequestCode: (email) => request('/portal/request-code', { method: 'POST', body: JSON.stringify({ email }) }),
   portalVerify: (email, code) => request('/portal/verify', { method: 'POST', body: JSON.stringify({ email, code }) }),

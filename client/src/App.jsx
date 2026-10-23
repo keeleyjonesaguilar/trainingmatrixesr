@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar.jsx';
 import TopBar from './components/TopBar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -24,6 +24,7 @@ import PublicSignIn from './pages/PublicSignIn.jsx';
 import PublicFeedback from './pages/PublicFeedback.jsx';
 import PublicSessionEdit from './pages/PublicSessionEdit.jsx';
 import PublicRecord from './pages/PublicRecord.jsx';
+import PublicSignup from './pages/PublicSignup.jsx';
 import Portal from './pages/Portal.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import { api } from './api';
@@ -40,6 +41,7 @@ export default function App() {
     location.pathname.startsWith('/feedback/') ||
     location.pathname.startsWith('/session-edit/') ||
     location.pathname.startsWith('/r/') ||
+    location.pathname.startsWith('/register/') ||
     location.pathname === '/portal' || location.pathname.startsWith('/portal/') ||
     location.pathname.startsWith('/reset-password');
 
@@ -64,6 +66,7 @@ export default function App() {
         <Route path="/feedback/:token" element={<PublicFeedback />} />
         <Route path="/session-edit/:editToken" element={<PublicSessionEdit />} />
         <Route path="/r/:token" element={<PublicRecord />} />
+        <Route path="/register/:token" element={<PublicSignup />} />
         <Route path="/portal" element={<Portal />} />
         <Route path="/reset-password" element={<ResetPassword />} />
       </Routes>
@@ -95,6 +98,8 @@ export default function App() {
     setIsTrainer(false);
   };
 
+  const superOnly = (page) => (role === 'super_admin' ? page : <Navigate to="/" replace />);
+
   return (
     <AuthContext.Provider value={{ username, fullName, role }}>
       <div className="shell">
@@ -114,10 +119,11 @@ export default function App() {
               <Route path="/sessions/:id" element={<SessionDetail />} />
               <Route path="/training-types" element={<TrainingTypes />} />
               <Route path="/training-types/:id" element={<TrainingTypeDetail />} />
-              <Route path="/import" element={<Import />} />
+              {/* Super Admin only (Keeley's request, 2026-10-23) - anyone else typing the address lands on the Dashboard. */}
+              <Route path="/import" element={superOnly(<Import />)} />
               <Route path="/reports" element={<Reports />} />
-              <Route path="/admin/users" element={<AdminUsers currentUsername={username} />} />
-              <Route path="/requests" element={<Requests />} />
+              <Route path="/admin/users" element={superOnly(<AdminUsers currentUsername={username} />)} />
+              <Route path="/requests" element={superOnly(<Requests />)} />
               <Route path="/account" element={<Account username={username} />} />
               <Route path="/security" element={<Security />} />
             </Routes>
