@@ -8,6 +8,10 @@
 const express = require('express');
 const { dbAll } = require('../db');
 const { logActivity } = require('../lib/activityLog');
+const {
+  GREEN, NAVY, RED, startReport, drawTiles, drawSectionHeading, drawTable, finishReport, sendAs, safeFilePart,
+} = require('../lib/reportPdf');
+const monthly = require('../lib/monthlyClientReport');
 
 const router = express.Router();
 
@@ -57,6 +61,65 @@ router.get('/completed-trainings', async (req, res) => {
   );
 
   res.json({ rows });
+});
+
+// PDF version of a report page's table (Keeley's request, 2026-10-27) - the Reports page, the
+// Employees list and a client's Compliance Overview each send the exact rows they'd put in their
+// CSV (already filtered on screen), and this lays them out in the ESR report style. With
+// group_by set, rows are listed under one heading per value of that field (e.g. per employee).
+router.post('/table.pdf', async (req, res) => {
+  const { report_name, title, sub_lines, columns, rows, group_by } = req.body || {};
+  if (!title || !Array.isArray(columns) || !columns.length || !Array.isArray(rows)) {
+    return res.status(400).json({ error: 'title, columns and rows are required' });
+  }
+  if (rows.length > 25000) return res.status(400).json({ error: 'Too many rows for one PDF - narrow the filters first' });
+  logActivity({
+    actor: req.user, action: 'report_downloaded', entityType: 'report', entityLabel: report_name || title, details: `PDF · ${rows.length} row(s)`, req,
+  });
+
+  const statuses = rows.map((r) => r.status);
+  const tiles = [['Records', rows.length, NAVY]];
+  if (rows.some((r) => r.employee)) tiles.push(['Employees', new Set(rows.map((r) => (group_by && r[group_by]) || r.employee)).size, NAVY]);
+  if (statuses.some(Boolean)) {
+    tiles.push(['Current', statuses.filter((s) => s === 'Current' || s === 'No Expiration').length, GREEN]);
+    tiles.push(['Expired', statuses.filter((s) => s === 'Expired').length, RED]);
+  }
+
+  sendAs(res, `${safeFilePart(title)} - ${new Date().toISOString().slice(0, 10)}.pdf`, 'application/pdf');
+  const ctx = startReport(res, {
+    label: 'Training Report', title, subLines: Array.isArray(sub_lines) ? sub_lines.map(String) : [], landscape: columns.length > 6,
+  });
+  drawTiles(ctx, tiles);
+  if (group_by) {
+    const shown = columns.filter((c) => c.key !== group_by);
+    const groups = new Map();
+    for (const r of rows) {
+      const key = r[group_by] || '—';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    if (!groups.size) drawTable(ctx, shown, [], { emptyText: 'No records match these filters.' });
+    for (const [key, groupRows] of groups) {
+      drawSectionHeading(ctx, key);
+      drawTable(ctx, shown, groupRows);
+    }
+  } else {
+    drawTable(ctx, columns, rows, { emptyText: 'No records match these filters.' });
+  }
+  finishReport(ctx, title);
+});
+
+// Monthly Training Report for one client (Keeley's request, 2026-10-27) - lib/monthlyClientReport.js.
+router.get('/monthly-client.:format(csv|pdf)', async (req, res) => {
+  const data = await monthly.monthlyReportData(req.query.client_id, req.query.month);
+  if (data.error) return res.status(data.notFound ? 404 : 400).json({ error: data.error });
+  logActivity({
+    actor: req.user, action: 'report_downloaded', entityType: 'report', entityLabel: `${data.client.client_name} Monthly Training Report`,
+    details: `${data.monthLabel} · ${req.params.format.toUpperCase()}`, req,
+  });
+  sendAs(res, `${monthly.fileBase(data)}.${req.params.format}`, req.params.format === 'csv' ? 'text/csv; charset=utf-8' : 'application/pdf');
+  if (req.params.format === 'csv') res.send(monthly.toCsv(data));
+  else monthly.writePdf(data, res);
 });
 
 module.exports = router;

@@ -4,6 +4,7 @@ import { api } from '../api';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { matchesSearch } from '../lib/search.js';
 import { downloadCsv } from '../lib/csv';
+import { downloadReportPdf } from '../lib/reportPdf';
 
 // A narrower list than matrixCell.js's full STATUS_OPTIONS - this report only ever shows rows
 // that have an actual completion on file (see the page subtitle), so "Missing" and "Not
@@ -47,6 +48,7 @@ export default function Reports() {
   const [error, setError] = useState('');
   const [sortField, setSortField] = useState('completion_date');
   const [sortDir, setSortDir] = useState('desc');
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const clientId = searchParams.get('client_id') || '';
   const trainingId = searchParams.get('training_id') || '';
@@ -87,6 +89,46 @@ export default function Reports() {
 
   const sortIndicator = (field) => (sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
 
+  // Same rows and order as the table on screen.
+  const exportPdf = async () => {
+    const clientName = clients.find((c) => c.client_id === clientId)?.client_name;
+    const training = masterTrainings.find((mt) => mt.training_id === trainingId);
+    const filters = [
+      clientName ? `Client: ${clientName}` : 'All clients',
+      training && `Training: ${training.training_id} - ${training.training_name}`,
+      status && `Status: ${status}`,
+      employeeSearch && `Employee: "${employeeSearch}"`,
+    ].filter(Boolean).join('  ·  ');
+    setPdfBusy(true);
+    try {
+      await downloadReportPdf({
+        report_name: 'Completed Trainings',
+        title: clientName ? `${clientName} - Completed Trainings` : 'Completed Trainings',
+        sub_lines: [filters],
+        columns: [
+          { key: 'employee', label: 'Employee', weight: 1.55, bold: true },
+          ...(clientName ? [] : [{ key: 'client', label: 'Client', weight: 1.4 }]),
+          { key: 'training', label: 'Training', weight: 2.35 },
+          { key: 'status', label: 'Status', weight: 0.9 },
+          { key: 'completed', label: 'Completed', weight: 1.05 },
+          { key: 'expires', label: 'Expires', weight: 1.05 },
+        ],
+        rows: sortedRows.map((r) => ({
+          employee: r.full_name,
+          client: r.client_name,
+          training: `${r.training_id} - ${r.training_name}`,
+          status: r.status,
+          completed: formatDate(r.completion_date),
+          expires: r.expiration_date ? formatDate(r.expiration_date) : 'No expiration',
+        })),
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   const sortedRows = useMemo(() => {
     if (!rows) return rows;
     // Any word order, ignoring commas/accents (lib/search.js) - "john smith" finds "Smith, John".
@@ -108,7 +150,7 @@ export default function Reports() {
       <div className="page-header">
         <div>
           <h1>Reports</h1>
-          <p className="page-subtitle">Every training an employee has actually completed, across all clients. Filter down as needed and export to CSV.</p>
+          <p className="page-subtitle">Every training an employee has actually completed, across all clients. Filter down as needed and export to CSV or PDF.</p>
         </div>
         {sortedRows && sortedRows.length > 0 && (
           <div className="page-header-actions">
@@ -124,6 +166,7 @@ export default function Reports() {
             >
               Export CSV
             </button>
+            <button className="secondary" disabled={pdfBusy} onClick={exportPdf}>{pdfBusy ? 'Building PDF…' : 'Export PDF'}</button>
           </div>
         )}
       </div>

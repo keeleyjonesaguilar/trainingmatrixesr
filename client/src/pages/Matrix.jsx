@@ -10,6 +10,7 @@ import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { nameKey, nameParts } from '../lib/names.js';
 import { downloadCsv } from '../lib/csv.js';
+import { downloadReportPdf, compliancePdfRows, COMPLIANCE_PDF_COLUMNS } from '../lib/reportPdf.js';
 import { useSortableRows } from '../lib/useSortableRows';
 
 const MATRIX_BASE_SORT_ACCESSORS = {
@@ -135,6 +136,7 @@ export default function Matrix() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const clientId = searchParams.get('client_id') || '';
   const search = searchParams.get('search') || '';
@@ -213,6 +215,34 @@ export default function Matrix() {
 
   const setTrainingIds = (ids) => updateParam('trainings', ids.join(','));
 
+  // Same rows as Download Report, laid out one section per employee.
+  const exportPdf = async () => {
+    const clientName = clients.find((c) => c.client_id === clientId)?.client_name;
+    const trainingNames = trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid);
+    const filters = [
+      clientName ? `Client: ${clientName}` : 'All clients',
+      activeParam === '0' ? 'Inactive employees' : 'Active employees',
+      trainingNames.length && `Trainings: ${trainingNames.join(', ')}`,
+      status && `Status: ${status}`,
+      search && `Search: "${search}"`,
+    ].filter(Boolean).join('  ·  ');
+    setPdfBusy(true);
+    try {
+      await downloadReportPdf({
+        report_name: 'Employee Training Matrix',
+        title: clientName ? `${clientName} - Employee Training Report` : 'Employee Training Report',
+        sub_lines: [filters],
+        group_by: 'group',
+        columns: COMPLIANCE_PDF_COLUMNS,
+        rows: compliancePdfRows(buildComplianceReportRows(sortedEmployees, data.masterTrainings, { status, includeClient: !clientName })),
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -237,6 +267,9 @@ export default function Matrix() {
               }}
             >
               Download Report
+            </button>
+            <button className="secondary" disabled={!data || data.employees.length === 0 || pdfBusy} onClick={exportPdf}>
+              {pdfBusy ? 'Building PDF…' : 'Download PDF'}
             </button>
             <button onClick={() => setAddingOpen(true)}>+ Add Employee</button>
           </div>

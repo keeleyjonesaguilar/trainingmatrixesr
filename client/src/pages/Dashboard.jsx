@@ -5,6 +5,7 @@ import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { downloadCsv } from '../lib/csv.js';
+import { downloadReportPdf, compliancePdfRows, COMPLIANCE_PDF_COLUMNS } from '../lib/reportPdf.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { easternToday } from '../lib/dates.js';
@@ -111,6 +112,28 @@ function UpcomingTrainingsBox({ clientId }) {
   );
 }
 
+// Monthly Training Report (Keeley's request, 2026-10-27): every training this client's people
+// completed in one month, class by class, with who attended and whether their certificate is on
+// file - server/lib/monthlyClientReport.js. Starts on last month, the usual one to send.
+function MonthlyReportCard({ clientId }) {
+  const [month, setMonth] = useState(() => {
+    const [y, m] = easternToday().split('-').map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+  });
+  const href = (format) => `/api/reports/monthly-client.${format}?client_id=${encodeURIComponent(clientId)}&month=${month}`;
+  return (
+    <div className="card">
+      <h2>Monthly Training Report</h2>
+      <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Every training completed in the month, with the trainees in each class and whether their certificate is on file.</p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input type="month" value={month} max={easternToday().slice(0, 7)} onChange={(e) => setMonth(e.target.value)} />
+        <a className={`btn${month ? '' : ' disabled'}`} href={month ? href('pdf') : undefined} download>Download PDF</a>
+        <a className={`btn btn-secondary${month ? '' : ' disabled'}`} href={month ? href('csv') : undefined} download>Download CSV</a>
+      </div>
+    </div>
+  );
+}
+
 // Compact flags on the Dashboard, one box, two separate notifications (Keeley's request) -
 // the actual review/merge UI lives on the Employees and Clients pages; this is just a
 // heads-up with a link to each.
@@ -164,10 +187,37 @@ function ClientEmployeesSection({ clientId, clientName }) {
   const [trainingIds, setTrainingIds] = useState([]);
   const [activeParam, setActiveParam] = useState('1');
   const [status, setStatus] = useState('');
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   useEffect(() => {
     api.listMasterTrainings(true).then(setAllMasterTrainings).catch((e) => setError(e.message));
   }, []);
+
+  // Same rows as Download Report, laid out one section per employee.
+  const exportPdf = async () => {
+    const trainingNames = trainingIds.map((tid) => allMasterTrainings.find((mt) => mt.training_id === tid)?.training_name || tid);
+    const filters = [
+      activeParam === '0' ? 'Inactive employees' : 'Active employees',
+      trainingNames.length && `Trainings: ${trainingNames.join(', ')}`,
+      status && `Status: ${status}`,
+      search && `Search: "${search}"`,
+    ].filter(Boolean).join('  ·  ');
+    setPdfBusy(true);
+    try {
+      await downloadReportPdf({
+        report_name: `${clientName} Training Report`,
+        title: `${clientName} - Employee Training Report`,
+        sub_lines: [filters],
+        group_by: 'group',
+        columns: COMPLIANCE_PDF_COLUMNS,
+        rows: compliancePdfRows(buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })),
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   useEffect(() => {
     // Only the newest search's answer counts - an earlier, slower one can't overwrite it.
@@ -202,19 +252,24 @@ function ClientEmployeesSection({ clientId, clientName }) {
         </h2>
         {/* Exports the currently filtered/visible rows, flattened one row per (employee,
             training) cell rather than the wide on-screen grid (Keeley's request, 2026-09-18). */}
-        <button
-          className="secondary"
-          disabled={data.employees.length === 0}
-          onClick={() => {
-            downloadCsv(
-              `${clientName}-training-report${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
-              buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })
-            );
-            api.logReportDownload(`${clientName} Training Report`, status ? `Status: ${status}` : undefined).catch(() => {});
-          }}
-        >
-          Download Report
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="secondary"
+            disabled={data.employees.length === 0}
+            onClick={() => {
+              downloadCsv(
+                `${clientName}-training-report${status ? `_${status.toLowerCase().replace(/\s+/g, '-')}` : ''}.csv`,
+                buildComplianceReportRows(data.employees, data.masterTrainings, { status, includeClient: false })
+              );
+              api.logReportDownload(`${clientName} Training Report`, status ? `Status: ${status}` : undefined).catch(() => {});
+            }}
+          >
+            Download Report
+          </button>
+          <button className="secondary" disabled={data.employees.length === 0 || pdfBusy} onClick={exportPdf}>
+            {pdfBusy ? 'Building PDF…' : 'Download PDF'}
+          </button>
+        </div>
       </div>
 
       <div className="stat-grid">
@@ -391,6 +446,8 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        <MonthlyReportCard clientId={clientId} />
 
         <UpcomingTrainingsBox clientId={clientId} />
 
