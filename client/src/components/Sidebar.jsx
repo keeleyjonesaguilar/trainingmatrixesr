@@ -12,6 +12,9 @@ const NAV_ITEMS = [
   { to: '/trainers', label: 'Trainers' },
   { to: '/sessions', label: 'Training Sessions' },
   { to: '/training-types', label: 'Training Types' },
+  // Back in the menu (Keeley's request, 2026-10-28) - it had only been reachable from a client's
+  // "Generate Report" button, and now holds the Trainings by Class report too.
+  { to: '/reports', label: 'Reports' },
   // Import, user management and Requests are Super Admin only (Keeley's request, 2026-10-23 -
   // were admin-only since 2026-09-16, Requests open to everyone since 2026-10-12).
   { to: '/import', label: 'Import Data', superAdminOnly: true },
