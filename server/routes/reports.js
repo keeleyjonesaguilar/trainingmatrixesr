@@ -109,13 +109,15 @@ router.post('/table.pdf', async (req, res) => {
   finishReport(ctx, title);
 });
 
-// Monthly Training Report for one client (Keeley's request, 2026-10-27) - lib/monthlyClientReport.js.
+// Training Report for one client, for a month or any From/To range (Keeley's requests, 2026-10-27
+// and 10-28) - lib/monthlyClientReport.js.
 router.get('/monthly-client.:format(csv|pdf)', async (req, res) => {
-  const data = await monthly.monthlyReportData(req.query.client_id, req.query.month);
+  const { month, from, to } = req.query;
+  const data = await monthly.monthlyReportData(req.query.client_id, { month, from, to });
   if (data.error) return res.status(data.notFound ? 404 : 400).json({ error: data.error });
   logActivity({
-    actor: req.user, action: 'report_downloaded', entityType: 'report', entityLabel: `${data.client.client_name} Monthly Training Report`,
-    details: `${data.monthLabel} · ${req.params.format.toUpperCase()}`, req,
+    actor: req.user, action: 'report_downloaded', entityType: 'report', entityLabel: `${data.client.client_name} Training Report`,
+    details: `${data.periodLabel} · ${req.params.format.toUpperCase()}`, req,
   });
   sendAs(res, `${monthly.fileBase(data)}.${req.params.format}`, req.params.format === 'csv' ? 'text/csv; charset=utf-8' : 'application/pdf');
   if (req.params.format === 'csv') res.send(monthly.toCsv(data));

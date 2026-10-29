@@ -7,6 +7,7 @@ import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFi
 import { downloadCsv } from '../lib/csv.js';
 import { downloadReportPdf, compliancePdfRows, COMPLIANCE_PDF_COLUMNS } from '../lib/reportPdf.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
+import TrainingsByClassReport from '../components/TrainingsByClassReport.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { easternToday } from '../lib/dates.js';
 
@@ -108,28 +109,6 @@ function UpcomingTrainingsBox({ clientId }) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-// Monthly Training Report (Keeley's request, 2026-10-27): every training this client's people
-// completed in one month, class by class, with who attended and whether their certificate is on
-// file - server/lib/monthlyClientReport.js. Starts on last month, the usual one to send.
-function MonthlyReportCard({ clientId }) {
-  const [month, setMonth] = useState(() => {
-    const [y, m] = easternToday().split('-').map(Number);
-    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
-  });
-  const href = (format) => `/api/reports/monthly-client.${format}?client_id=${encodeURIComponent(clientId)}&month=${month}`;
-  return (
-    <div className="card">
-      <h2>Monthly Training Report</h2>
-      <p className="page-subtitle" style={{ margin: '0 0 12px' }}>Every training completed in the month, with the trainees in each class and whether their certificate is on file.</p>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input type="month" value={month} max={easternToday().slice(0, 7)} onChange={(e) => setMonth(e.target.value)} />
-        <a className={`btn${month ? '' : ' disabled'}`} href={month ? href('pdf') : undefined} download>Download PDF</a>
-        <a className={`btn btn-secondary${month ? '' : ' disabled'}`} href={month ? href('csv') : undefined} download>Download CSV</a>
-      </div>
     </div>
   );
 }
@@ -447,7 +426,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <MonthlyReportCard clientId={clientId} />
+        <TrainingsByClassReport clientId={clientId} clientName={data.client.client_name} />
 
         <UpcomingTrainingsBox clientId={clientId} />
 

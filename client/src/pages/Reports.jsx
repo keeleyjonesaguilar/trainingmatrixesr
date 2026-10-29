@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import TrainingsByClassReport from '../components/TrainingsByClassReport.jsx';
 import { matchesSearch } from '../lib/search.js';
 import { downloadCsv } from '../lib/csv';
 import { downloadReportPdf } from '../lib/reportPdf';
@@ -171,6 +172,9 @@ export default function Reports() {
         )}
       </div>
       {error && <div className="error-banner">{error}</div>}
+
+      {/* Follows the Client filter below (blank = all clients). */}
+      <TrainingsByClassReport clientId={clientId} clientName={clients.find((c) => c.client_id === clientId)?.client_name || ''} />
 
       <div className="filter-bar">
         <div className="field-row">
