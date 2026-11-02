@@ -53,6 +53,16 @@ export function sequentialDates(startDate, count) {
   });
 }
 
+// Moves every per-day date by however far the session's main date moved from `fromDate` to
+// `toDate` (Keeley's report, 2026-11-02 - the main date and Day 1 drifted apart), keeping any
+// gaps between days. Leaves the list alone if either date is blank.
+export function shiftDates(dates, fromDate, toDate) {
+  if (!fromDate || !toDate) return dates;
+  const utc = (s) => Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  const diff = utc(toDate) - utc(fromDate);
+  return dates.map((d) => (d ? new Date(utc(d) + diff).toISOString().slice(0, 10) : d));
+}
+
 // Plain "YYYY-MM-DD" -> "Sep 22" - for a multi-day session's per-day labels, which are wall-clock
 // dates with no time/timezone component (unlike the UTC timestamps formatEasternDate* above
 // handle), so this deliberately does its own parsing instead of going through `new Date(iso)`.

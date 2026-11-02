@@ -7,7 +7,7 @@ import LoadingState from '../components/LoadingState.jsx';
 import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
-import { easternToday, sequentialDates } from '../lib/dates';
+import { easternToday, sequentialDates, shiftDates } from '../lib/dates';
 import { totalDuration } from '../lib/durations';
 import { courseDays, resizeDays, joinDayOutlines } from '../lib/courseDays';
 
@@ -592,7 +592,11 @@ export default function Sessions() {
                   <input
                     type="date"
                     value={form.session_date}
-                    onChange={(e) => setForm({ ...form, session_date: e.target.value })}
+                    onChange={(e) => {
+                      // A multi-day session's days move with its date, so Day 1 stays the date.
+                      setDayDates((prev) => shiftDates(prev, form.session_date, e.target.value));
+                      setForm({ ...form, session_date: e.target.value });
+                    }}
                     required
                   />
                 </div>
@@ -759,7 +763,11 @@ export default function Sessions() {
                                   <input
                                     type="date"
                                     value={d}
-                                    onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      setDayDates((prev) => prev.map((x, xi) => (xi === i ? next : x)));
+                                      if (i === 0 && next) setForm((f) => ({ ...f, session_date: next }));
+                                    }}
                                     required
                                   />
                                 </label>

@@ -137,6 +137,14 @@ function validateDayDates(dayDates, totalDays) {
   return { dayDatesJson: JSON.stringify(dayDates), error: null };
 }
 
+// A multi-day session's main date is its Day 1 (Keeley's report, 2026-11-02: a 5-day NHO created
+// on 10/30 with Days 1-5 set to 11/2-11/6 kept 10/30 as its date, which is also the completion
+// date its records get on close). Falls back to the typed date for single-day sessions.
+function sessionDateFromDayOne(sessionDate, dayDatesJson, totalDays) {
+  if (!totalDays || !dayDatesJson) return sessionDate;
+  return JSON.parse(dayDatesJson)[0] || sessionDate;
+}
+
 // Per-day outline text (server/migrations/057_multiday_session_outlines.sql, Keeley's request,
 // 2026-09-22) - "Day 1 has its own outline, day 2 and so on," shown to attendees instead of one
 // blanket outline for the whole course. Same length-vs-total_days rule as day_dates, but no
@@ -445,7 +453,7 @@ router.post('/', async (req, res) => {
       trainer_name,
       trainer_phone ? trainer_phone.trim() : null,
       trainerEmployeeId,
-      session_date,
+      sessionDateFromDayOne(session_date, dayDatesJson, totalDays),
       effective.outline,
       location,
       effective.duration,
@@ -620,7 +628,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       merged.trainer_name,
       merged.trainer_phone ? merged.trainer_phone.trim() : null,
       trainerEmployeeId,
-      merged.session_date,
+      sessionDateFromDayOne(merged.session_date, dayDatesJson, totalDays),
       merged.outline,
       merged.location,
       merged.duration,

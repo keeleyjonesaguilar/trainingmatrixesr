@@ -378,6 +378,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const [separateCheckins, setSeparateCheckins] = useState(Boolean(session.multi_training_day));
   const canSwitchCheckins = hasExtras && !isToolbox && session.status === 'open' && (session.attendees || []).length === 0;
   const isMultiTraining = separateCheckins;
+  // A multi-day session's date is its Day 1 (Keeley's report, 2026-11-02); the server saves it so.
+  const daysSetDate = Boolean(!isMultiTraining && form.total_days && dayDates[0]);
   // Each training's own duration - always on a Multi Training Day; on a one-sign-in session only
   // when it was created with them (older ones have a single duration for the whole day).
   const showTrainingDurations = isMultiTraining || (session.additional_trainings || []).some((t) => t.duration);
@@ -516,7 +518,15 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
         </div>
         <div className="field">
           <label>Date</label>
-          <input type="date" value={form.session_date} onChange={(e) => setForm({ ...form, session_date: e.target.value })} required />
+          {/* A multi-day session's date is its Day 1 - change Day 1 below to move it. */}
+          {daysSetDate ? (
+            <>
+              <input type="date" value={dayDates[0]} disabled />
+              <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Same as Day 1 - change Day 1 below to move it.</span>
+            </>
+          ) : (
+            <input type="date" value={form.session_date} onChange={(e) => setForm({ ...form, session_date: e.target.value })} required />
+          )}
         </div>
         {(!form.total_days || isMultiTraining) && (
           <div className="field">
@@ -625,7 +635,11 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                 <input
                   type="date"
                   value={d}
-                  onChange={(e) => setDayDates((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDayDates((prev) => prev.map((x, xi) => (xi === i ? next : x)));
+                    if (i === 0 && next) setForm((f) => ({ ...f, session_date: next }));
+                  }}
                   style={{ maxWidth: 150 }}
                   required
                 />
