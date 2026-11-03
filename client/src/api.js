@@ -173,6 +173,14 @@ export const api = {
       return body;
     });
   },
+  // -> { attendee_id, name_as_written, quarter_turns }; throws with .notSetUp when there's no API key.
+  readCardName: (sessionId, image) => fetch(`${BASE}/training-sessions/${sessionId}/read-card-name`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ image }),
+  }).then(async (res) => {
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(body.error || `Reading the card failed (${res.status})`), { notSetUp: Boolean(body.not_set_up) });
+    return body;
+  }),
 
   // Matrix
   getMatrix: (params = {}) => request(`/matrix?${new URLSearchParams(params).toString()}`),

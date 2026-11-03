@@ -11,6 +11,7 @@ const { processAttendee, removeAttendee } = require('../lib/sessionRecords');
 const { ensureEditToken, sessionEditUrl, regenerateRosters } = require('../lib/sessionCloseOut');
 const { saveDayTrainers, getSessionDays, clearDaySignoff, getCoTrainers, saveCoTrainers } = require('../lib/sessionDays');
 const { translateToSpanish } = require('../lib/translate');
+const { readNameOnCard, NotSetUpError: CardReaderNotSetUp } = require('../lib/cardNameReader');
 const { buildCertificateFilename, buildRosterFilename, buildQrFilename } = require('../lib/certificateFilename');
 const { listCertificateFiles, certificateZipName, createCertificateZip } = require('../lib/certificateZip');
 const { logActivity } = require('../lib/activityLog');
@@ -1355,6 +1356,29 @@ router.post('/:id/attendee-documents', requireAdmin, async (req, res) => {
     });
     res.status(201).json({ saved: saved.length, details: saved });
   });
+});
+
+// Whose name is on one scanned page in the "Upload Attendee Documents" window (Keeley's request,
+// 2026-11-03) - for handwritten checklists that carry no text to match. The window sends the page
+// as an image; nothing is saved here. 503 + not_set_up when there's no Claude API key, so the
+// window stops asking for the rest of the pages.
+router.post('/:id/read-card-name', requireAdmin, async (req, res) => {
+  const session = await dbGet('SELECT session_id FROM training_sessions WHERE session_id = ?', [req.params.id]);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const match = /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(String(req.body?.image || ''));
+  if (!match) return res.status(400).json({ error: 'Send the page as a JPG or PNG image.' });
+  const attendees = await dbAll(
+    'SELECT attendee_id, trainee_name FROM session_attendees WHERE session_id = ? AND employee_id IS NOT NULL ORDER BY trainee_name',
+    [session.session_id]
+  );
+  if (!attendees.length) return res.json({ attendee_id: null, name_as_written: '', quarter_turns: 0 });
+  try {
+    res.json(await readNameOnCard({ mediaType: match[1], data: match[2] }, attendees));
+  } catch (e) {
+    if (e instanceof CardReaderNotSetUp) return res.status(503).json({ error: e.message, not_set_up: true });
+    console.error('read-card-name failed:', e.message);
+    res.status(502).json({ error: 'Could not read the name on that card.' });
+  }
 });
 
 // Rebuild a closed session's roster PDFs from what's on file now (Keeley's request, 2026-09-29:

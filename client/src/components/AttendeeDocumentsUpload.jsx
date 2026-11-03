@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal.jsx';
 import { api } from '../api';
-import { splitPdfIntoCards } from '../lib/pdfPages.js';
-import { personNamedIn, readCard } from '../lib/cardReader.js';
+import { rotateCard, rotatePreview, splitPdfIntoCards } from '../lib/pdfPages.js';
+import { pageImageForReading, personNamedIn, readCard } from '../lib/cardReader.js';
 import {
   dismissScan, scanFolderSupported, startWatching, stopWatching, subscribeToScans,
 } from '../lib/scanFolderWatcher.js';
@@ -13,6 +13,9 @@ import {
 // under that person's Documents - server/routes/trainingSessions.js POST /:id/attendee-documents.
 // Since 2026-10-12 a PDF with the whole class's cards in it (scanned or chosen) is split into one
 // card per page - or per two pages, front and back - each with a preview to sort to its person.
+// Since 2026-11-03 a sideways card can be turned (one card, or all of them) before it's uploaded,
+// and a card with no name to match in its text (a photo of a handwritten checklist) is sent to the
+// server, where Claude reads whose name is on it and which way up it is - server/lib/cardNameReader.js.
 
 const words = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .split(/[^a-z0-9]+/).filter(Boolean);
@@ -49,7 +52,8 @@ function CardPreview({ item }) {
   return (
     <a href={item.url} target="_blank" rel="noreferrer" title="Open full size" style={{ display: 'block', width: 240 }}>
       {item.preview
-        ? <img src={item.preview} alt={item.file.name} style={{ ...previewBox, objectFit: 'contain', background: '#fff' }} />
+        // A full-page checklist shows taller than a wallet card, so its handwritten name can be read.
+        ? <img src={item.preview} alt={item.file.name} style={{ ...previewBox, height: 'auto', maxHeight: 340, objectFit: 'contain', background: '#fff' }} />
         : (
           <div style={{ ...previewBox, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>
             {item.preview === undefined ? 'Loading preview…' : 'No preview - click to open'}
@@ -73,6 +77,11 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
   const pagesPerCardRef = useRef(pagesPerCard);
   pagesPerCardRef.current = pagesPerCard;
   const takenScans = useRef(new Set());
+  // Cards waiting for their handwritten name to be read; three are read at a time.
+  const nameQueue = useRef([]);
+  const nameReaders = useRef(0);
+  const nameReadingSetUp = useRef(true);
+  const [nameNote, setNameNote] = useState('');
   const cardLabel = `${session.training_type_label} Card`;
 
   const addFiles = async (fileList, { fromScanner = false } = {}) => {
@@ -111,6 +120,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
           const autoPick = !x.attendee_id && named;
           return { ...x, preview: card.preview, attendee_id: autoPick ? named.attendee_id : x.attendee_id, readFromCard: Boolean(autoPick) };
         }));
+        if (!it.attendee_id && !named && card.preview) readNameLater(it.key);
       }
     } catch (e) {
       setError(`Couldn't read that file: ${e.message}`);
@@ -141,6 +151,66 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
     if (it) URL.revokeObjectURL(it.url);
     return prev.filter((x) => x.key !== key);
   });
+  // A quarter turn clockwise per click. The card's file itself is turned, so it's filed upright.
+  const rotate = async (key, quarters = 1, { byHand = true } = {}) => {
+    const it = itemsRef.current.find((x) => x.key === key);
+    if (!it || it.rotating || it.preview === undefined) return;
+    update(key, { rotating: true, ...(byHand ? { turnedByHand: true } : {}) });
+    try {
+      const file = await rotateCard(it.file, quarters);
+      const preview = it.preview ? await rotatePreview(it.preview, quarters) : it.preview;
+      URL.revokeObjectURL(it.url);
+      update(key, { file, preview, url: URL.createObjectURL(file), rotating: false });
+    } catch (e) {
+      update(key, { rotating: false });
+      setError(`Couldn't turn that card: ${e.message}`);
+    }
+  };
+  const rotateAll = () => Promise.all(itemsRef.current.map((it) => rotate(it.key)));
+
+  // Has Claude read whose name is on the card (server/lib/cardNameReader.js) - picks that attendee
+  // unless you already have, and turns the card upright unless you've turned it yourself.
+  const readName = async (key) => {
+    const it = itemsRef.current.find((x) => x.key === key);
+    if (!it || it.attendee_id || !nameReadingSetUp.current) return;
+    update(key, { nameReading: true });
+    try {
+      const image = await pageImageForReading(it.file);
+      const result = await api.readCardName(session.session_id, image);
+      const now = itemsRef.current.find((x) => x.key === key);
+      if (!now) return;
+      const autoPick = !now.attendee_id && result.attendee_id;
+      update(key, {
+        nameReading: false,
+        nameOnCard: result.name_as_written,
+        ...(autoPick ? { attendee_id: result.attendee_id, readFromCard: true } : {}),
+      });
+      if (result.quarter_turns && !now.turnedByHand) await rotate(key, result.quarter_turns, { byHand: false });
+    } catch (e) {
+      update(key, { nameReading: false, nameFailed: !e.notSetUp });
+      if (e.notSetUp) {
+        nameReadingSetUp.current = false;
+        nameQueue.current = [];
+        setNameNote('Reading handwritten names isn’t switched on yet - pick who each card belongs to.');
+      }
+    }
+  };
+  const pumpNames = () => {
+    while (nameReaders.current < 3 && nameQueue.current.length) {
+      nameReaders.current += 1;
+      readName(nameQueue.current.shift()).finally(() => {
+        nameReaders.current -= 1;
+        pumpNames();
+      });
+    }
+  };
+  function readNameLater(key) {
+    if (!nameReadingSetUp.current) return;
+    nameQueue.current.push(key);
+    pumpNames();
+  }
+  const rotating = items.some((it) => it.rotating);
+  const stillReading = items.some((it) => it.preview === undefined);
   const toUpload = items.filter((it) => it.attendee_id);
   const assignedIds = new Set(toUpload.map((it) => it.attendee_id));
 
@@ -174,11 +244,12 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
           <>
             <p className="page-subtitle" style={{ marginTop: 0 }}>
               Choose files (PDF, JPG or PNG) or scan the cards. A PDF with several cards in it is split into one card per page.
-              A name in the file name, or printed on a searchable scan, is matched for you - check or pick who each card belongs to, then upload.
+              The name in the file name or on the card - typed or handwritten - is matched for you. Check or pick who each card belongs to, then upload.
               They&apos;re filed under each person&apos;s Documents{session.master_training_id ? `, linked to ${session.training_type_label}` : ''}.
             </p>
             {error && <div className="error-banner">{error}</div>}
             {scans.error && <div className="error-banner">{scans.error}</div>}
+            {nameNote && <p className="page-subtitle" style={{ margin: '0 0 8px' }}>{nameNote}</p>}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
               <label className="file-picker-button">
                 Choose Files
@@ -191,6 +262,9 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                 <option value={1}>1 page per card (front only)</option>
                 <option value={2}>2 pages per card (front + back)</option>
               </select>
+              {items.length > 1 && (
+                <button type="button" className="secondary" disabled={rotating || stillReading} onClick={rotateAll} title="Turn every card a quarter turn clockwise">↻ Rotate all</button>
+              )}
               {reading && <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>Reading file…</span>}
             </div>
             {scans.watching && (
@@ -207,6 +281,9 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                       <tr key={it.key}>
                         <td>
                           <CardPreview item={it} />
+                          <button type="button" className="link-button" disabled={it.rotating || it.preview === undefined} onClick={() => rotate(it.key)} title="Turn a quarter turn clockwise">
+                            {it.rotating ? 'Turning…' : '↻ Rotate'}
+                          </button>
                           <div style={{ fontSize: 11, color: 'var(--color-text-muted)', maxWidth: 240, overflowWrap: 'anywhere' }}>{it.file.name}</div>
                         </td>
                         <td>
@@ -218,7 +295,16 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                               </option>
                             ))}
                           </select>
-                          {it.readFromCard && <div style={{ fontSize: 11, color: 'var(--status-current-text)', marginTop: 4 }}>Name read from the card - check it</div>}
+                          {it.nameReading && <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>Reading the name…</div>}
+                          {it.readFromCard && (
+                            <div style={{ fontSize: 11, color: 'var(--status-current-text)', marginTop: 4 }}>
+                              {it.nameOnCard ? `Card says “${it.nameOnCard}” - check it` : 'Name read from the card - check it'}
+                            </div>
+                          )}
+                          {!it.readFromCard && !it.attendee_id && it.nameOnCard && (
+                            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>Card says “{it.nameOnCard}” - no attendee by that name</div>
+                          )}
+                          {it.nameFailed && !it.attendee_id && <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>Couldn&apos;t read the name - pick who it is</div>}
                         </td>
                         <td><input value={it.label} onChange={(e) => update(it.key, { label: e.target.value })} /></td>
                         <td><button type="button" className="link-button" onClick={() => remove(it.key)}>Remove</button></td>
@@ -236,7 +322,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
               </p>
             )}
             <div style={{ marginTop: 12 }}>
-              <button type="button" disabled={busy || reading || !toUpload.length} onClick={upload}>
+              <button type="button" disabled={busy || reading || rotating || !toUpload.length} onClick={upload}>
                 {busy ? 'Uploading…' : `Upload ${toUpload.length || ''} Document${toUpload.length === 1 ? '' : 's'}`}
               </button>{' '}
               <button type="button" className="secondary" disabled={busy} onClick={onClose}>Cancel</button>

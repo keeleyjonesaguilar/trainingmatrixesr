@@ -49,6 +49,40 @@ export async function readCard(file) {
   }
 }
 
+// The card's first page as a JPEG data URL big enough to read handwriting from (1568px on its long
+// side - what Claude reads images at), for the server to look for whose name is on it.
+export async function pageImageForReading(file) {
+  const longSide = 1568;
+  if (!/\.pdf$/i.test(file.name)) {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not read the image'));
+      fileToDataUrl(file).then((url) => { el.src = url; }, reject);
+    });
+    const scale = Math.min(1, longSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  }
+  const pdfjs = await loadPdfjs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+  try {
+    const page = await doc.getPage(1);
+    const natural = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: longSide / Math.max(natural.width, natural.height) });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport, intent: 'print' }).promise;
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } finally {
+    doc.destroy();
+  }
+}
+
 export const nameWords = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .split(/[^a-z0-9]+/).filter(Boolean);
 
