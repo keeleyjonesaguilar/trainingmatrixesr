@@ -1,50 +1,84 @@
 import { NavLink } from 'react-router-dom';
 import esrLogo from '../assets/brand/esr-logo-full.png';
+import Icon from './Icon.jsx';
 
-const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', end: true },
-  // Its own top-level nav item (Keeley's request, 2026-09-16) - used to only be reachable via an
-  // "Open Employees" button buried on a client's Compliance Overview page. This is also the
-  // plain 'user' role's main destination: finding employees for job placements by filtering the
-  // matrix by trainings completed.
-  { to: '/matrix', label: 'Employees' },
-  { to: '/clients', label: 'Clients' },
-  { to: '/trainers', label: 'Trainers' },
-  { to: '/sessions', label: 'Training Sessions' },
-  { to: '/training-types', label: 'Training Types' },
-  // Back in the menu (Keeley's request, 2026-10-28) - it had only been reachable from a client's
-  // "Generate Report" button, and now holds the Trainings by Class report too.
-  { to: '/reports', label: 'Reports' },
-  // Import, user management and Requests are Super Admin only (Keeley's request, 2026-10-23 -
-  // were admin-only since 2026-09-16, Requests open to everyone since 2026-10-12).
-  { to: '/import', label: 'Import Data', superAdminOnly: true },
-  { to: '/admin/users', label: 'Manage Users', superAdminOnly: true },
-  { to: '/requests', label: 'Requests', superAdminOnly: true },
-  { to: '/account', label: 'My Account' },
-  // Super Admin only - login/IP audit trail. Hidden rather than shown-disabled for everyone
-  // else, same as this app hides other things a given role can't reach.
-  { to: '/security', label: 'Security', superAdminOnly: true },
+// Grouped with an icon on each item (Keeley, 2026-11-03: the menu "feels dense" - nicer and more
+// modern). The everyday pages sit up top with no heading; the setup lists and the Super Admin
+// pages each get a small heading. My Account moved into the name menu in the top bar.
+const NAV_GROUPS = [
+  {
+    items: [
+      { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+      // Its own top-level nav item (Keeley's request, 2026-09-16) - this is also the plain 'user'
+      // role's main destination: finding employees for job placements by filtering the matrix by
+      // trainings completed.
+      { to: '/matrix', label: 'Employees', icon: 'employees' },
+      { to: '/sessions', label: 'Training Sessions', icon: 'sessions' },
+      // Back in the menu (Keeley's request, 2026-10-28) - it had only been reachable from a
+      // client's "Generate Report" button, and now holds the Trainings by Class report too.
+      { to: '/reports', label: 'Reports', icon: 'reports' },
+    ],
+  },
+  {
+    title: 'Setup',
+    items: [
+      { to: '/clients', label: 'Clients', icon: 'clients' },
+      { to: '/trainers', label: 'Trainers', icon: 'trainers' },
+      { to: '/training-types', label: 'Training Types', icon: 'trainingTypes' },
+    ],
+  },
+  // Import, user management, Requests and Security are Super Admin only (Keeley's request,
+  // 2026-10-23) - hidden rather than shown-disabled for everyone else.
+  {
+    title: 'Admin',
+    superAdminOnly: true,
+    items: [
+      { to: '/import', label: 'Import Data', icon: 'import' },
+      { to: '/admin/users', label: 'Manage Users', icon: 'users' },
+      { to: '/requests', label: 'Requests', icon: 'requests' },
+      { to: '/security', label: 'Security', icon: 'security' },
+    ],
+  },
 ];
 
-// Username/role/log-out live in TopBar.jsx now (Keeley's request, 2026-09-17), alongside the
-// notification bell - the sidebar is nav-only.
-export default function Sidebar({ role, isTrainer = false }) {
-  const visibleItems = NAV_ITEMS.filter((item) => !item.superAdminOnly || role === 'super_admin');
+// On a phone the sidebar is a drawer that slides in from the left (`open`), closed by the X, the
+// dimmed backdrop, or picking a page.
+export default function Sidebar({ role, isTrainer = false, open = false, onClose }) {
+  const groups = NAV_GROUPS.filter((g) => !g.superAdminOnly || role === 'super_admin');
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">
-        <img src={esrLogo} alt="Evolution Safety Resources" className="sidebar-brand-mark" />
-        <span className="sidebar-brand-name">Safety Training Matrix</span>
-      </div>
-      <nav className="sidebar-nav">
-        {visibleItems.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end}>{item.label}</NavLink>
-        ))}
+    <>
+      {open && <div className="sidebar-backdrop" onClick={onClose} aria-hidden="true" />}
+      <aside className={`sidebar${open ? ' open' : ''}`}>
+        <div className="sidebar-brand">
+          <img src={esrLogo} alt="Evolution Safety Resources" className="sidebar-brand-mark" />
+          <span className="sidebar-brand-name">Safety Training Matrix</span>
+          <button type="button" className="sidebar-close" onClick={onClose} aria-label="Close menu">
+            <Icon name="close" />
+          </button>
+        </div>
+        <nav className="sidebar-nav">
+          {groups.map((group) => (
+            <div key={group.title || 'main'} className="sidebar-group">
+              {group.title && <div className="sidebar-group-title">{group.title}</div>}
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to} end={item.end}>
+                  <Icon name={item.icon} />
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
         {/* Trainers only (Keeley's request, 2026-10-06) - the office account's email is on an
             employee profile with "This person is a trainer" ticked. Opens the ESR Training Portal
             (its own sign-in) in a new tab. */}
-        {isTrainer && <a href="/portal" target="_blank" rel="noopener noreferrer">Trainer Portal ↗</a>}
-      </nav>
-    </aside>
+        {isTrainer && (
+          <a className="sidebar-portal-link" href="/portal" target="_blank" rel="noopener noreferrer">
+            <Icon name="external" />
+            <span>Trainer Portal</span>
+          </a>
+        )}
+      </aside>
+    </>
   );
 }

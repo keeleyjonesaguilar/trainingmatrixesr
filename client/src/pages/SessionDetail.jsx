@@ -471,7 +471,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
     <div className="card" style={{ marginTop: 12 }}>
       <h3 style={{ marginTop: 0, fontSize: 14 }}>Edit Session Details</h3>
       {error && <p className="error-banner">{error}</p>}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div className="form-grid-2">
         <div className="field">
           <label>Client</label>
           <select value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} required>
@@ -797,7 +797,7 @@ function AddAttendeeForm({ sessionId, isClosed, onAdded, onCancel }) {
       )}
       {error && <p className="error-banner">{error}</p>}
       <form onSubmit={save}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="form-grid-2">
           <div className="field">
             <label>First Name</label>
             <input value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
@@ -1185,40 +1185,41 @@ Their certificate and the training record it added to their employee file will b
         )}
       </p>
 
+      {/* Close-out steps (Keeley, 2026-11-03) - each shows when and by whom it was done. Saved to
+          Server was dropped; emailing certificates ticks these on its own. */}
       {isAdmin && (
-        <div style={{ display: 'flex', gap: 16, marginBottom: 16, fontSize: 13 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={!!session.sent_to_client}
-              disabled={savingFulfillment === 'sent_to_client'}
-              onChange={(e) => toggleFulfillment('sent_to_client', e.target.checked)}
-            />
-            Sent to Client
-          </label>
-          {session.certificates_emailed_to_client_at && (
-            <span style={{ color: 'var(--color-text-muted)', alignSelf: 'center' }}>
-              Certificates emailed to {session.certificates_emailed_to_client} {formatEasternDateTime(session.certificates_emailed_to_client_at)}
-            </span>
-          )}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={!!session.sent_to_trainees}
-              disabled={savingFulfillment === 'sent_to_trainees'}
-              onChange={(e) => toggleFulfillment('sent_to_trainees', e.target.checked)}
-            />
-            Sent to Trainees
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={!!session.saved_to_server}
-              disabled={savingFulfillment === 'saved_to_server'}
-              onChange={(e) => toggleFulfillment('saved_to_server', e.target.checked)}
-            />
-            Saved to Server
-          </label>
+        <div className="closeout-steps">
+          <div className="closeout-steps-title">Close-out</div>
+          {[
+            {
+              field: 'sent_to_client',
+              label: 'Sent to client',
+              extra: session.certificates_emailed_to_client_at && `Certificates emailed to ${session.certificates_emailed_to_client}`,
+            },
+            { field: 'sent_to_trainees', label: 'Sent to trainees' },
+          ].map((step, i) => {
+            const done = !!session[step.field];
+            const at = session[`${step.field}_at`];
+            const by = session[`${step.field}_by`];
+            return (
+              <label key={step.field} className={`closeout-step${done ? ' done' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={done}
+                  disabled={savingFulfillment === step.field}
+                  onChange={(e) => toggleFulfillment(step.field, e.target.checked)}
+                />
+                <span className="closeout-step-mark" aria-hidden="true">{done ? '✓' : i + 1}</span>
+                <span className="closeout-step-text">
+                  <span className="closeout-step-label">{step.label}</span>
+                  <span className="closeout-step-sub">
+                    {done ? [at && formatEasternDateTime(at), by && `by ${by}`].filter(Boolean).join(' ') || 'Done' : 'Not yet'}
+                  </span>
+                  {done && step.extra && <span className="closeout-step-sub">{step.extra}</span>}
+                </span>
+              </label>
+            );
+          })}
         </div>
       )}
 
@@ -1423,7 +1424,7 @@ Their certificate and the training record it added to their employee file will b
         />
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20 }}>
+      <div className="session-qr-layout">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <div className="card" style={{ textAlign: 'center' }}>
             <h3 style={{ marginTop: 0, fontSize: 14 }}>Sign-In QR Code</h3>

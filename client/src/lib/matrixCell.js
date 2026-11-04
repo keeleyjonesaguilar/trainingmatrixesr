@@ -41,8 +41,10 @@ export function formatCell(cell) {
       const d = daysBetween(cell.expiration_date);
       return { text: `${formatDate(cell.completion_date)} (expired ${d !== null ? `${Math.abs(d)}d ago` : ''})`, className: 'badge-expired' };
     }
+    // A faint dot instead of a grey "N/A" chip (Keeley, 2026-11-04) - most cells on a row are N/A,
+    // and the chips drowned out the real dates. Renderers draw `dot` cells with <MatrixNaDot>.
     case 'Not Applicable':
-      return { text: 'N/A', className: 'badge-notapplicable' };
+      return { text: 'N/A', dot: true };
     case 'Pending Review':
       return { text: 'Pending Review', className: 'badge-pendingreview' };
     case 'Ignored':

@@ -4,6 +4,7 @@ import { api } from '../api';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import { useIsAdmin } from '../authContext.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
+import MatrixCellContent from '../components/MatrixCellContent.jsx';
 import { downloadCsv } from '../lib/csv.js';
 import { downloadReportPdf, compliancePdfRows, COMPLIANCE_PDF_COLUMNS } from '../lib/reportPdf.js';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
@@ -327,7 +328,7 @@ function ClientEmployeesSection({ clientId, clientName }) {
                     const formatted = formatCell(cell);
                     return (
                       <td key={mt.training_id}>
-                        {formatted.plain ? formatted.text : <span className={`badge ${formatted.className}`}>{formatted.text}</span>}
+                        <MatrixCellContent formatted={formatted} />
                       </td>
                     );
                   })}

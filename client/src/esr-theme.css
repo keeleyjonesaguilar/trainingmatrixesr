@@ -60,21 +60,163 @@ a { color: var(--esr-green); }
   color: var(--esr-gold-ink);
   white-space: normal;
 }
-.sidebar-nav { padding: 0 10px; }
-.sidebar-nav a {
-  color: rgb(255 255 255 / 88%);
+/* Grouped menu with icons (Keeley, 2026-11-03: "feels dense" - nicer and more modern). Normal-case
+   text instead of bold capitals, more room per item, a soft highlight with a gold tick on the
+   current page, and the menu stays put while the page scrolls. */
+.sidebar { width: 236px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar-close { display: none; }
+.sidebar-nav { padding: 4px 12px 0; gap: 0; }
+.sidebar-group + .sidebar-group { margin-top: 18px; }
+.sidebar-group-title {
+  padding: 0 12px 6px;
   font-family: var(--font-head);
-  font-size: 13px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  border-radius: 2px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 55%);
 }
-.sidebar-nav a:hover { background: rgb(255 255 255 / 12%); color: #fff; }
-.sidebar-nav a.active { background: var(--esr-green-dark); color: #fff; box-shadow: inset 3px 0 0 var(--esr-gold); }
+.sidebar-nav a, .sidebar-portal-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  color: rgb(255 255 255 / 82%);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-decoration: none;
+  transition: background-color 0.15s, color 0.15s;
+}
+.sidebar-nav a .icon, .sidebar-portal-link .icon { flex-shrink: 0; opacity: 0.85; }
+.sidebar-nav a:hover, .sidebar-portal-link:hover { background: rgb(255 255 255 / 10%); color: #fff; text-decoration: none; }
+.sidebar-nav a.active { background: rgb(255 255 255 / 16%); color: #fff; font-weight: 600; box-shadow: none; }
+.sidebar-nav a.active .icon { opacity: 1; }
+.sidebar-nav a.active::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--esr-gold);
+}
+.sidebar-portal-link { margin: 16px 12px 0; border-top: 1px solid rgb(255 255 255 / 14%); border-radius: 0; padding-top: 14px; }
+.sidebar-portal-link:hover { border-radius: 0; }
 
 /* ---- Top bar ---- */
 .topbar { border-bottom: 3px solid var(--esr-gold); height: var(--header-height); box-sizing: border-box; padding-top: 0; padding-bottom: 0; }
-.topbar-user-name { font-family: var(--font-head); }
+.topbar-menu-button, .topbar-brand { display: none; }
+.topbar-user { position: relative; }
+.topbar-user-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.topbar-user-button:hover, .topbar-user-button[aria-expanded="true"] { background: var(--color-bg); border-color: var(--color-border); }
+.topbar-user-avatar { width: 34px; height: 34px; font-family: var(--font-head); font-size: 14px; }
+.topbar-user-info { display: flex; flex-direction: column; line-height: 1.25; }
+.topbar-user-name { font-family: var(--font-head); font-size: 13px; color: var(--color-text); }
+.topbar-user-role { font-size: 11.5px; color: var(--color-text-muted); text-transform: capitalize; }
+.topbar-user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 12%);
+  z-index: 120;
+}
+.topbar-user-menu a, .topbar-user-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+.topbar-user-menu a:hover, .topbar-user-menu button:hover { background: var(--esr-tint); text-decoration: none; }
+
+/* ---- Close-out steps on a session page (2026-11-03) ---- */
+.closeout-steps { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin: 0 0 18px; }
+.closeout-steps-title {
+  align-self: center;
+  margin-right: 4px;
+  font-family: var(--font-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.closeout-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 200px;
+  padding: 10px 14px 10px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.closeout-step:hover { border-color: var(--esr-green); }
+.closeout-step input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.closeout-step:has(input:focus-visible) { outline: 3px solid var(--esr-gold); outline-offset: 2px; }
+.closeout-step-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+.closeout-step-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.closeout-step-label { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.closeout-step-sub { font-size: 12px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.closeout-step.done { background: var(--esr-tint); border-color: rgb(2 103 84 / 35%); }
+.closeout-step.done .closeout-step-mark { background: var(--esr-green); border-color: var(--esr-green); color: #fff; }
+
+/* Two-up form rows and the session page's QR column (were inline grids) - one column on a phone. */
+/* N/A on the employee grids (2026-11-04): a faint dot, so the dates are what stands out. */
+.matrix-na-dot { display: inline-block; width: 5px; height: 5px; margin-left: 10px; border-radius: 50%; background: #c9d1cd; vertical-align: middle; }
+
+/* A card holding only a table scrolls sideways when the table is wider than the card. */
+.table-x { overflow-x: auto; }
+.form-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.session-qr-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; }
 
 /* ---- Cards, tiles, tables ---- */
 .card, .stat-tile, .modal-card { border-radius: 4px; }
@@ -168,3 +310,90 @@ button:not([class]):not([style*="padding"]), button.secondary:not([style*="paddi
 /* Employee/trainer profile cards that share a row are the same height, so the row reads as one
    even band instead of ragged bottoms (Keeley's note, 2026-09-30). */
 .profile-row { align-items: stretch; }
+
+/* ---- Phones and small tablets (Keeley, 2026-11-03: "make everything more mobile friendly") ----
+   The menu becomes a drawer behind the menu button, the top bar slims down to the logo, bell and
+   avatar, and pages get phone-sized margins with forms and filters in one column. Wide tables
+   scroll sideways inside their box instead of stretching the page. */
+@media (max-width: 900px) {
+  :root { --header-height: 60px; }
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    height: 100dvh;
+    width: min(280px, 85vw);
+    z-index: 210;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: none;
+  }
+  .sidebar.open { transform: translateX(0); box-shadow: 0 0 40px rgb(0 0 0 / 30%); }
+  .sidebar-backdrop { position: fixed; inset: 0; z-index: 200; background: rgb(0 0 0 / 40%); }
+  .sidebar-brand { position: relative; }
+  .sidebar-close {
+    display: flex;
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    padding: 8px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+  .sidebar-close:hover { background: var(--color-bg); color: var(--color-text); }
+  .sidebar-nav a, .sidebar-portal-link { padding: 11px 12px; font-size: 15px; }
+
+  .topbar { padding: 0 8px 0 4px; gap: 6px; position: sticky; top: 0; z-index: 90; }
+  .topbar-menu-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: var(--esr-navy);
+    cursor: pointer;
+  }
+  .topbar-menu-button:hover { background: var(--color-bg); }
+  .topbar-brand { display: block; height: 28px; width: auto; }
+  .topbar-right { gap: 4px; }
+  .topbar-user-info, .topbar-user-button > .icon { display: none; }
+  .topbar-user-button { padding: 4px; }
+
+  .app-body { padding: 16px; }
+  .page-header { flex-direction: column; align-items: stretch; gap: 12px; margin-bottom: 16px; }
+  .page-header-actions > button, .page-header-actions > .btn, .page-header-actions > a { flex: 1 1 auto; }
+  h1 { font-size: 20px; }
+  .card { padding: 16px; }
+  .filter-bar, .filter-bar[style] { grid-template-columns: 1fr !important; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat-tile { padding: 12px; }
+  .stat-tile .value { font-size: 22px; }
+  .detail-meta { flex-wrap: wrap; gap: 12px 20px; }
+  .detail-meta-item { text-align: left; }
+  .profile-row, .layout-2col { grid-template-columns: minmax(0, 1fr); }
+  .layout-2col > * { min-width: 0; }
+  .session-facts { gap: 10px 20px; padding: 12px 14px; }
+  .session-qr-layout { grid-template-columns: minmax(0, 1fr); }
+  .session-qr-layout img { max-width: 260px; margin: 0 auto; display: block; }
+  .closeout-step { flex: 1 1 100%; min-width: 0; }
+  .modal-backdrop { padding: 12px; align-items: flex-end; }
+  .modal-card { max-width: none; max-height: calc(100dvh - 24px); }
+
+  /* Any table not already in a scroll box scrolls sideways on its own. */
+  .app-body table:not(.table-scroll table):not(.matrix-scroll table) { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-scroll, .matrix-scroll { max-height: 70dvh; }
+}
+@media (max-width: 640px) {
+  .form-grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .toolbar > .field-row { flex: 1 1 100%; }
+  .toolbar > .field-row :is(input, select) { width: 100%; }
+}

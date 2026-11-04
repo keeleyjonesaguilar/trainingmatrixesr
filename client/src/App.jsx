@@ -50,6 +50,9 @@ export default function App() {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('user');
   const [isTrainer, setIsTrainer] = useState(false);
+  // The phone-size menu drawer (2026-11-03) - closes whenever the page changes.
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { setMenuOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     if (isPublicSignIn) return;
@@ -103,9 +106,9 @@ export default function App() {
   return (
     <AuthContext.Provider value={{ username, fullName, role }}>
       <div className="shell">
-        <Sidebar role={role} isTrainer={isTrainer} />
+        <Sidebar role={role} isTrainer={isTrainer} open={menuOpen} onClose={() => setMenuOpen(false)} />
         <div className="main-content">
-          <TopBar username={username} fullName={fullName} role={role} onLogout={logout} />
+          <TopBar username={username} fullName={fullName} role={role} onLogout={logout} onOpenMenu={() => setMenuOpen(true)} />
           <main className="app-body">
             <Routes>
               <Route path="/" element={<Dashboard />} />

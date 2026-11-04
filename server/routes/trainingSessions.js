@@ -738,8 +738,22 @@ router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
       req.params.id,
     ]
   );
+  // When and who for each close-out step (migration 090) - cleared again when a step is unticked.
+  const now = new Date().toISOString();
+  for (const [step, value] of [['sent_to_client', sent_to_client], ['sent_to_trainees', sent_to_trainees]]) {
+    if (value === undefined) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      `UPDATE training_sessions SET ${step}_at = ?, ${step}_by = ? WHERE session_id = ?`,
+      value ? [now, req.user.username, req.params.id] : [null, null, req.params.id]
+    );
+  }
   if (sent_to_client) await clearSendToClientAlert(req.params.id);
-  res.json(await dbGet('SELECT sent_to_client, sent_to_trainees, saved_to_server FROM training_sessions WHERE session_id = ?', [req.params.id]));
+  res.json(await dbGet(
+    `SELECT sent_to_client, sent_to_client_at, sent_to_client_by, sent_to_trainees, sent_to_trainees_at, sent_to_trainees_by
+     FROM training_sessions WHERE session_id = ?`,
+    [req.params.id]
+  ));
 });
 
 // The trainer/admin advances a multi-day session to the next day (Keeley's request, 2026-09-21) -

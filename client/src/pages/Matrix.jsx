@@ -7,6 +7,7 @@ import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import MatrixCellContent from '../components/MatrixCellContent.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { nameKey, nameParts } from '../lib/names.js';
 import { downloadCsv } from '../lib/csv.js';
@@ -377,7 +378,7 @@ export default function Matrix() {
                       const formatted = formatCell(cell);
                       return (
                         <td key={mt.training_id}>
-                          {formatted.plain ? formatted.text : <span className={`badge ${formatted.className}`}>{formatted.text}</span>}
+                          <MatrixCellContent formatted={formatted} />
                         </td>
                       );
                     })}

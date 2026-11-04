@@ -305,7 +305,12 @@ async function sendAttendeeCertificates(sessionId, recipients, user) {
     }
     sent.push({ name: attendee.trainee_name, email });
   }
-  if (sent.length) await dbRun('UPDATE training_sessions SET sent_to_trainees = 1 WHERE session_id = ?', [sessionId]);
+  if (sent.length) {
+    await dbRun(
+      'UPDATE training_sessions SET sent_to_trainees = 1, sent_to_trainees_at = ?, sent_to_trainees_by = ? WHERE session_id = ?',
+      [new Date().toISOString(), user?.username || null, sessionId]
+    );
+  }
   return { session, sent, skipped, failed };
 }
 
@@ -386,9 +391,11 @@ async function sendCompanyCertificates(sessionId, { emails, includeRoster = true
     fromName: FROM_NAME,
   });
 
+  const sentAt = new Date().toISOString();
   await dbRun(
-    'UPDATE training_sessions SET sent_to_client = 1, certificates_emailed_to_client_at = ?, certificates_emailed_to_client = ? WHERE session_id = ?',
-    [new Date().toISOString(), to.join(', '), sessionId]
+    `UPDATE training_sessions SET sent_to_client = 1, certificates_emailed_to_client_at = ?, certificates_emailed_to_client = ?,
+       sent_to_client_at = ?, sent_to_client_by = ? WHERE session_id = ?`,
+    [sentAt, to.join(', '), sentAt, user?.username || null, sessionId]
   );
   await clearSendToClientAlert(sessionId);
   if (saveAsDefault) await dbRun('UPDATE clients SET certificate_emails = ? WHERE client_id = ?', [to.join(', '), session.client_id]);
