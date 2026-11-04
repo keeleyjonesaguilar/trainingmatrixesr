@@ -11,6 +11,25 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// "Tue, Nov 3" for the day picker.
+function shortDate(d) {
+  if (!d) return '';
+  const dt = new Date(`${d}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return d;
+  return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// The day(s) the form starts with ticked: the day dated today on the trainee's phone, otherwise
+// the day the course is on (current_day) - they can change it either way.
+function startingDays(info) {
+  if (!info.days?.length) return [];
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const dated = info.days.filter((d) => d.date === today).map((d) => d.day_number);
+  if (dated.length) return dated;
+  return info.days.some((d) => d.day_number === info.current_day) ? [info.current_day] : [];
+}
+
 // Fixed feedback-page text (Keeley's request, 2026-09-16 - the sign-in page already had this,
 // the feedback page from the second QR code didn't) - same "small, known set of phrases"
 // approach as PublicSignIn.jsx's STRINGS, driven by the session's own language setting. The
@@ -41,6 +60,10 @@ const STRINGS = {
   err_rate_named: { en: 'Please rate', es: 'Por favor califique a' },
   day: { en: 'Day', es: 'Día' },
   days: { en: 'Days', es: 'Días' },
+  // A multi-day course asks which day(s) they attended, so they only rate those days' trainers
+  // (Keeley's request, 2026-11-04).
+  which_days: { en: 'Which day(s) did you attend?', es: '¿Qué día(s) asistió?' },
+  err_days: { en: 'Please choose the day(s) you attended.', es: 'Por favor elija el día o los días a los que asistió.' },
   // Asked only when they answer "Yes" to needing additional training (Keeley's request, 2026-10-05).
   contact_name: { en: 'Your name (so we can reach out about additional training)', es: 'Su nombre (para comunicarnos con usted sobre capacitación adicional)' },
   err_contact_name: {
@@ -98,22 +121,33 @@ export default function PublicFeedback() {
   // A rating and optional comment for each trainer (Keeley's request, 2026-10-01) - co-trainers
   // and each day's trainer on a multi-day course are rated separately.
   const [trainerAnswers, setTrainerAnswers] = useState({});
+  const [chosenDays, setChosenDays] = useState([]);
   const setAnswer = (key, patch) => setTrainerAnswers((prev) => ({ ...prev, [key]: { rating: 0, comment: '', ...prev[key], ...patch } }));
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
-    api.publicFeedbackInfo(token).then(setInfo).catch((err) => setLoadError(err.message));
+    api.publicFeedbackInfo(token)
+      .then((data) => {
+        setInfo(data);
+        setChosenDays(startingDays(data));
+      })
+      .catch((err) => setLoadError(err.message));
   }, [token]);
 
   const t = makeTranslator(info?.language || 'english');
-  const trainers = info?.trainers?.length ? info.trainers : [{ key: 'lead', name: info?.trainer_name || '' }];
+  const allTrainers = info?.trainers?.length ? info.trainers : [{ key: 'lead', name: info?.trainer_name || '' }];
+  const multiDay = info?.days?.length > 0;
+  // Only the chosen days' trainers - plus co-trainers who were there every day.
+  const trainers = multiDay ? allTrainers.filter((tr) => tr.every_day || tr.days?.some((d) => chosenDays.includes(d))) : allTrainers;
+  const toggleDay = (day) => setChosenDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)));
 
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
     if (needsAdditionalTraining === 'yes' && !contactName.trim()) return setFormError(t('err_contact_name'));
+    if (multiDay && !chosenDays.length) return setFormError(t('err_days'));
     if (!effectiveness) return setFormError(t('err_effectiveness'));
     const unrated = trainers.find((tr) => !trainerAnswers[tr.key]?.rating);
     if (unrated) return setFormError(trainers.length > 1 ? `${t('err_rate_named')} ${unrated.name}.` : t('err_trainer_rating'));
@@ -125,6 +159,7 @@ export default function PublicFeedback() {
         needs_additional_training: needsAdditionalTraining || null,
         contact_name: needsAdditionalTraining === 'yes' ? contactName.trim() : null,
         effectiveness_rating: effectiveness,
+        ...(multiDay ? { days: chosenDays } : {}),
         trainer_ratings: trainers.map((tr) => ({
           key: tr.key,
           rating: trainerAnswers[tr.key].rating,
@@ -175,7 +210,7 @@ export default function PublicFeedback() {
             {[trainingLabel, ...(info.additional_training_labels || [])].join(' + ')} · {info.client_name} · {formatDate(info.session_date)}
           </div>
           <div style={{ color: 'var(--color-text-muted)', fontSize: 13, marginTop: 2 }}>
-            {trainers.length > 1 ? t('trainers_label') : t('trainer_label')} {trainers.map((tr) => tr.name).join(', ')}
+            {allTrainers.length > 1 ? t('trainers_label') : t('trainer_label')} {allTrainers.map((tr) => tr.name).join(', ')}
           </div>
         </div>
 
@@ -221,6 +256,21 @@ export default function PublicFeedback() {
                 <label>{labelText(info.labels, 'effectiveness', language)}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
               </div>
+              {multiDay && (
+                <div className="field">
+                  <label>{t('which_days')}</label>
+                  {info.days.map((d) => (
+                    <label key={d.day_number} style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400, margin: '6px 0' }}>
+                      <input type="checkbox" checked={chosenDays.includes(d.day_number)} onChange={() => toggleDay(d.day_number)} />
+                      <span>
+                        {t('day')} {d.day_number}
+                        {d.date && <> · {shortDate(d.date)}</>}
+                        {d.trainer_names?.length > 0 && <span style={{ color: 'var(--color-text-muted)' }}> · {d.trainer_names.join(', ')}</span>}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
               {trainers.map((tr) => (
                 <div
                   key={tr.key}

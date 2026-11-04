@@ -14,7 +14,9 @@ const path = require('path');
 const repo = require('../lib/repo');
 const { notifyAllUsers } = require('../lib/notifications');
 const { ahaColumnsFromBody, ensureEditToken, regenerateRosters, sendCompletedFormsEmail } = require('../lib/sessionCloseOut');
-const { getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers, sessionTrainers } = require('../lib/sessionDays');
+const {
+  getSessionDays, recordDaySignoff, resolveTrainerByName, withDayTrainers, sessionTrainers, getCoTrainers,
+} = require('../lib/sessionDays');
 const { nameKey } = require('../lib/names');
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { certifyTrainingParts } = require('../lib/lateAttendees');
@@ -597,10 +599,15 @@ router.post('/:token/close', async (req, res) => {
   res.json({ ok: true, attendee_count: attendees.length });
 });
 
+// Each trainer with the days they taught on a multi-day course. A co-trainer who isn't any day's
+// trainer teaches every day (`every_day`); one who is also picked for certain days (the 11/03
+// Royalwood OSHA 30 had its Day 2-4 trainers added as co-trainers too) only taught those days.
+// A lead trainer with no day of their own didn't teach the course and isn't rated.
 async function feedbackTrainers(session) {
   const trainers = await sessionTrainers(session);
   const days = await getSessionDays(session);
-  return trainers.map((t) => {
+  const coKeys = new Set((await getCoTrainers(session.session_id)).flatMap((c) => [c.trainer_employee_id, `name:${nameKey(c.trainer_name)}`]).filter(Boolean));
+  const list = trainers.map((t) => {
     const taught = days
       .filter((d) => {
         const name = d.signed_trainer_name || d.assigned_trainer_name;
@@ -608,8 +615,26 @@ async function feedbackTrainers(session) {
         return (t.employee_id && id === t.employee_id) || nameKey(name) === nameKey(t.name);
       })
       .map((d) => d.day_number);
-    return { key: t.key, name: t.name, days: taught };
+    const isCo = coKeys.has(t.employee_id) || coKeys.has(`name:${nameKey(t.name)}`);
+    return { key: t.key, name: t.name, employee_id: t.employee_id, days: taught, every_day: days.length > 0 && isCo && !taught.length };
   });
+  return days.length ? list.filter((t) => t.days.length || t.every_day) : list;
+}
+
+// The trainers a trainee rates for the day(s) they attended (Keeley's request, 2026-11-04: a Day 1
+// trainee was asked to rate the Day 2-4 trainers too). `dayNumbers` null = every trainer.
+function trainersForDays(trainers, dayNumbers) {
+  if (!dayNumbers) return trainers;
+  return trainers.filter((t) => t.every_day || t.days.some((d) => dayNumbers.includes(d)));
+}
+
+// The feedback form's day picker: each day's date and trainer(s).
+function feedbackDays(days, trainers) {
+  return days.map((d) => ({
+    day_number: d.day_number,
+    date: d.date,
+    trainer_names: trainersForDays(trainers, [d.day_number]).map((t) => t.name),
+  }));
 }
 
 // Fetch session context for the feedback page (no auth) - same minimal shape as the sign-in
@@ -624,6 +649,7 @@ router.get('/:token/feedback', async (req, res) => {
   const additionalTrainings = await dbAll(
     'SELECT training_type_label FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [session.session_id]
   );
+  const trainers = await feedbackTrainers(session);
   res.json({
     client_name: session.client_name,
     training_type_label: session.training_type_label,
@@ -635,7 +661,11 @@ router.get('/:token/feedback', async (req, res) => {
     // day's trainer on a multi-day course.
     // Which days each trainer taught on a multi-day course (e.g. "Days 1-2"), so trainees rate the
     // right person for the right days (Keeley's request, 2026-10-05).
-    trainers: await feedbackTrainers(session),
+    trainers,
+    // A multi-day course asks which day(s) the trainee attended and only shows those days'
+    // trainers (2026-11-04). current_day is the form's starting guess when no day is dated today.
+    days: feedbackDays(await getSessionDays(session), trainers),
+    current_day: session.current_day,
     session_date: session.session_date,
     labels,
   });
@@ -667,8 +697,16 @@ router.post('/:token/feedback', async (req, res) => {
 
   // A rating (and optional comment) for each trainer on the session (Keeley's request,
   // 2026-10-01). A page loaded before this change sends one trainer_rating/trainer_comment instead,
-  // which goes to the lead trainer.
-  const trainers = await sessionTrainers(session);
+  // which goes to the lead trainer. On a multi-day course only the trainers of the day(s) the
+  // trainee picked are rated (2026-11-04); a page loaded before that sends no days and rates all.
+  let trainers = await sessionTrainers(session);
+  if (isMultiDay(session) && Array.isArray(req.body?.days)) {
+    const dayNumbers = [...new Set(req.body.days.map(Number))];
+    if (!dayNumbers.length || dayNumbers.some((d) => !Number.isInteger(d) || d < 1 || d > session.total_days)) {
+      return res.status(400).json({ error: 'Please choose the day(s) you attended.' });
+    }
+    trainers = trainersForDays(await feedbackTrainers(session), dayNumbers);
+  }
   const given = Array.isArray(trainer_ratings)
     ? trainer_ratings
     : [{ key: trainers[0]?.key, rating: req.body?.trainer_rating, comment: req.body?.trainer_comment }];
