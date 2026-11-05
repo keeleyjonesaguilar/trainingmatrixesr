@@ -10,7 +10,8 @@ import { downloadReportPdf } from '../lib/reportPdf';
 // A narrower list than matrixCell.js's full STATUS_OPTIONS - this report only ever shows rows
 // that have an actual completion on file (see the page subtitle), so "Missing" and "Not
 // Applicable" describe the *absence* of a record and could never match anything here.
-const REPORT_STATUS_OPTIONS = ['Current', 'Expired', 'No Expiration', 'Pending Review', 'Ignored'];
+// "Renewed" = an expired completion the employee has since retaken (server/routes/reports.js).
+const REPORT_STATUS_OPTIONS = ['Current', 'Expired', 'Renewed', 'No Expiration', 'Pending Review', 'Ignored'];
 
 // Sortable column headers (Keeley's request, 2026-08-18): click a header to sort by it,
 // click again to reverse. Kept as plain component state rather than URL search params, since

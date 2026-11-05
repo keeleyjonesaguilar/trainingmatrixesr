@@ -45,11 +45,21 @@ router.get('/completed-trainings', async (req, res) => {
   // Status filter (Keeley's request, 2026-09-21) - e.g. isolate just Expired trainings for a
   // report. Every completed row already has a status, so this is a plain equality match, same
   // as the Employees/Client Compliance pages' own status filter.
-  if (status) { clauses.push('r.status = ?'); params.push(status); }
+  // An expired record the employee has since retaken shows as "Renewed" (Keeley, 2026-11-05: a
+  // client read Advance Concrete's fit-test report and thought 9/16/26 retests were still expired
+  // because each person's old 6/6/2025 row said Expired, pages away from the new one). Only the
+  // report label changes - the stored status and the matrix (latest record wins) are untouched.
+  const statusExpr = `CASE WHEN r.status = 'Expired' AND EXISTS (
+      SELECT 1 FROM employee_training_records n
+      WHERE n.employee_id = r.employee_id AND n.training_id = r.training_id
+        AND n.is_active_record = 1 AND n.is_inactive = 0
+        AND n.completion_date > r.completion_date
+    ) THEN 'Renewed' ELSE r.status END`;
+  if (status) { clauses.push(`(${statusExpr}) = ?`); params.push(status); }
 
   const rows = await dbAll(
     `SELECT r.record_id, r.employee_id, e.full_name, r.client_id, c.client_name,
-            r.training_id, m.training_name, r.completion_date, r.expiration_date, r.status,
+            r.training_id, m.training_name, r.completion_date, r.expiration_date, ${statusExpr} AS status,
             r.certificate_filename
      FROM employee_training_records r
      JOIN employees e ON e.employee_id = r.employee_id
