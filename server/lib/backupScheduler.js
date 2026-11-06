@@ -19,10 +19,11 @@
 const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
+const { once } = require('events');
 const { pool } = require('../db');
 const { DATA_DIR } = require('./paths');
 const { TABLES_IN_DEPENDENCY_ORDER } = require('./backupTables');
-const { pushBackupToGitHub } = require('./githubBackup');
+const { pushBackupFileToGitHub } = require('./githubBackup');
 
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const LATEST_PATH = path.join(BACKUP_DIR, 'training-matrix-backup-latest.json');
@@ -43,37 +44,103 @@ function log(line) {
   }
 }
 
+const IN_PROGRESS_PATH = path.join(BACKUP_DIR, 'backup-in-progress.tmp');
+
+// Rows fetched from the database per round trip. Sign-in signatures are base64 PNGs of ~40-50 KB
+// each, so 100 rows is at most a few MB in memory at once.
+const ROWS_PER_FETCH = 100;
+
+// Streams every table straight into `filePath`, ROWS_PER_FETCH rows at a time, so memory stays
+// flat no matter how big the database gets.
+//
+// 2026-11-06: the service ran out of memory (512 MB) at exactly 2:00 AM. The old version loaded
+// every row of every table into memory, built the whole backup as one string, and then made three
+// more full-size copies of it for the GitHub upload (a Buffer, the base64 text, and the JSON
+// request body), all at the same time. The backup had grown from ~25 MB (10/01) to ~36 MB (10/06)
+// and kept growing with every sign-in signature, so that peak passed 512 MB.
+//
+// The file written is the same compact JSON as before ({"dumped_at":..,"tables":{"name":[rows]}}),
+// so server/scripts/restore-db.js reads it unchanged. One read-only REPEATABLE READ transaction
+// covers every table, so the backup is also a consistent snapshot (rows added mid-backup can't
+// show up in one table and be missing from the table that references them).
+async function writeDumpFile(filePath, dumpedAt) {
+  const out = fs.createWriteStream(filePath);
+  const write = async (text) => {
+    if (!out.write(text)) await once(out, 'drain');
+  };
+  const client = await pool.connect();
+  let totalRows = 0;
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await write(`{"dumped_at":${JSON.stringify(dumpedAt)},"tables":{`);
+    for (let t = 0; t < TABLES_IN_DEPENDENCY_ORDER.length; t += 1) {
+      const table = TABLES_IN_DEPENDENCY_ORDER[t];
+      await write(`${t ? ',' : ''}${JSON.stringify(table)}:[`);
+      await client.query(`DECLARE backup_rows NO SCROLL CURSOR FOR SELECT * FROM "${table}"`);
+      let first = true;
+      for (;;) {
+        const { rows } = await client.query(`FETCH ${ROWS_PER_FETCH} FROM backup_rows`);
+        if (!rows.length) break;
+        await write((first ? '' : ',') + rows.map((row) => JSON.stringify(row)).join(','));
+        first = false;
+        totalRows += rows.length;
+      }
+      await client.query('CLOSE backup_rows');
+      await write(']');
+    }
+    await write('}}');
+    await client.query('COMMIT');
+    out.end();
+    await once(out, 'close');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    out.destroy();
+    fs.rmSync(filePath, { force: true });
+    throw err;
+  } finally {
+    client.release();
+  }
+  return totalRows;
+}
+
+let running = false;
+
 async function runBackup() {
+  // A run that somehow takes longer than a day must never overlap the next one.
+  if (running) {
+    log('Backup skipped - the previous run is still going.');
+    return;
+  }
+  running = true;
+  try {
+    await runBackupOnce();
+  } finally {
+    running = false;
+  }
+}
+
+async function runBackupOnce() {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-  const dump = { dumped_at: new Date().toISOString(), tables: {} };
-  let totalRows = 0;
-  for (const table of TABLES_IN_DEPENDENCY_ORDER) {
-    // eslint-disable-next-line no-await-in-loop
-    const { rows } = await pool.query(`SELECT * FROM "${table}"`);
-    dump.tables[table] = rows;
-    totalRows += rows.length;
-  }
+  const dumpedAt = new Date().toISOString();
+  // Written under a temporary name first, so "latest" is never a half-written file if the run
+  // fails part way - it only replaces "latest" once it's complete.
+  const totalRows = await writeDumpFile(IN_PROGRESS_PATH, dumpedAt);
 
   if (fs.existsSync(LATEST_PATH)) {
     fs.copyFileSync(LATEST_PATH, PREVIOUS_PATH);
   }
-  let json = JSON.stringify(dump);
-  // Let go of the row objects as soon as they're serialized - the backup now covers every table
-  // (~25 MB and growing), and holding the rows, this string and the GitHub copy at once was the
-  // biggest memory spike of the day on a 512 MB server (audit, 2026-10-01).
-  dump.tables = null;
-  fs.writeFileSync(LATEST_PATH, json);
+  fs.renameSync(IN_PROGRESS_PATH, LATEST_PATH);
 
-  const sizeMb = (Buffer.byteLength(json) / (1024 * 1024)).toFixed(2);
+  const sizeMb = (fs.statSync(LATEST_PATH).size / (1024 * 1024)).toFixed(2);
   log(`Backup complete: ${TABLES_IN_DEPENDENCY_ORDER.length} tables, ${totalRows} rows, ${sizeMb} MB -> ${LATEST_PATH}`);
 
   // Off-Render copy, independent of this app's own infrastructure - see server/lib/
   // githubBackup.js. Failure here is logged loudly (this is the whole point of the exercise) but
-  // doesn't undo the local backup above, which already succeeded.
+  // doesn't undo the local backup above, which already succeeded. It streams from the file just
+  // written, so it doesn't hold the backup in memory either.
   try {
-    const result = await pushBackupToGitHub(json, dump.dumped_at);
-    json = null;
+    const result = await pushBackupFileToGitHub(LATEST_PATH, dumpedAt);
     if (result.skipped) {
       log('GitHub off-Render backup skipped (GITHUB_BACKUP_TOKEN/GITHUB_BACKUP_REPO not set).');
     } else {
