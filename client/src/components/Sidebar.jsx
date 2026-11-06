@@ -25,6 +25,8 @@ const NAV_GROUPS = [
       { to: '/clients', label: 'Clients', icon: 'clients' },
       { to: '/trainers', label: 'Trainers', icon: 'trainers' },
       { to: '/training-types', label: 'Training Types', icon: 'trainingTypes' },
+      // The PowerPoint library (Keeley's "Training matrix features 11.6", 2026-11-06).
+      { to: '/content', label: 'Content', icon: 'content' },
     ],
   },
   // Import, user management, Requests and Security are Super Admin only (Keeley's request,

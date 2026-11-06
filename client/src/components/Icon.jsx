@@ -7,6 +7,8 @@ const PATHS = {
   reports: ['M3 3v18h18', 'M18 17V9', 'M13 17V5', 'M8 17v-3'],
   clients: ['M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18z', 'M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2', 'M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2', 'M10 6h4', 'M10 10h4', 'M10 14h4', 'M10 18h4'],
   trainers: ['M22 10 12 5 2 10l10 5 10-5z', 'M6 12v5c3 3 9 3 12 0v-5'],
+  // A presentation screen on a stand - the Content page (PowerPoints).
+  content: ['M2 3h20', 'M3 3v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V3', 'M12 16v5', 'm8 21 4-4 4 4', 'M8 11V9', 'M12 11V7', 'M16 11v-1'],
   trainingTypes: ['M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20', 'M9 7h7', 'M9 11h5'],
   import: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'm17 8-5-5-5 5', 'M12 3v12'],
   users: ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M19 8v6', 'M22 11h-6'],

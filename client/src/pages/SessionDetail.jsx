@@ -13,6 +13,7 @@ import CoTrainersPicker from '../components/CoTrainersPicker.jsx';
 import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
 import PublicSignupPanel from '../components/PublicSignupPanel.jsx';
+import ClassPowerpoints from '../components/ClassPowerpoints.jsx';
 import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCertificatesModal.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
@@ -367,6 +368,8 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const [dayLinks, setDayLinks] = useState(
     Array.from({ length: session.total_days || 0 }, (_, i) => session.day_wetransfer_links?.[i] || '')
   );
+  // Only a class that already had per-day WeTransfer links still shows those boxes (2026-11-06).
+  const hasDayLinks = Boolean(session.day_wetransfer_links?.some(Boolean));
   const [trainerOptions, setTrainerOptions] = useState([]);
   const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
@@ -538,8 +541,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <label>Location / Address</label>
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
-        {/* A multi-day course has a link per day (below); this one-link box stays for one that already has it. */}
-        {!isToolbox && (!form.total_days || isMultiTraining || session.wetransfer_link) && (
+        {/* WeTransfer is retired (2026-11-06) - PowerPoints come from the Content page. The box only
+            stays on a class that already has a link, so it can still be changed or cleared. */}
+        {!isToolbox && session.wetransfer_link && (
           <div className="field">
             <label>{form.total_days && !isMultiTraining ? 'WeTransfer Link (all days)' : 'WeTransfer Link (optional)'}</label>
             <input value={form.wetransfer_link} onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })} placeholder="https://we.tl/..." />
@@ -627,7 +631,7 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
       </div>
       {!isMultiTraining && form.total_days && dayDates.length > 0 && (
         <div className="field">
-          <label>Each Day: Date, Start Time, Duration, Trainer &amp; WeTransfer Link</label>
+          <label>Each Day: Date, Start Time, Duration{hasDayLinks ? ', Trainer & WeTransfer Link' : ' & Trainer'}</label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dayDates.map((d, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -675,14 +679,16 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
                   {trainerOptions.map((t) => <option key={t.employee_id} value={t.employee_id}>{t.full_name}</option>)}
                   <option value="__new__">+ Add New Trainer</option>
                 </select>
-                <input
-                  type="text"
-                  value={dayLinks[i] || ''}
-                  onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
-                  placeholder={`Day ${i + 1} WeTransfer link`}
-                  aria-label={`Day ${i + 1} WeTransfer link`}
-                  style={{ maxWidth: 260 }}
-                />
+                {hasDayLinks && (
+                  <input
+                    type="text"
+                    value={dayLinks[i] || ''}
+                    onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                    placeholder={`Day ${i + 1} WeTransfer link`}
+                    aria-label={`Day ${i + 1} WeTransfer link`}
+                    style={{ maxWidth: 260 }}
+                  />
+                )}
                 {addingDayTrainer === i && (
                   <div style={{ flexBasis: '100%' }}>
                     <NewTrainerForm
@@ -985,7 +991,7 @@ Their certificate and the training record it added to their employee file will b
   const [emailingCerts, setEmailingCerts] = useState(() => (new URLSearchParams(window.location.search).get('send') === 'company' ? 'company' : null));
   const emailTrainerSummary = async () => {
     const lastSent = session.trainer_summary_sent_at ? `\n\nIt was already emailed ${formatEasternDateTime(session.trainer_summary_sent_at)} - this sends it again.` : '';
-    if (!window.confirm(`Email the class summary (details, instructions, outline, QR codes, WeTransfer link) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.${lastSent}`)) return;
+    if (!window.confirm(`Email the class summary (details, instructions, outline, QR codes, PowerPoint downloads) to every trainer on this session?\n\nOn a multi-day course each day's trainer only gets their own day.${lastSent}`)) return;
     setSendingSummary(true);
     try {
       const result = await api.sendTrainerSummary(id);
@@ -1223,6 +1229,9 @@ Their certificate and the training record it added to their employee file will b
         </div>
       )}
 
+      {/* The class's PowerPoints (2026-11-06) - what its trainers download. */}
+      <ClassPowerpoints session={session} />
+
       {/* Multi-day training (Keeley's request, 2026-09-21/22) - the day advance is manual
           (never calendar-driven), so it survives a course slipping a day for weather/a holiday
           without misjudging attendance. New sign-ins and "find your name" check-ins always
@@ -1263,7 +1272,7 @@ Their certificate and the training record it added to their employee file will b
           {session.days?.length > 0 && (
             <table style={{ marginTop: 12 }}>
               <thead>
-                <tr><th>Day</th><th>Trainer</th><th>Sign-Off</th><th>Outline</th><th>WeTransfer</th></tr>
+                <tr><th>Day</th><th>Trainer</th><th>Sign-Off</th><th>Outline</th>{session.day_wetransfer_links?.some(Boolean) && <th>WeTransfer</th>}</tr>
               </thead>
               <tbody>
                 {session.days.map((d) => {
@@ -1301,11 +1310,13 @@ Their certificate and the training record it added to their employee file will b
                         )}
                       </td>
                       <td style={{ fontSize: 13, color: 'var(--color-text-muted)', whiteSpace: 'pre-line' }}>{session.day_outlines?.[d.day_number - 1] || '—'}</td>
-                      <td style={{ fontSize: 13 }}>
-                        {session.day_wetransfer_links?.[d.day_number - 1]
-                          ? <a href={session.day_wetransfer_links[d.day_number - 1]} target="_blank" rel="noopener noreferrer">Open files ↗</a>
-                          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                      </td>
+                      {session.day_wetransfer_links?.some(Boolean) && (
+                        <td style={{ fontSize: 13 }}>
+                          {session.day_wetransfer_links?.[d.day_number - 1]
+                            ? <a href={session.day_wetransfer_links[d.day_number - 1]} target="_blank" rel="noopener noreferrer">Open files ↗</a>
+                            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

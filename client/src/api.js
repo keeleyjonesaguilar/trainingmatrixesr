@@ -347,4 +347,40 @@ export const api = {
   updateChangeRequest: (id, data) => request(`/change-requests/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   setChangeRequestStatus: (id, data) => request(`/change-requests/${id}/status`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteChangeRequest: (id) => request(`/change-requests/${id}`, { method: 'DELETE' }),
+
+  // Content page - the PowerPoint library (2026-11-06). Uploads report progress (decks are big).
+  listDecks: () => request('/content/decks'),
+  getDeck: (id) => request(`/content/decks/${id}`),
+  getDeckTransitions: () => request('/content/transitions'),
+  createDeck: (file, { name, trainingIds } = {}, onProgress) => uploadWithProgress('/content/decks', file, { name, training_ids: JSON.stringify(trainingIds || []) }, onProgress),
+  uploadDeckVersion: (id, file, onProgress) => uploadWithProgress(`/content/decks/${id}/file`, file, {}, onProgress),
+  updateDeck: (id, data) => request(`/content/decks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  saveDeckSlides: (id, slides) => request(`/content/decks/${id}/slides`, { method: 'PUT', body: JSON.stringify({ slides }) }),
+  restorePreviousDeck: (id) => request(`/content/decks/${id}/restore-previous`, { method: 'POST' }),
+  deleteDeck: (id) => request(`/content/decks/${id}`, { method: 'DELETE' }),
+  deckDownloadUrl: (id) => `${BASE}/content/decks/${id}/download`,
+  deckSlidePictureUrl: (id, slideId) => `${BASE}/content/decks/${id}/slides/${slideId}/picture`,
+  remakeSlidePictures: (id) => request(`/content/decks/${id}/slides-pictures`, { method: 'POST' }),
+  getSessionPowerpoints: (sessionId) => request(`/content/sessions/${sessionId}/powerpoints`),
 };
+
+// A file upload that reports how far along it is (0-100) - fetch can't.
+function uploadWithProgress(path, file, fields, onProgress) {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    Object.entries(fields || {}).forEach(([k, v]) => { if (v != null) formData.append(k, v); });
+    formData.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE}${path}`);
+    xhr.withCredentials = true;
+    if (onProgress) xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText || '{}'); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+      else reject(new Error(body.error || `Upload failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error("The upload didn't go through - check your connection and try again."));
+    xhr.send(formData);
+  });
+}

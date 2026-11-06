@@ -63,7 +63,7 @@ function ClassSummaryModal({ session, onClose }) {
           title="Class summary"
           srcDoc={html}
           onLoad={fit}
-          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
           style={{ width: '100%', height: 600, border: 0, borderRadius: 8, display: 'block' }}
         />
       )}

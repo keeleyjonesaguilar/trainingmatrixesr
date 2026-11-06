@@ -5,11 +5,15 @@
 // after a change. Toolbox talks don't get one. Trainers with no email on file are flagged on the bell.
 //
 // Reworked 2026-10-14 (Keeley's list): sections in her order - training type, trainer(s), language,
-// logistics, the PowerPoint (WeTransfer), instructions, outline - with the PowerPoint link up top
+// logistics, the PowerPoint, instructions, outline - with the PowerPoint link up top
 // too, and no sign-in page link (trainers scan the same QR code the attendees scan to close out).
 // On a multi-day course each day's trainer only sees their own day(s): its date, outline and
 // PowerPoint - never another day's. Also sent at 5:00 AM on the day they teach
 // (lib/trainerSummaryScheduler.js).
+// 2026-11-06 (Keeley's "Training matrix features 11.6"): the PowerPoints come from the app's own
+// Content page (lib/classPowerpoints.js) with the class's QR slides already in them, instead of a
+// WeTransfer link typed per class. A class that already had a WeTransfer link keeps showing it
+// where no PowerPoint is set up yet.
 const { dbGet, dbAll, dbRun } = require('../db');
 const { sendEmail } = require('./email');
 const { notifyAllUsers } = require('./notifications');
@@ -19,6 +23,7 @@ const { trainingParts, isMultiTrainingDay } = require('./sessionParts');
 const { stripTrainingIdPrefix } = require('./certificateFilename');
 const { labeledQrPng } = require('./qrLabel');
 const { nameKey } = require('./names');
+const { classPowerpointsWithLinks } = require('./classPowerpoints');
 
 const GREEN = '#026754';
 const GOLD = '#c49b0d';
@@ -175,6 +180,7 @@ async function summaryDetails(sessionId) {
     days: await getSessionDays(session),
     dayOutlines: parseJson(session.day_outlines) || [],
     dayLinks: parseJson(session.day_wetransfer_links) || [],
+    powerpoints: await classPowerpointsWithLinks(session),
     dayStartTimes: parseJson(session.day_start_times) || [],
     dayDurations: parseJson(session.day_durations) || [],
   };
@@ -201,11 +207,27 @@ function teachesAnyDay(d, keys) {
   return !d.days.length || visibleDays({ ...d, onlyDay: null }, { keys }).length > 0;
 }
 
-// The PowerPoint link(s) this recipient gets: their days' own links, else the session's one link.
-function powerpointLinks(d, days) {
-  const own = days.map((day) => ({ day, url: d.dayLinks[day.day_number - 1] })).filter((x) => x.url);
-  if (own.length) return own;
-  return d.session.wetransfer_link ? [{ day: null, url: d.session.wetransfer_link }] : [];
+// The PowerPoints this recipient gets, grouped by day: [{ day, items: [{ label, url | null,
+// missing_reason }] }]. A one-day class has one group (day null); on a multi-day course, only the
+// recipient's days. Where no PowerPoint is set up, an old WeTransfer link on the class stands in.
+function powerpointGroups(d, days) {
+  const groups = d.powerpoints ? d.powerpoints.groups : [];
+  const legacy = (day) => (day ? d.dayLinks[day.day_number - 1] : null) || d.session.wetransfer_link || null;
+  const pick = days.length
+    ? days.map((day) => ({ day, group: groups.find((g) => g.day === day.day_number) || { items: [] } }))
+    : [{ day: null, group: groups[0] || { items: [] } }];
+  return pick.map(({ day, group }) => {
+    const items = group.items.map((it) => ({ label: it.label, url: it.url || null, missing_reason: it.available ? null : it.missing_reason }));
+    if (!items.some((it) => it.url) && legacy(day)) return { day, items: [{ label: 'PowerPoint (WeTransfer)', url: legacy(day), missing_reason: null }] };
+    return { day, items };
+  }).filter((g) => g.items.length);
+}
+
+function downloadButton(item) {
+  if (!item.url) {
+    return `<div style="margin:4px 0;color:#1a1d21;">${esc(item.label)} <span style="color:${MUTED};font-size:12px;">– ${esc(item.missing_reason || 'not available yet')}. Contact the ESR office.</span></div>`;
+  }
+  return `<div style="margin:6px 0;"><a href="${esc(item.url)}" target="_blank" rel="noopener" style="display:inline-block;background:${GREEN};color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:8px 14px;border-radius:6px;">Download: ${esc(item.label)}</a></div>`;
 }
 
 // `inPortal` (2026-10-14): the same summary shown in the Training Portal - the QR codes sit below it
@@ -220,7 +242,8 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
   const showDayLabels = multiDay && days.length > 1;
   const dayLabel = (day) => `Day ${day.day_number} of ${s.total_days}`;
   const finalDay = multiDay ? days.some((day) => day.day_number === s.total_days) : true;
-  const links = powerpointLinks(d, days);
+  const pptGroups = powerpointGroups(d, days);
+  const anyDownload = pptGroups.some((g) => g.items.some((it) => it.url));
 
   const dateText = !multiDay
     ? longDate(s.session_date)
@@ -267,13 +290,14 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
     ...(d.trainings.length > 1 ? d.trainings.filter((t) => t.duration).map((t) => [t.label, esc(t.duration)]) : []),
   ].filter(Boolean) : null;
 
-  // 3. The PowerPoint - each day's link on its own line under its day (Keeley, 2026-10-14: the
-  // run-together list read too dense).
-  const linkList = links.map((l) => `<div style="margin:6px 0 0;">${l.day && (showDayLabels || !wholeCourse) ? `<div style="font-weight:700;font-size:13px;color:#1a1d21;">Day ${l.day.day_number}</div>` : ''}${link(l.url)}</div>`).join('');
-  const powerpointHtml = links.length
+  // 3. The PowerPoint(s) - each day's under its day (Keeley, 2026-10-14: the run-together list read
+  // too dense). Download buttons for the app's own decks (2026-11-06), the class's QR slides in them.
+  const linkList = pptGroups.map((g) => `<div style="margin:6px 0 0;">${g.day && (showDayLabels || !wholeCourse) ? `<div style="font-weight:700;font-size:13px;color:#1a1d21;">Day ${g.day.day_number}</div>` : ''}${g.items.map(downloadButton).join('')}</div>`).join('');
+  const downloads = pptGroups.reduce((n, g) => n + g.items.filter((it) => it.url).length, 0);
+  const powerpointHtml = pptGroups.length
     ? linkList
-      + `<div style="font-size:12px;color:${MUTED};margin-top:4px;">WeTransfer - download ${links.length > 1 ? 'these' : 'it'} before class. The QR codes are already in the PowerPoint.</div>`
-    : null;
+      + (anyDownload ? `<div style="font-size:12px;color:${MUTED};margin-top:6px;">Download ${downloads > 1 ? 'these' : 'it'} before class and open ${downloads > 1 ? 'them' : 'it'} in PowerPoint. This class's QR codes are already in ${downloads > 1 ? 'them' : 'it'} - the green SIGN-IN slide first and the gold FEEDBACK slide last.</div>` : '')
+    : `<div style="color:${MUTED};">No PowerPoint is set up for this class yet - contact the ESR office.</div>`;
 
   // 4. Instructions - the QR-code note last (Keeley: "disclaimer type of bullet ... at the very end").
   const signoffOnly = multiDay && !finalDay;
@@ -306,8 +330,8 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
     : added
       ? `You've been added as a trainer on this class${whichDays}. Here's everything you need.`
       : `You're scheduled to teach this class${whichDays}. Here's everything you need.`;
-  const topLink = links.length
-    ? `<div style="margin:14px 0 0;"><div style="font-weight:700;">PowerPoint</div>${linkList}</div>`
+  const topLink = anyDownload
+    ? `<div style="margin:14px 0 0;"><div style="font-weight:700;">${downloads > 1 ? 'PowerPoints' : 'PowerPoint'}</div>${linkList}</div>`
     : '';
 
   const subjectDates = multiDay && !wholeCourse ? days.map((day) => `Day ${day.day_number} – ${longDate(day.date)}`).join(', ') : dateText;
@@ -322,7 +346,7 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
         panel('Class details', classRows),
         panel('Logistics', logisticsRows),
         durationRows ? panel('Expected duration', durationRows) : '',
-        powerpointHtml ? textPanel('PowerPoint', powerpointHtml) : '',
+        textPanel(downloads > 1 ? 'PowerPoints' : 'PowerPoint', powerpointHtml),
         listPanel('Instructions', instructions),
         outlineHtml ? textPanel('Outline', outlineHtml) : '',
       ],

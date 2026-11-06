@@ -16,6 +16,9 @@ const TABLES_IN_DEPENDENCY_ORDER = [
   'admin_actions',
   'activity_log',
   'notifications',
+  // PowerPoints (migration 091) - the rows only; the .pptx files themselves stay on the disk.
+  'content_decks',
+  'content_deck_slides',
   'master_trainings',
   'clients',
   'client_logos',

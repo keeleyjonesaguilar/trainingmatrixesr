@@ -6,7 +6,7 @@
 // pdf.js is loaded on first use, so it stays out of the main bundle.
 
 let pdfjsReady = null;
-function loadPdfjs() {
+export function loadPdfjs() {
   if (!pdfjsReady) {
     pdfjsReady = Promise.all([import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')])
       .then(([pdfjs, worker]) => {

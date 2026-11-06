@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PhoneFilters from '../components/PhoneFilters.jsx';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { courseDayDecks } from '../lib/courseDecks';
 import { displayFirstLast } from '../lib/names.js';
 import { TrainingSearchSelect, TrainingMultiSearchSelect } from '../components/TrainingSearchSelect.jsx';
 import LoadingState from '../components/LoadingState.jsx';
@@ -91,6 +92,7 @@ export default function Sessions() {
   )), [sessions, listFilters]);
   const { sortedRows: sortedSessions, toggleSort, sortIndicator } = useSortableRows(filteredSessions, SESSION_SORT_ACCESSORS, 'session_date', 'desc');
   const [trainings, setTrainings] = useState([]);
+  const [decks, setDecks] = useState([]); // Content page PowerPoints, to list what the trainer will get
   const [clients, setClients] = useState([]);
   const [trainers, setTrainers] = useState([]);
   // 'select' shows a dropdown of existing clients/trainers; 'new' swaps in a plain text field
@@ -158,7 +160,6 @@ export default function Sessions() {
     start_time: '',
     location: '',
     // Optional - the class files for the trainer (Keeley's request, 2026-10-07).
-    wetransfer_link: '',
     duration: '',
     outline: '',
     language: 'english',
@@ -183,9 +184,6 @@ export default function Sessions() {
   // Who teaches each day (Keeley's request, 2026-09-29) - a trainer's employee_id, or '' for the
   // session's main trainer, so a one-trainer course needs nothing extra here.
   const [dayTrainers, setDayTrainers] = useState([]);
-  // Each day's PowerPoint (WeTransfer link) - only that day's trainer is sent it (Keeley's request,
-  // 2026-10-14).
-  const [dayLinks, setDayLinks] = useState([]);
   // Each day's start time and its own length (Keeley's request, 2026-10-14).
   const [dayStartTimes, setDayStartTimes] = useState([]);
   const [dayDurations, setDayDurations] = useState([]);
@@ -208,7 +206,6 @@ export default function Sessions() {
     setDayDates((prev) => resizeDays(prev, count, (i) => sequentialDates(form.session_date, count)[i]));
     setDayOutlines((prev) => (outlines ? outlines.slice(0, count) : resizeDays(prev, count, () => form.outline)));
     setDayTrainers((prev) => resizeDays(prev, count));
-    setDayLinks((prev) => resizeDays(prev, count));
     setDayStartTimes((prev) => resizeDays(prev, count, () => form.start_time));
     setDayDurations((prev) => resizeDays(prev, count));
   };
@@ -218,7 +215,6 @@ export default function Sessions() {
     setDayDates([]);
     setDayOutlines([]);
     setDayTrainers([]);
-    setDayLinks([]);
     setDayStartTimes([]);
     setDayDurations([]);
   };
@@ -241,6 +237,7 @@ export default function Sessions() {
 
   useEffect(() => {
     api.listMasterTrainings(true).then(setTrainings).catch(() => {});
+    api.listDecks().then(setDecks).catch(() => {});
     api.listClients().then(setClients).catch(() => {});
     api.listTrainers().then(setTrainers).catch(() => {});
   }, []);
@@ -341,8 +338,6 @@ export default function Sessions() {
         start_time: isMultiDay ? (dayStartTimes[0] || '') : form.start_time,
         day_start_times: isMultiDay ? dayStartTimes : null,
         day_durations: isMultiDay ? dayDurations.map((x) => x.trim()) : null,
-        wetransfer_link: isMultiDay ? '' : form.wetransfer_link.trim(),
-        day_wetransfer_links: isMultiDay ? dayLinks.map((l) => l.trim()) : null,
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -522,6 +517,48 @@ export default function Sessions() {
                   </p>
                 </div>
                 )}
+                {/* The PowerPoints this class's trainer will get, by name (Keeley, 2026-11-06: "it needs to be
+                    clear") - and any training or day with none, caught here rather than on class day. */}
+                {!isToolbox && form.master_training_id && (() => {
+                  const byId = (tid) => trainings.find((x) => x.training_id === tid);
+                  const deckName = (id) => decks.find((d) => d.deck_id === id)?.name || 'PowerPoint';
+                  const primary = byId(form.master_training_id);
+                  let rows;
+                  if (isMultiDay && Number(primary?.default_total_days) >= 2) {
+                    // A multi-day course: each day's PowerPoints, picked on its Training Type page.
+                    rows = courseDayDecks(primary, primary.default_total_days, trainings).map((ids, i) => {
+                      const list = ids.length ? ids : primary.deck_id ? [primary.deck_id] : [];
+                      return { key: `day-${i}`, label: `Day ${i + 1}`, names: list.map(deckName) };
+                    });
+                  } else {
+                    rows = [form.master_training_id, ...(isMultiDay ? [] : additionalTrainingIds)].map(byId).filter(Boolean)
+                      .map((t) => ({ key: t.training_id, label: t.training_name, names: t.deck_id ? [deckName(t.deck_id)] : [] }));
+                  }
+                  const missing = rows.some((r) => !r.names.length);
+                  const fixLink = isMultiDay && primary
+                    ? <>Pick them on the <Link to={`/training-types/${primary.training_id}`}>{primary.training_name}</Link> Training Type page</>
+                    : <>Upload it on the <Link to="/content">Content</Link> page</>;
+                  return (
+                    <div className={`session-ppt-preview${missing ? ' is-missing' : ''}`}>
+                      <div className="session-ppt-preview-title">PowerPoints the trainer will get</div>
+                      {rows.map((r) => (
+                        <div key={r.key} className="session-ppt-preview-row">
+                          <span className="session-ppt-preview-label">{r.label}</span>
+                          {r.names.length
+                            ? <span>{r.names.join(' · ')}</span>
+                            : <span className="session-ppt-preview-none">No PowerPoint yet - the trainer won&apos;t get one</span>}
+                        </div>
+                      ))}
+                      <div className="session-ppt-preview-note">
+                        {missing
+                          ? <>{fixLink} (you can do that after creating the class).</>
+                          : isMultiDay
+                            ? <>Each day starts with this class&apos;s Sign-In QR slide and ends with the Feedback QR slide, so attendees rate that day&apos;s trainer.</>
+                            : <>This class&apos;s Sign-In QR slide goes at the start and the Feedback QR slide at the end.</>}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="field">
                   <label>Trainer</label>
                   {trainerMode === 'select' ? (
@@ -615,17 +652,8 @@ export default function Sessions() {
                     required
                   />
                 </div>
-                {!isToolbox && !isMultiDay && (
-                  <div className="field">
-                    <label>WeTransfer Link (optional)</label>
-                    <input
-                      type="text"
-                      value={form.wetransfer_link}
-                      onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })}
-                      placeholder="https://we.tl/..."
-                    />
-                  </div>
-                )}
+                {/* No WeTransfer link any more (Keeley, 2026-11-06): the trainer's PowerPoints come
+                    from the Content page, set on each Training Type, with this class's QR slides. */}
                 {/* With 2+ trainings each one's duration is entered in the trainings list below (the
                     first training's is this same value) - a separate box up here read like the whole
                     day's length and got applied to the first training (Keeley's report, 2026-10-07). */}
@@ -798,15 +826,6 @@ export default function Sessions() {
                                     <option value="__new__">+ Add New Trainer</option>
                                   </select>
                                 </label>
-                                <label>
-                                  <span>WeTransfer link (optional)</span>
-                                  <input
-                                    type="text"
-                                    value={dayLinks[i] || ''}
-                                    onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
-                                    placeholder="https://we.tl/..."
-                                  />
-                                </label>
                               </div>
                               {addingDayTrainer === i && (
                                 <NewTrainerForm
@@ -831,7 +850,7 @@ export default function Sessions() {
                             </div>
                           ))}
                           <p className="page-subtitle" style={{ margin: 0 }}>
-                            Each day&apos;s trainer gets only their own day - its date, start time, duration, outline and WeTransfer link - when you press Email Class Summary on the session page, and again at 5:00 AM that morning.
+                            Each day&apos;s trainer gets only their own day - its date, start time, duration, outline and PowerPoints - when you press Email Class Summary on the session page, and again at 5:00 AM that morning.
                           </p>
                         </div>
                       )}

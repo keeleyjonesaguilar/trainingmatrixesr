@@ -822,3 +822,116 @@ tr:hover td { background: #fafbfc; }
   .fb-class-head { flex-direction: column; }
   .fb-class-score { text-align: left; }
 }
+
+/* ---- Content page: the PowerPoint library (2026-11-06) ---- */
+.deck-filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.deck-chip {
+  background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border);
+  border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 500;
+}
+.deck-chip:hover { background: var(--color-bg); }
+.deck-chip.active { background: var(--esr-green, var(--color-primary)); border-color: var(--esr-green, var(--color-primary)); color: #fff; }
+.deck-upload-progress {
+  position: relative; height: 28px; border-radius: 4px; background: var(--color-bg);
+  border: 1px solid var(--color-border); overflow: hidden; margin: 12px 0;
+}
+.deck-upload-progress > div { position: absolute; inset: 0 auto 0 0; background: var(--esr-tint, #e6f0ee); transition: width .2s; }
+.deck-upload-progress > span { position: relative; display: block; line-height: 26px; padding: 0 10px; font-size: 13px; color: var(--color-text); }
+.deck-missing-list { columns: 3 220px; margin: 10px 0 0; padding-left: 18px; font-size: 13px; }
+.deck-missing-list li { margin: 2px 0; break-inside: avoid; }
+
+.deck-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.deck-details > .card { margin-top: 0; }
+.deck-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.deck-all-transitions { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-text-muted); }
+.deck-all-transitions select { width: auto; }
+.deck-slides { display: flex; flex-direction: column; gap: 10px; padding-bottom: 80px; }
+
+.deck-slide {
+  display: grid; grid-template-columns: 54px 280px minmax(0, 1fr) 220px; gap: 14px; align-items: start;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px;
+}
+.deck-slide.is-hidden { background: var(--color-bg); }
+.deck-slide.is-hidden .deck-slide-picture { opacity: .55; }
+.deck-slide.is-flagged { border-left: 4px solid var(--esr-gold, #c49b0d); }
+.deck-slide.is-dragging { outline: 2px dashed var(--esr-green, var(--color-primary)); opacity: .7; }
+.deck-slide-order { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.deck-slide-handle { cursor: grab; color: var(--color-text-muted); font-size: 16px; letter-spacing: -3px; user-select: none; padding: 2px 6px; }
+.deck-slide-handle:active { cursor: grabbing; }
+.deck-slide-number { font-weight: 700; font-size: 16px; color: var(--color-text); }
+.deck-slide-arrows { display: flex; flex-direction: column; }
+.deck-slide-arrows .link-button { padding: 0 6px; font-size: 11px; line-height: 1.4; }
+.deck-slide-picture {
+  position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--color-border); border-radius: 4px;
+  background: var(--color-bg); overflow: hidden; display: flex; align-items: center; justify-content: center;
+}
+.deck-slide-picture img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.deck-slide-picture-btn { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+/* Real slide pictures (migration 093): their status, and the bigger view. */
+.deck-pictures-note { font-size: 13px; color: var(--color-text-muted); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px 12px; margin: 0 0 8px; }
+.deck-pictures-note.is-problem { color: var(--color-text); border-left: 4px solid var(--esr-gold, #c49b0d); }
+.deck-big-picture { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, .82); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; cursor: zoom-out; }
+.deck-big-picture img { max-width: 100%; max-height: calc(100vh - 70px); background: #fff; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.deck-big-picture-caption { color: #fff; font-size: 13px; }
+.deck-slide-picture-text { padding: 8px; font-size: 12px; font-weight: 600; text-align: center; color: var(--color-text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+.deck-slide-tag { position: absolute; top: 6px; left: 6px; background: var(--color-text); color: #fff; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 6px; border-radius: 3px; }
+.deck-slide-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.deck-slide-title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.deck-slide-title-input { font-weight: 600; font-size: 15px; width: 100%; padding: 4px 6px; margin-left: -7px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; }
+.deck-slide-title-input:hover { border-color: var(--color-border); }
+.deck-slide-title-input:focus { border-color: var(--esr-green, var(--color-primary)); background: var(--color-surface, #fff); outline: none; }
+/* The deck page's "saved" message, near where the change was made (2026-11-06). */
+.deck-toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 60; margin: 0; max-width: min(560px, calc(100vw - 32px)); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
+/* Multi-day course: each day's PowerPoints (Training Type page, 2026-11-06). */
+.day-deck-picker { display: flex; flex-direction: column; gap: 6px; }
+.day-deck-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; max-width: 520px; }
+.day-deck-num { color: var(--color-text-muted); min-width: 18px; }
+.day-deck-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.day-decks-view { font-size: 13px; margin: 2px 0; }
+.day-decks-label { color: var(--color-text-muted); }
+.day-decks-view ol { margin: 2px 0 4px; padding-left: 22px; }
+.deck-slide-text { font-size: 13px; color: var(--color-text); background: var(--color-bg); border-radius: 4px; padding: 8px 10px; max-height: 240px; overflow: auto; }
+.deck-slide-notes { margin-top: 8px; color: var(--color-text-muted); }
+.deck-slide-flag { background: var(--status-missing-bg, #fff6e0); color: var(--color-text); border-radius: 4px; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.deck-slide-flag textarea { font-size: 13px; width: 100%; }
+.deck-slide-meta { font-size: 11px; color: var(--color-text-muted); }
+.deck-slide-controls { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.deck-slide-controls > label > span { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); margin-bottom: 2px; }
+.deck-slide-controls select { width: 100%; font-size: 13px; }
+.deck-slide-controls .deck-slide-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.deck-slide-controls .deck-slide-check > span { display: inline; text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 400; color: var(--color-text); margin: 0; }
+.deck-slide-controls .deck-slide-check input { width: auto; margin: 0; }
+.deck-save-bar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: center;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-left: 4px solid var(--esr-gold, #c49b0d);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .15); border-radius: 6px; padding: 10px 16px; font-size: 14px; max-width: calc(100vw - 32px);
+}
+
+/* New Session form: the PowerPoints the trainer will get (2026-11-06). */
+.session-ppt-preview { grid-column: 1 / -1; margin: -4px 0 12px; padding: 10px 12px; border: 1px solid var(--color-border); border-left: 4px solid var(--esr-green, var(--color-primary)); border-radius: 6px; background: var(--color-surface); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.session-ppt-preview.is-missing { border-left-color: var(--status-expired-text); }
+.session-ppt-preview-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); }
+.session-ppt-preview-row { display: grid; grid-template-columns: fit-content(260px) minmax(0, 1fr); gap: 10px; overflow-wrap: anywhere; }
+.session-ppt-preview-label { font-weight: 600; }
+.session-ppt-preview-none { color: var(--status-expired-text); }
+.session-ppt-preview-note { color: var(--color-text-muted); font-size: 12px; margin-top: 2px; }
+@media (max-width: 520px) { .session-ppt-preview-row { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+/* A class's PowerPoints on the session page and a training type's settings. */
+.class-ppt-group + .class-ppt-group { margin-top: 10px; }
+.class-ppt-group-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.class-ppt-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 0; font-size: 14px; }
+.class-ppt-item .class-ppt-qr { font-size: 11px; color: var(--color-text-muted); }
+
+/* With the wider slide pictures, the controls go under the picture before the name gets squeezed. */
+@media (max-width: 1400px) {
+  .deck-slide { grid-template-columns: 54px 280px minmax(0, 1fr); }
+  .deck-slide-controls { grid-column: 2 / -1; flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+  .deck-slide-controls > label:first-child { min-width: 200px; }
+}
+@media (max-width: 900px) {
+  .deck-details { grid-template-columns: minmax(0, 1fr); }
+  .deck-slide { grid-template-columns: 44px minmax(0, 1fr); }
+  .deck-slide-picture { grid-column: 2; }
+  .deck-slide-main, .deck-slide-controls { grid-column: 1 / -1; }
+}

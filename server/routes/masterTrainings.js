@@ -72,6 +72,39 @@ router.put('/:id', requireAdmin, async (req, res) => {
     'UPDATE master_trainings SET default_total_days = ?, default_day_outlines = ? WHERE training_id = ?',
     [totalDays, dayOutlines, req.params.id]
   );
+  // Its PowerPoint (Content page, migration 091, Keeley, 2026-11-06).
+  if (Object.prototype.hasOwnProperty.call(req.body, 'deck_id')) {
+    const deckId = req.body.deck_id || null;
+    if (deckId && !(await dbGet('SELECT 1 FROM content_decks WHERE deck_id = ?', [deckId]))) {
+      return res.status(400).json({ error: 'That PowerPoint no longer exists - reload the page.' });
+    }
+    await dbRun('UPDATE master_trainings SET deck_id = ? WHERE training_id = ?', [deckId, req.params.id]);
+  }
+  // Each day's PowerPoints on a multi-day course (migration 092, 2026-11-06): one list of deck_ids
+  // per day, picked on the Training Type page. Sending them retires the older per-day training
+  // type topics (default_day_topics, still read for a course saved before).
+  const has = (k) => Object.prototype.hasOwnProperty.call(req.body, k);
+  if (has('default_day_decks') || has('default_total_days')) {
+    let sent = has('default_day_decks') ? req.body.default_day_decks : existing.default_day_decks;
+    if (typeof sent === 'string') {
+      try { sent = JSON.parse(sent); } catch { sent = null; }
+    }
+    // A course saved with the older training type topics: carry each topic's own deck over.
+    if (!Array.isArray(sent) && existing.default_day_topics) {
+      let topics = null;
+      try { topics = JSON.parse(existing.default_day_topics); } catch { topics = null; }
+      if (Array.isArray(topics)) {
+        const deckOf = new Map((await dbAll('SELECT training_id, deck_id FROM master_trainings WHERE deck_id IS NOT NULL')).map((t) => [t.training_id, t.deck_id]));
+        sent = topics.map((day) => (Array.isArray(day) ? day.map((tid) => deckOf.get(tid)).filter(Boolean) : []));
+      }
+    }
+    const known = new Set((await dbAll('SELECT deck_id FROM content_decks')).map((d) => d.deck_id));
+    const dayDecks = totalDays && Array.isArray(sent)
+      ? Array.from({ length: totalDays }, (_, i) => [...new Set((Array.isArray(sent[i]) ? sent[i] : []).filter((id) => known.has(id)))])
+      : null;
+    await dbRun('UPDATE master_trainings SET default_day_decks = ? WHERE training_id = ?', [dayDecks && dayDecks.some((d) => d.length) ? JSON.stringify(dayDecks) : null, req.params.id]);
+    if (has('default_day_decks') || !totalDays) await dbRun('UPDATE master_trainings SET default_day_topics = NULL WHERE training_id = ?', [req.params.id]);
+  }
   await dbRun(
     `UPDATE master_trainings SET training_name=?, training_type=?, default_expiration=?, active=?, display_order=?, outline=?, default_duration=?
      WHERE training_id=?`,

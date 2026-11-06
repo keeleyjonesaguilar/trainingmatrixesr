@@ -176,6 +176,11 @@ async function start() {
   app.use('/api/trainer-close-pin-settings', requireAuth, require('./routes/trainerClosePinSettings'));
   app.use('/api/audit', requireAuth, requireSuperAdmin, require('./routes/audit'));
   app.use('/api/notifications', requireAuth, require('./routes/notifications'));
+  // The Content page - the PowerPoint library (migration 091).
+  app.use('/api/content', requireAuth, require('./routes/content'));
+  // A class's PowerPoint downloads from the trainer's summary email / Training Portal - public
+  // (trainers have no office login) behind the session's own random key.
+  app.use('/api/class-files', rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false }), require('./routes/classFiles'));
   // Manage Users, Import Data and Requests are Super Admin only (Keeley's request, 2026-10-23).
   app.use('/api/change-requests', requireAuth, requireSuperAdmin, require('./routes/changeRequests'));
 
@@ -266,6 +271,13 @@ async function start() {
   const PORT = process.env.PORT || 4000;
   app.listen(PORT, () => {
     console.log(`Training Matrix server listening on port ${PORT}`);
+    // Slide pictures for any PowerPoint that doesn't have them yet (Content page, migration 093).
+    const slidePictures = require('./lib/slidePictures');
+    if (slidePictures.isConfigured()) {
+      slidePictures.queueMissingSlidePictures().catch((err) => console.error('Slide pictures queue failed:', err.message));
+    } else {
+      console.log('Slide pictures are off on this server (no SLIDE_CONVERTER_URL).');
+    }
   });
 }
 

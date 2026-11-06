@@ -20,6 +20,8 @@ import Sessions from './pages/Sessions.jsx';
 import SessionDetail from './pages/SessionDetail.jsx';
 import TrainingTypes from './pages/TrainingTypes.jsx';
 import TrainingTypeDetail from './pages/TrainingTypeDetail.jsx';
+import Content from './pages/Content.jsx';
+import ContentDeck from './pages/ContentDeck.jsx';
 import PublicSignIn from './pages/PublicSignIn.jsx';
 import PublicFeedback from './pages/PublicFeedback.jsx';
 import PublicSessionEdit from './pages/PublicSessionEdit.jsx';
@@ -122,6 +124,8 @@ export default function App() {
               <Route path="/sessions/:id" element={<SessionDetail />} />
               <Route path="/training-types" element={<TrainingTypes />} />
               <Route path="/training-types/:id" element={<TrainingTypeDetail />} />
+              <Route path="/content" element={<Content />} />
+              <Route path="/content/:id" element={<ContentDeck />} />
               {/* Super Admin only (Keeley's request, 2026-10-23) - anyone else typing the address lands on the Dashboard. */}
               <Route path="/import" element={superOnly(<Import />)} />
               <Route path="/reports" element={<Reports />} />

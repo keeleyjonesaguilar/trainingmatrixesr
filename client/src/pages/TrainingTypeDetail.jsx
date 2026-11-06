@@ -7,6 +7,132 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { courseDays, resizeDays } from '../lib/courseDays';
+import { courseDayDecks } from '../lib/courseDecks';
+
+// The PowerPoints picked for one day of a multi-day course, in the order they're taught: add from
+// the Content page's decks, move up/down, remove (2026-11-06).
+function DayDeckPicker({ decks, value, onChange, label }) {
+  const name = (id) => decks.find((d) => d.deck_id === id)?.name || 'Deleted PowerPoint';
+  const move = (from, to) => {
+    if (to < 0 || to >= value.length) return;
+    const next = [...value];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+  const left = decks.filter((d) => !value.includes(d.deck_id));
+  return (
+    <div className="day-deck-picker">
+      {value.map((id, i) => (
+        <div key={id} className="day-deck-row">
+          <span className="day-deck-num">{i + 1}.</span>
+          <span className="day-deck-name">{name(id)}</span>
+          <button type="button" className="link-button" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={`Move ${name(id)} up`}>▲</button>
+          <button type="button" className="link-button" onClick={() => move(i, i + 1)} disabled={i === value.length - 1} aria-label={`Move ${name(id)} down`}>▼</button>
+          <button type="button" className="link-button" style={{ color: 'var(--status-expired-text)' }} onClick={() => onChange(value.filter((x) => x !== id))} aria-label={`Remove ${name(id)}`}>Remove</button>
+        </div>
+      ))}
+      <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }} aria-label={label} style={{ maxWidth: 420 }}>
+        <option value="">{value.length ? '+ Add another PowerPoint…' : '+ Add a PowerPoint…'}</option>
+        {left.map((d) => <option key={d.deck_id} value={d.deck_id}>{d.name}</option>)}
+      </select>
+    </div>
+  );
+}
+
+// The training type's PowerPoint, from the Content page (Keeley's "Training matrix features 11.6",
+// 2026-11-06) - what its trainers download, with the class's QR slides added.
+function PowerpointPanel({ training, isAdmin, onSaved }) {
+  const [decks, setDecks] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [deckId, setDeckId] = useState(training.deck_id || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { api.listDecks().then(setDecks).catch((e) => setError(e.message)); }, [training.deck_id]);
+  useEffect(() => setDeckId(training.deck_id || ''), [training.deck_id]);
+
+  const deck = decks?.find((d) => d.deck_id === training.deck_id);
+  // A multi-day course has no main PowerPoint - each day's are picked in Multi-Day Course below
+  // (Keeley, 2026-11-06). One set before then still shows here so it can be removed.
+  const multiDay = Boolean(courseDays(training));
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await api.updateMasterTraining(training.training_id, { deck_id: deckId || null });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (multiDay && !training.deck_id) {
+    return (
+      <div className="card">
+        <h2>PowerPoint</h2>
+        <p className="page-subtitle" style={{ margin: 0 }}>
+          This is a multi-day course, so it doesn&apos;t need a main PowerPoint. Each day&apos;s PowerPoints are picked
+          in <strong>Multi-Day Course</strong> below, next to that day&apos;s outline.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <h2>PowerPoint</h2>
+      {error && <div className="error-banner">{error}</div>}
+      {editing ? (
+        <>
+          <div className="field-row" style={{ maxWidth: 420 }}>
+            <label>PowerPoint for this training</label>
+            <select value={deckId} onChange={(e) => setDeckId(e.target.value)}>
+              <option value="">None</option>
+              {(decks || []).map((d) => <option key={d.deck_id} value={d.deck_id}>{d.name}</option>)}
+            </select>
+          </div>
+          <p className="page-subtitle" style={{ margin: '4px 0 8px' }}>Not in the list? Upload it on the <Link to="/content">Content</Link> page first.</p>
+          <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
+          <button type="button" className="secondary" onClick={() => { setEditing(false); setDeckId(training.deck_id || ''); }}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <p style={{ margin: '0 0 4px' }}>
+            {deck ? (
+              <>
+                <Link to={`/content/${deck.deck_id}`}><strong>{deck.name}</strong></Link> · {deck.slide_count} slides
+                {deck.flagged_count > 0 && <> · <span className="badge badge-expiringsoon">⚑ {deck.flagged_count} need update</span></>}
+                {deck.file_missing && <> · <span className="badge badge-expired">File missing</span></>}
+              </>
+            ) : decks ? (
+              <span style={{ color: 'var(--color-text-muted)' }}>No PowerPoint set - trainers for this class won&apos;t get one.</span>
+            ) : 'Loading…'}
+          </p>
+          <p className="page-subtitle" style={{ margin: 0 }}>
+            {multiDay
+              ? "This is a multi-day course - each day's PowerPoints are picked in Multi-Day Course below. This one is only used for a day with none picked; you can remove it."
+              : "Trainers download it from their class summary email and Training Portal, with the class's Sign-In QR slide first and Feedback QR slide last."}
+          </p>
+          {isAdmin && !multiDay && <button type="button" className="link-button" onClick={() => setEditing(true)}>{deck ? 'Change PowerPoint' : 'Choose PowerPoint'}</button>}
+          {isAdmin && multiDay && (
+            <button
+              type="button"
+              className="link-button"
+              onClick={async () => {
+                try { await api.updateMasterTraining(training.training_id, { deck_id: null }); onSaved(); } catch (e) { setError(e.message); }
+              }}
+            >Remove main PowerPoint</button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 const EXPIRATION_OPTIONS = ['None', '1 Year', '2 Years', '3 Years', '4 Years', '5 Years'];
 const TYPE_OPTIONS = ['Training', 'Certification', 'License', 'Orientation'];
@@ -175,23 +301,35 @@ function CourseDaysPanel({ training, isAdmin, onSaved }) {
   const [editing, setEditing] = useState(false);
   const [days, setDays] = useState(saved ? String(saved.days) : '');
   const [outlines, setOutlines] = useState(saved ? saved.outlines : []);
+  // Each day's PowerPoints (2026-11-06), picked from the Content page - what that day's trainer
+  // downloads, in this order.
+  const [dayDecks, setDayDecks] = useState([]);
+  const [trainings, setTrainings] = useState([]);
+  const [decks, setDecks] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.listMasterTrainings().then(setTrainings).catch(() => {});
+    api.listDecks().then(setDecks).catch(() => {});
+  }, []);
+  const deckById = (id) => decks.find((d) => d.deck_id === id);
 
   const reset = () => {
     const current = courseDays(training);
     setDays(current ? String(current.days) : '');
     setOutlines(current ? current.outlines : []);
+    setDayDecks(current ? courseDayDecks(training, current.days, trainings) : []);
     setError('');
   };
-  useEffect(reset, [training]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(reset, [training, trainings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     setSaving(true);
     setError('');
     try {
       const count = Number(days) || null;
-      await api.updateMasterTraining(training.training_id, { default_total_days: count, default_day_outlines: count ? outlines : null });
+      await api.updateMasterTraining(training.training_id, { default_total_days: count, default_day_outlines: count ? outlines : null, default_day_decks: count ? dayDecks : null });
       setEditing(false);
       onSaved();
     } catch (e) {
@@ -208,11 +346,31 @@ function CourseDaysPanel({ training, isAdmin, onSaved }) {
         {saved ? (
           <>
             <p className="page-subtitle" style={{ margin: '0 0 8px' }}>
-              {saved.days} days - picking this training on a new session sets up {saved.days} days, each with its own date, trainer, WeTransfer link and this outline.
+              {saved.days} days - picking this training on a new session sets up {saved.days} days, each with its own date, trainer and this outline. Each day&apos;s trainer gets that day&apos;s PowerPoints.
             </p>
             {saved.outlines.map((o, i) => (
               <div key={i} style={{ marginBottom: 8 }}>
                 <strong style={{ fontSize: 13 }}>Day {i + 1}</strong>
+                <div className="day-decks-view">
+                  <span className="day-decks-label">PowerPoint{dayDecks[i]?.length > 1 ? 's' : ''}:</span>
+                  {dayDecks[i]?.length ? (
+                    <ol>
+                      {dayDecks[i].map((id) => {
+                        const deck = deckById(id);
+                        return (
+                          <li key={id}>
+                            {deck ? <Link to={`/content/${id}`}>{deck.name}</Link> : <span style={{ color: 'var(--color-text-muted)' }}>Loading…</span>}
+                            {deck && <span style={{ color: 'var(--color-text-muted)' }}> · {deck.slide_count} slides</span>}
+                            {deck?.flagged_count > 0 && <> · <span className="badge badge-expiringsoon">⚑ {deck.flagged_count} need update</span></>}
+                            {deck?.file_missing && <> · <span className="badge badge-expired">File missing</span></>}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  ) : training.deck_id
+                    ? <span style={{ color: 'var(--color-text-muted)' }}> none picked - the main PowerPoint is used</span>
+                    : <span style={{ color: 'var(--status-expired-text)' }}> none picked yet - this day&apos;s trainer won&apos;t get one</span>}
+                </div>
                 <p className="outline-text" style={{ margin: '2px 0 0', whiteSpace: 'pre-line' }}>{o || 'No outline yet.'}</p>
               </div>
             ))}
@@ -240,15 +398,34 @@ function CourseDaysPanel({ training, isAdmin, onSaved }) {
           onChange={(e) => {
             setDays(e.target.value);
             setOutlines((prev) => resizeDays(prev, Math.min(10, Math.max(0, parseInt(e.target.value, 10) || 0))));
+            setDayDecks((prev) => resizeDays(prev, Math.min(10, Math.max(0, parseInt(e.target.value, 10) || 0)), () => []));
           }}
         />
       </div>
       {outlines.map((o, i) => (
-        <div className="field" key={i} style={{ marginTop: 10 }}>
-          <label>Day {i + 1} outline</label>
-          <textarea rows={5} value={o} onChange={(e) => setOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))} />
+        <div key={i} style={{ marginTop: 14 }}>
+          <div className="field">
+            <label>Day {i + 1} PowerPoints</label>
+            <DayDeckPicker
+              decks={decks}
+              value={dayDecks[i] || []}
+              onChange={(ids) => setDayDecks((prev) => prev.map((x, xi) => (xi === i ? ids : x)))}
+              label={`Add a PowerPoint to Day ${i + 1}`}
+            />
+          </div>
+          <div className="field">
+            <label>Day {i + 1} outline</label>
+            <textarea rows={5} value={o} onChange={(e) => setOutlines((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))} />
+          </div>
         </div>
       ))}
+      {outlines.length > 0 && (
+        <p className="page-subtitle" style={{ margin: '8px 0 0' }}>
+          Put each day&apos;s PowerPoints in the order they&apos;re taught. That day&apos;s trainer gets each one as its own download; the
+          class&apos;s Sign-In QR slide goes at the start of the day&apos;s first PowerPoint, and the Feedback QR slide at the end of the
+          day&apos;s last one, so attendees rate that day&apos;s trainer. Not in the list? Upload it on the <Link to="/content">Content</Link> page first.
+        </p>
+      )}
       <div style={{ marginTop: 8 }}>
         <button disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>{' '}
         <button type="button" className="secondary" onClick={() => { setEditing(false); reset(); }}>Cancel</button>
@@ -381,6 +558,7 @@ export default function TrainingTypeDetail() {
         <div>
           <SettingsPanel training={training} isAdmin={isAdmin} onSaved={load} onDeleted={() => navigate('/training-types')} />
           <TrainingOutline training={training} isAdmin={isAdmin} onSaved={load} />
+          <PowerpointPanel training={training} isAdmin={isAdmin} onSaved={load} />
           <CourseDaysPanel training={training} isAdmin={isAdmin} onSaved={load} />
 
           <div className="card">
