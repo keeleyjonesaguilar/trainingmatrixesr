@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import PhoneFilters from '../components/PhoneFilters.jsx';
 import TrainingsByClassReport from '../components/TrainingsByClassReport.jsx';
 import { matchesSearch } from '../lib/search.js';
 import { downloadCsv } from '../lib/csv';
@@ -177,6 +178,7 @@ export default function Reports() {
       {/* Follows the Client filter below (blank = all clients). */}
       <TrainingsByClassReport clientId={clientId} clientName={clients.find((c) => c.client_id === clientId)?.client_name || ''} />
 
+      <PhoneFilters active={[clientId, trainingId, status].filter(Boolean).length}>
       <div className="filter-bar">
         <div className="field-row">
           <label>Client</label>
@@ -205,6 +207,7 @@ export default function Reports() {
         </div>
         <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
       </div>
+      </PhoneFilters>
 
       <div className="card">
         <div className="table-scroll">

@@ -397,3 +397,129 @@ button:not([class]):not([style*="padding"]), button.secondary:not([style*="paddi
   .toolbar > .field-row { flex: 1 1 100%; }
   .toolbar > .field-row :is(input, select) { width: 100%; }
 }
+
+/* ---- Phone clean-up (Keeley, 2026-11-06: "the mobile version is trash please clean it") ----
+   1. Lists: tables turn into one card per row with each column's name beside its value
+      (lib/stackTables.js copies the headings onto the cells). The employee/training grids stay grids.
+   2. Filters fold behind a "Filters" button (components/PhoneFilters.jsx); the name search stays out.
+   3. Page-top buttons sit two to a row in a smaller size instead of one huge button per line.
+   4. The session page's roster/certificate buttons sit two to a row. */
+.phone-filters-toggle { display: none; }
+
+@media (max-width: 900px) {
+  .phone-filters-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 8px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+    color: var(--esr-navy);
+    font-family: var(--font-head);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .phone-filters-toggle:hover { background: var(--esr-tint); }
+  .phone-filters.is-open .phone-filters-toggle { border-color: var(--esr-green); color: var(--esr-green); }
+  .phone-filters-count {
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--esr-green);
+    color: #fff;
+    font-size: 11px;
+    line-height: 20px;
+    text-align: center;
+  }
+  /* Closed: only the name search shows (or nothing, on a page without one). */
+  .phone-filters:not(.is-open) .filter-bar > :not(.field-row:has(input[type="search"])) { display: none; }
+  .phone-filters:not(.is-open) .filter-bar:not(:has(input[type="search"])) { display: none; }
+  /* Open: two filters to a row; the search, picker buttons and Reset take the full row. */
+  .filter-bar, .filter-bar[style] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px 12px; }
+  .filter-bar > .field-row:has(input[type="search"]),
+  .filter-bar > .field-row:has(> button),
+  .filter-bar > button { grid-column: 1 / -1; }
+  .filter-bar .field-row :is(select, input) { width: 100%; min-width: 0; }
+
+  /* Page-top buttons: two to a row, smaller, text may wrap onto two lines. */
+  .page-header-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .page-header-actions > :is(button, .btn, a) {
+    flex: none;
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.25;
+    white-space: normal;
+    text-align: center;
+    justify-content: center;
+  }
+  .page-header-actions > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+  /* Session page: the roster and certificate buttons two to a row. */
+  .session-file-actions { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .session-file-actions > :is(a, button) { display: flex; align-items: center; min-height: 42px; white-space: normal; line-height: 1.25; text-align: center; }
+  .session-file-actions > :is(a, button):last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+
+@media (max-width: 640px) {
+  .card { padding: 14px; }
+  /* A box that only held a table loses its own border and height cap - the rows are cards now. */
+  :is(.table-scroll, .table-x, .profile-row > .card):has(> table[data-stack]) { border: 0; }
+  :is(.table-scroll, .table-x, .profile-row > .card):has(> table[data-stack]):not([style*="max-height"]) { max-height: none; overflow: visible; }
+  /* A list kept short on purpose (Sessions I've Taught) still scrolls inside its own box. */
+  .table-scroll[style*="max-height"]:has(> table[data-stack]) { overflow-y: auto; }
+  .app-body table[data-stack], table[data-stack] { display: block; width: 100%; overflow: visible; font-size: 14px; }
+  /* A card holding only the list drops its own box so the rows aren't boxes inside a box. */
+  .card:is(:has(> table[data-stack]:only-child), :has(> :is(.table-scroll, .table-x):only-child > table[data-stack])) { padding: 0; border: 0; background: none; }
+  table[data-stack] > thead { display: none; }
+  table[data-stack] > tbody { display: block; }
+  table[data-stack] > tbody > tr {
+    display: block;
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+  }
+  table[data-stack] > tbody > tr:last-child { margin-bottom: 0; }
+  table[data-stack] > tbody > tr:hover td { background: none; }
+  table[data-stack] > tbody > tr > td {
+    display: flow-root;
+    padding: 3px 0;
+    border: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: right;
+    line-height: 1.4;
+  }
+  table[data-stack] > tbody > tr > td::before {
+    content: attr(data-label);
+    float: left;
+    max-width: 48%;
+    margin-right: 12px;
+    text-align: left;
+    font-family: var(--font-head);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    line-height: 20px;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+  /* First column is the card's title; a column with no heading (buttons) has no label. */
+  table[data-stack] > tbody > tr > td:first-child { padding-bottom: 6px; text-align: left; font-size: 15px; font-weight: 600; }
+  table[data-stack] > tbody > tr > td:first-child::before,
+  table[data-stack] > tbody > tr > td[data-label=""]::before { display: none; }
+  table[data-stack] > tbody > tr > td[data-label=""] { text-align: left; }
+  table[data-stack] > tbody > tr > td:is(:empty, [data-blank]):not(:first-child) { display: none; }
+  table[data-stack] > tbody > tr > td[colspan] { text-align: center; }
+  /* A cell of row buttons (Edit / Inactivate / Delete) becomes the card's footer, buttons in a row. */
+  table[data-stack] > tbody > tr > td:not(:first-child):has(:is(button, .btn) ~ :is(button, .btn)) { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--color-border); text-align: left; }
+  table[data-stack] > tbody > tr > td:not(:first-child):has(:is(button, .btn) ~ :is(button, .btn))::before { display: none; }
+  table[data-stack] > tbody > tr:has(> td[colspan]:only-child) { border-style: dashed; }
+}

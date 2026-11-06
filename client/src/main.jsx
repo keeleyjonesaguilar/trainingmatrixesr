@@ -13,6 +13,9 @@ import '@fontsource/open-sans/700.css'
 import './esr-theme.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { installStackedTables } from './lib/stackTables.js'
+
+installStackedTables()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

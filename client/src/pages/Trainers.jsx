@@ -8,6 +8,7 @@ import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import { nameKey, nameParts } from '../lib/names.js';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import PhoneFilters from '../components/PhoneFilters.jsx';
 import { useSortableRows } from '../lib/useSortableRows';
 import { matchesSearch } from '../lib/search';
 
@@ -191,6 +192,7 @@ export default function Trainers() {
       {isAdmin && <TrainerEmployeeMatchesPanel onMerged={load} />}
       {isAdmin && <DuplicateTrainersPanel onMerged={load} />}
 
+      <PhoneFilters active={[filters.type, filters.email].filter(Boolean).length}>
       <div className="filter-bar" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
         <div className="field-row">
           <label htmlFor="trainers-search">Search</label>
@@ -217,6 +219,7 @@ export default function Trainers() {
           <button type="button" className="secondary" disabled={!filtersOn} onClick={() => setFilters(NO_FILTERS)}>Reset Filters</button>
         </div>
       </div>
+      </PhoneFilters>
 
       <div className="card">
         {loading ? <LoadingState label="Loading trainers..." /> : (

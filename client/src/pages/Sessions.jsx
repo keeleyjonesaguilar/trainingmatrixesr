@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import PhoneFilters from '../components/PhoneFilters.jsx';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { displayFirstLast } from '../lib/names.js';
@@ -870,6 +871,7 @@ export default function Sessions() {
 
       {/* Same labeled filter bar as the Matrix page (Keeley's report, 2026-10-05: the first version
           of these filters looked off next to the rest of the app). */}
+      <PhoneFilters active={[filters.client_id, filters.status !== 'open'].filter(Boolean).length + Object.values(listFilters).filter(Boolean).length}>
       <div className="filter-bar" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
         <div className="field-row">
           <label htmlFor="sessions-filter-client">Client</label>
@@ -916,6 +918,7 @@ export default function Sessions() {
           Reset Filters
         </button>
       </div>
+      </PhoneFilters>
       {!sessionsLoading && (filters.client_id || filters.status !== 'open' || Object.values(listFilters).some(Boolean)) && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
           {filteredSessions.length} session{filteredSessions.length === 1 ? '' : 's'} match these filters.

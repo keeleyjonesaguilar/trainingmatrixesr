@@ -807,7 +807,8 @@ export default function PublicSignIn() {
           </div>
         ) : (
           <div className="card">
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            {/* Two equal halves, so the short "I'm signing in" isn't a squeezed stub on a phone. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 16 }}>
               <button
                 type="button"
                 className={mode === 'trainee' ? 'btn' : 'btn btn-secondary'}

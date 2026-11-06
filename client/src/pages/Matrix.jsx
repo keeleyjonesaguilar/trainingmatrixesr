@@ -7,6 +7,7 @@ import DuplicateWarningModal from '../components/DuplicateWarningModal.jsx';
 import TrainingFilterDropdown from '../components/TrainingFilterDropdown.jsx';
 import LoadingState from '../components/LoadingState.jsx';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
+import PhoneFilters from '../components/PhoneFilters.jsx';
 import MatrixCellContent from '../components/MatrixCellContent.jsx';
 import { formatCell, cellFor, STATUS_OPTIONS, buildComplianceReportRows, emptyFilterHint } from '../lib/matrixCell.js';
 import { nameKey, nameParts } from '../lib/names.js';
@@ -308,6 +309,7 @@ export default function Matrix() {
         </div>
       )}
 
+      <PhoneFilters active={[clientId, status].filter(Boolean).length + trainingIds.length}>
       <div className="filter-bar">
         <div className="field-row">
           <label>Search Employee</label>
@@ -330,6 +332,7 @@ export default function Matrix() {
         </div>
         <button type="button" className="secondary" onClick={() => setSearchParams({}, { replace: true })}>Reset Filters</button>
       </div>
+      </PhoneFilters>
       {status && (
         <p className="page-subtitle" style={{ marginTop: -8 }}>
           Showing employees with at least one training marked <strong>{status}</strong>.

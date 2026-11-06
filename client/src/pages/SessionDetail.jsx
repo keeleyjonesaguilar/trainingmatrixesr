@@ -1480,7 +1480,7 @@ Their certificate and the training record it added to their employee file will b
             )}
 
             {session.status === 'closed' && (
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="session-file-actions" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <a href={`/api/training-sessions/${id}/roster.pdf`} className="btn btn-sm" style={{ justifyContent: 'center' }}>
                   Download Roster (PDF)
                 </a>
