@@ -82,7 +82,26 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
   const nameReaders = useRef(0);
   const nameReadingSetUp = useRef(true);
   const [nameNote, setNameNote] = useState('');
-  const cardLabel = `${session.training_type_label} Card`;
+  // Which of the session's trainings each file is filed under (Keeley's request, 2026-11-09: an
+  // orientation's N95 forms were filed under the orientation instead of TRN-055). The main
+  // training first, then each extra training once - a session's toolbox talks share TRN-108.
+  const trainingChoices = [];
+  [{ master_training_id: session.master_training_id, training_type_label: session.training_type_label }, ...(session.additional_trainings || [])]
+    .forEach((t) => {
+      if (t.master_training_id && !trainingChoices.some((c) => c.id === t.master_training_id)) {
+        // An extra's label can be one talk's topic ("Toolbox Talk: Silica"), so the shared one is named plainly.
+        trainingChoices.push({
+          id: t.master_training_id,
+          label: /^Toolbox Talk\b/i.test(t.training_type_label || '') ? `${t.master_training_id} - Toolbox Talk` : t.training_type_label,
+        });
+      }
+    });
+  const mainTrainingId = trainingChoices[0]?.id || '';
+  const labelFor = (trainingId) => `${trainingChoices.find((c) => c.id === trainingId)?.label || session.training_type_label} Card`;
+  const cardLabel = labelFor(mainTrainingId);
+  const [allTraining, setAllTraining] = useState('');
+  const allTrainingRef = useRef(allTraining);
+  allTrainingRef.current = allTraining;
 
   const addFiles = async (fileList, { fromScanner = false } = {}) => {
     // Copied before the first await - the picker's FileList is emptied when its input is reset.
@@ -98,12 +117,14 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
         cards.forEach((file, i) => {
           // A page cut from a class-wide PDF, or a fresh scan, has no person's name in its file name.
           const match = split || fromScanner ? null : matchAttendee(file.name, attendees);
+          const trainingId = allTrainingRef.current || mainTrainingId;
           added.push({
             key: `${Date.now()}-${added.length}-${i}-${file.name}`,
             file,
             url: URL.createObjectURL(file),
             attendee_id: match ? match.attendee_id : '',
-            label: split || fromScanner ? cardLabel : defaultLabel(file.name, match),
+            training_id: trainingId,
+            label: split || fromScanner ? labelFor(trainingId) : defaultLabel(file.name, match),
           });
         });
       }
@@ -146,6 +167,16 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
   }, []);
 
   const update = (key, patch) => setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  // A label still at its training's default ("<training> Card") follows a new training choice;
+  // one you've typed yourself stays.
+  const withTraining = (it, trainingId) => ({
+    ...it, training_id: trainingId, label: it.label === labelFor(it.training_id) ? labelFor(trainingId) : it.label,
+  });
+  const setTraining = (key, trainingId) => setItems((prev) => prev.map((it) => (it.key === key ? withTraining(it, trainingId) : it)));
+  const setTrainingForAll = (trainingId) => {
+    setAllTraining(trainingId);
+    if (trainingId) setItems((prev) => prev.map((it) => withTraining(it, trainingId)));
+  };
   const remove = (key) => setItems((prev) => {
     const it = prev.find((x) => x.key === key);
     if (it) URL.revokeObjectURL(it.url);
@@ -245,7 +276,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
             <p className="page-subtitle" style={{ marginTop: 0 }}>
               Choose files (PDF, JPG or PNG) or scan the cards. A PDF with several cards in it is split into one card per page.
               The name in the file name or on the card - typed or handwritten - is matched for you. Check or pick who each card belongs to, then upload.
-              They&apos;re filed under each person&apos;s Documents{session.master_training_id ? `, linked to ${session.training_type_label}` : ''}.
+              They&apos;re filed under each person&apos;s Documents{trainingChoices.length ? ', linked to the training you choose for each one' : ''}.
             </p>
             {error && <div className="error-banner">{error}</div>}
             {scans.error && <div className="error-banner">{scans.error}</div>}
@@ -265,6 +296,12 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
               {items.length > 1 && (
                 <button type="button" className="secondary" disabled={rotating || stillReading} onClick={rotateAll} title="Turn every card a quarter turn clockwise">↻ Rotate all</button>
               )}
+              {trainingChoices.length > 1 && (
+                <select value={allTraining} onChange={(e) => setTrainingForAll(e.target.value)} style={{ width: 'auto', maxWidth: 320 }} title="File every card under this training">
+                  <option value="">Which training? (set for all)</option>
+                  {trainingChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              )}
               {reading && <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>Reading file…</span>}
             </div>
             {scans.watching && (
@@ -275,7 +312,7 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
             {items.length > 0 && (
               <div style={{ maxHeight: '50vh', overflowY: 'auto' }}>
                 <table>
-                  <thead><tr><th>Card</th><th>Attendee</th><th>Label</th><th /></tr></thead>
+                  <thead><tr><th>Card</th><th>Attendee</th>{trainingChoices.length > 1 && <th>Training</th>}<th>Label</th><th /></tr></thead>
                   <tbody>
                     {items.map((it) => (
                       <tr key={it.key}>
@@ -306,6 +343,13 @@ export default function AttendeeDocumentsUpload({ session, onClose, onDone }) {
                           )}
                           {it.nameFailed && !it.attendee_id && <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>Couldn&apos;t read the name - pick who it is</div>}
                         </td>
+                        {trainingChoices.length > 1 && (
+                          <td>
+                            <select value={it.training_id} onChange={(e) => setTraining(it.key, e.target.value)} style={{ maxWidth: 200 }}>
+                              {trainingChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                            </select>
+                          </td>
+                        )}
                         <td><input value={it.label} onChange={(e) => update(it.key, { label: e.target.value })} /></td>
                         <td><button type="button" className="link-button" onClick={() => remove(it.key)}>Remove</button></td>
                       </tr>

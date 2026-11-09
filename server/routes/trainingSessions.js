@@ -1348,19 +1348,26 @@ router.post('/:id/attendee-documents', requireAdmin, async (req, res) => {
     });
     if (problems.length) { discard(); return res.status(400).json({ error: problems.join('; ') }); }
 
+    // Each file can be filed under any of the session's trainings (Keeley's request, 2026-11-09);
+    // anything else - or nothing chosen - falls back to the main training.
+    const extraIds = (await dbAll('SELECT master_training_id FROM session_additional_trainings WHERE session_id = ?', [session.session_id]))
+      .map((t) => t.master_training_id).filter(Boolean);
+    const sessionTrainingIds = new Set([session.master_training_id, ...extraIds].filter(Boolean));
     const saved = [];
     for (let i = 0; i < files.length; i += 1) {
       const a = byId.get(assignments[i].attendee_id);
+      const chosen = String(assignments[i].training_id || '');
+      const trainingId = sessionTrainingIds.has(chosen) ? chosen : session.master_training_id;
       // eslint-disable-next-line no-await-in-loop
-      const hasTraining = session.master_training_id && await dbGet(
-        'SELECT 1 AS x FROM employee_training_records WHERE employee_id = ? AND training_id = ? LIMIT 1', [a.employee_id, session.master_training_id]
+      const hasTraining = trainingId && await dbGet(
+        'SELECT 1 AS x FROM employee_training_records WHERE employee_id = ? AND training_id = ? LIMIT 1', [a.employee_id, trainingId]
       );
       // eslint-disable-next-line no-await-in-loop
       await dbRun(
         `INSERT INTO employee_documents (document_id, employee_id, label, filename, file_path, uploaded_by, training_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), a.employee_id, String(assignments[i].label).trim().slice(0, 200), files[i].originalname, files[i].path, req.user.username,
-          hasTraining ? session.master_training_id : null]
+          hasTraining ? trainingId : null]
       );
       saved.push(`${a.trainee_name}: ${String(assignments[i].label).trim()}`);
     }

@@ -162,11 +162,11 @@ export const api = {
   },
   getCertificateUrl: (recordId) => `${BASE}/training-records/${recordId}/certificate`,
 
-  // Several attendee documents at once from a session page - `items`: [{ file, attendee_id, label }].
+  // Several attendee documents at once from a session page - `items`: [{ file, attendee_id, label, training_id }].
   uploadAttendeeDocuments: (sessionId, items) => {
     const formData = new FormData();
     items.forEach((it) => formData.append('documents', it.file));
-    formData.append('assignments', JSON.stringify(items.map(({ attendee_id, label }) => ({ attendee_id, label }))));
+    formData.append('assignments', JSON.stringify(items.map(({ attendee_id, label, training_id }) => ({ attendee_id, label, training_id }))));
     return fetch(`${BASE}/training-sessions/${sessionId}/attendee-documents`, { method: 'POST', body: formData, credentials: 'include' }).then(async (res) => {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Upload failed (${res.status})`);
