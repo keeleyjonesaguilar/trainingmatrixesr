@@ -120,6 +120,10 @@ async function start() {
     cors({
       origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        // On a computer (not Render), any localhost address and port is the office's own test
+        // copy - e.g. the client landing on :5174 because another copy already has :5173, which
+        // otherwise made every login fail with "Internal server error" (Keeley, 2026-11-09).
+        if (!process.env.RENDER && /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)) return callback(null, true);
         callback(new Error('Not allowed by CORS'));
       },
       credentials: true,
