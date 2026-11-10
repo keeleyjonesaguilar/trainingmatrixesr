@@ -45,6 +45,13 @@ const TABLES_IN_DEPENDENCY_ORDER = [
   'ignored_compliance_gaps',
   'session_feedback',
   'session_feedback_trainers',
+  // Added 2026-11-10 (had been missed): Requests page, scheduled / 5 AM trainer summaries, and the
+  // public OSHA sign-up pages - each after the session/user it points at.
+  'change_requests',
+  'scheduled_trainer_summaries',
+  'trainer_summary_morning_sends',
+  'public_registrations',
+  'public_registration_attendees',
   'feedback_form_settings',
   'login_attempts',
   'schema_migrations',
