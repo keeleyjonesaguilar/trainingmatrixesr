@@ -4,6 +4,7 @@ import { api } from '../api';
 import LiveSearchInput from '../components/LiveSearchInput.jsx';
 import PhoneFilters from '../components/PhoneFilters.jsx';
 import TrainingsByClassReport from '../components/TrainingsByClassReport.jsx';
+import FollowUpsReport from '../components/FollowUpsReport.jsx';
 import { matchesSearch } from '../lib/search.js';
 import { downloadCsv } from '../lib/csv';
 import { downloadReportPdf } from '../lib/reportPdf';
@@ -175,7 +176,8 @@ export default function Reports() {
       </div>
       {error && <div className="error-banner">{error}</div>}
 
-      {/* Follows the Client filter below (blank = all clients). */}
+      {/* Both follow the Client filter below (blank = all clients). */}
+      <FollowUpsReport clientId={clientId} clientName={clients.find((c) => c.client_id === clientId)?.client_name || ''} />
       <TrainingsByClassReport clientId={clientId} clientName={clients.find((c) => c.client_id === clientId)?.client_name || ''} />
 
       <PhoneFilters active={[clientId, trainingId, status].filter(Boolean).length}>

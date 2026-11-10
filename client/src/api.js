@@ -221,6 +221,11 @@ export const api = {
     const qs = new URLSearchParams(filtered).toString();
     return request(`/reports/completed-trainings${qs ? `?${qs}` : ''}`);
   },
+  // Follow-ups: additional training requests + trainer notes (2026-11-10)
+  getFollowUpsReport: (params = {}) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v))).toString();
+    return request(`/reports/follow-ups${qs ? `?${qs}` : ''}`);
+  },
   logReportDownload: (report_name, details) => request('/reports/log-download', { method: 'POST', body: JSON.stringify({ report_name, details }) }),
 
   // Training Sessions (merged in from the Training Sign-In app, 2026-08-19) - admin/staff side,

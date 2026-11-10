@@ -73,6 +73,61 @@ router.get('/completed-trainings', async (req, res) => {
   res.json({ rows });
 });
 
+// Follow-ups (Keeley's request, 2026-11-10: "I need to see those quickly"): everyone who answered
+// "Yes" to needing additional training on a feedback form, and every note a trainer left when
+// closing out a class or signing off a day of a multi-day course. Newest class first; optional
+// client and class-date (From/To) filters. Read-only - each row links back to its session.
+router.get('/follow-ups', async (req, res) => {
+  const { client_id, from, to } = req.query;
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+  const clauses = [];
+  const params = [];
+  if (client_id) { clauses.push('ts.client_id = ?'); params.push(client_id); }
+  if (isDate(from)) { clauses.push('ts.session_date >= ?'); params.push(from); }
+  if (isDate(to)) { clauses.push('ts.session_date <= ?'); params.push(to); }
+  const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
+  const trainingsSql = `(SELECT STRING_AGG(sat.training_type_label, ', ' ORDER BY sat.training_type_label)
+                         FROM session_additional_trainings sat WHERE sat.session_id = ts.session_id)`;
+
+  const requests = await dbAll(
+    `SELECT sf.feedback_id, TRIM(COALESCE(sf.contact_name, '')) AS name, sf.submitted_at,
+            ts.session_id, ts.session_date, ts.training_type_label, ${trainingsSql} AS more_trainings,
+            ts.trainer_name, c.client_id, c.client_name
+     FROM session_feedback sf
+     JOIN training_sessions ts ON ts.session_id = sf.session_id
+     JOIN clients c ON c.client_id = ts.client_id
+     WHERE sf.needs_additional_training = 'yes'${where}
+     ORDER BY ts.session_date DESC, sf.submitted_at DESC`,
+    params
+  );
+
+  // A one-day class's close-out note, plus each multi-day course day's sign-off note.
+  const notes = await dbAll(
+    `SELECT * FROM (
+       SELECT ts.session_id || ':0' AS note_id, ts.session_id, ts.session_date, ts.session_date AS note_date, 0 AS day_number,
+              COALESCE(NULLIF(ts.trainer_signed_name, ''), ts.trainer_name) AS trainer, ts.trainer_close_notes AS note,
+              ts.training_type_label, ${trainingsSql} AS more_trainings, c.client_id, c.client_name
+       FROM training_sessions ts
+       JOIN clients c ON c.client_id = ts.client_id
+       WHERE TRIM(COALESCE(ts.trainer_close_notes, '')) <> ''
+         AND NOT EXISTS (SELECT 1 FROM session_days d WHERE d.session_id = ts.session_id)${where}
+       UNION ALL
+       SELECT d.id, ts.session_id, ts.session_date,
+              COALESCE(NULLIF(ts.day_dates::jsonb ->> (d.day_number - 1), ''), ts.session_date), d.day_number,
+              COALESCE(NULLIF(d.signed_trainer_name, ''), d.assigned_trainer_name, ts.trainer_name), d.trainer_notes,
+              ts.training_type_label, ${trainingsSql}, c.client_id, c.client_name
+       FROM session_days d
+       JOIN training_sessions ts ON ts.session_id = d.session_id
+       JOIN clients c ON c.client_id = ts.client_id
+       WHERE TRIM(COALESCE(d.trainer_notes, '')) <> ''${where}
+     ) n
+     ORDER BY n.note_date DESC, n.day_number DESC`,
+    [...params, ...params]
+  );
+
+  res.json({ requests, notes });
+});
+
 // PDF version of a report page's table (Keeley's request, 2026-10-27) - the Reports page, the
 // Employees list and a client's Compliance Overview each send the exact rows they'd put in their
 // CSV (already filtered on screen), and this lays them out in the ESR report style. With
