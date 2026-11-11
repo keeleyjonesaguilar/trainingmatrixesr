@@ -151,6 +151,7 @@ function deckSummary(deck, extra = {}) {
     has_previous: Boolean(deck.previous_file_path),
     previous_uploaded_at: deck.previous_uploaded_at,
     previous_original_filename: deck.previous_original_filename,
+    previous_file_size: deck.previous_file_size != null ? Number(deck.previous_file_size) : null,
     updated_at: deck.updated_at,
     file_missing: !deckFileExists(deck),
     // Real slide pictures (migration 093): 'ready', 'pending', 'failed', or 'off' where this server
@@ -375,6 +376,23 @@ router.post('/decks/:id/restore-previous', requireAdmin, async (req, res) => {
   await replaceSlides(deck.deck_id, info.slides);
   logActivity({ actor: req.user, action: 'content_deck_restored_previous', entityType: 'content_deck', entityId: deck.deck_id, entityLabel: deck.name, req });
   await slidePictures.queueSlidePictures(deck.deck_id);
+  return res.json({ ok: true });
+});
+
+// Deletes the kept previous version to free disk space (the current version is untouched).
+router.delete('/decks/:id/previous', requireAdmin, async (req, res) => {
+  const deck = await dbGet('SELECT * FROM content_decks WHERE deck_id = ?', [req.params.id]);
+  if (!deck) return res.status(404).json({ error: 'PowerPoint not found.' });
+  if (!deck.previous_file_path) return res.status(400).json({ error: 'There\'s no previous version of this PowerPoint to remove.' });
+  // Never delete the file the current version uses (shouldn't happen, but a shared path would lose it).
+  if (deck.previous_file_path !== deck.file_path) removeFile(deck.previous_file_path);
+  await dbRun(
+    `UPDATE content_decks SET previous_file_path = NULL, previous_original_filename = NULL, previous_file_size = NULL,
+       previous_uploaded_at = NULL, previous_uploaded_by = NULL, updated_at = now_utc_text()
+     WHERE deck_id = ?`,
+    [deck.deck_id]
+  );
+  logActivity({ actor: req.user, action: 'content_deck_previous_removed', entityType: 'content_deck', entityId: deck.deck_id, entityLabel: deck.name, details: deck.previous_original_filename || null, req });
   return res.json({ ok: true });
 });
 

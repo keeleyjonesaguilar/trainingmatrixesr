@@ -308,6 +308,19 @@ export default function ContentDeck() {
     }
   };
 
+  const removePrevious = async () => {
+    setMessage('');
+    const size = deck.previous_file_size ? ` (${fileSize(deck.previous_file_size)})` : '';
+    if (!window.confirm(`Remove the previous version (${deck.previous_original_filename || 'earlier upload'}, uploaded ${formatEasternDateTime(deck.previous_uploaded_at)})${size}? This frees up space on the server. You won't be able to go back to it - the current version stays as it is.`)) return;
+    try {
+      await api.removePreviousDeck(id);
+      await load();
+      setMessage(`Previous version removed${size ? ` - freed ${fileSize(deck.previous_file_size)}` : ''}.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const remove = async () => {
     const uses = [
       ...deck.used_by.map((u) => u.training_name),
@@ -438,6 +451,11 @@ export default function ContentDeck() {
               {deck.has_previous && (
                 <button type="button" className="link-button" style={{ padding: 0 }} onClick={restorePrevious}>
                   Go back to previous version ({formatEasternDateTime(deck.previous_uploaded_at)})
+                </button>
+              )}
+              {deck.has_previous && (
+                <button type="button" className="link-button" style={{ padding: 0 }} onClick={removePrevious}>
+                  Remove previous version{deck.previous_file_size ? ` (${fileSize(deck.previous_file_size)})` : ''}
                 </button>
               )}
               <button type="button" className="link-button" style={{ padding: 0, color: 'var(--status-expired-text)' }} onClick={remove}>Delete PowerPoint</button>

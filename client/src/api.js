@@ -362,6 +362,7 @@ export const api = {
   updateDeck: (id, data) => request(`/content/decks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   saveDeckSlides: (id, slides) => request(`/content/decks/${id}/slides`, { method: 'PUT', body: JSON.stringify({ slides }) }),
   restorePreviousDeck: (id) => request(`/content/decks/${id}/restore-previous`, { method: 'POST' }),
+  removePreviousDeck: (id) => request(`/content/decks/${id}/previous`, { method: 'DELETE' }),
   deleteDeck: (id) => request(`/content/decks/${id}`, { method: 'DELETE' }),
   deckDownloadUrl: (id) => `${BASE}/content/decks/${id}/download`,
   deckSlidePictureUrl: (id, slideId) => `${BASE}/content/decks/${id}/slides/${slideId}/picture`,
