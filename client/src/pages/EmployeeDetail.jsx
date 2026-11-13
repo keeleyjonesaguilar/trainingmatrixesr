@@ -210,7 +210,6 @@ function TrainerFeedbackComments({ comments }) {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 6, fontSize: 12, color: 'var(--color-text-muted)' }}>
                 <span>Trainer <span style={{ color: 'var(--esr-gold)' }}>{starText(c.trainer_rating)}</span></span>
                 <span>Effectiveness <span style={{ color: 'var(--esr-gold)' }}>{starText(c.effectiveness_rating)}</span></span>
-                {c.needs_additional_training === 'yes' && <span className="badge badge-expiringsoon">Needs additional training</span>}
                 <span>
                   <Link to={`/sessions/${c.session_id}`}>{c.training_type_label}</Link> · {c.client_name} · {c.session_date}
                 </span>

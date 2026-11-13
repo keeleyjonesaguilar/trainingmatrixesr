@@ -64,11 +64,11 @@ const STRINGS = {
   // (Keeley's request, 2026-11-04).
   which_days: { en: 'Which day(s) did you attend?', es: '¿Qué día(s) asistió?' },
   err_days: { en: 'Please choose the day(s) you attended.', es: 'Por favor elija el día o los días a los que asistió.' },
-  // Asked only when they answer "Yes" to needing additional training (Keeley's request, 2026-10-05).
-  contact_name: { en: 'Your name (so we can reach out about additional training)', es: 'Su nombre (para comunicarnos con usted sobre capacitación adicional)' },
-  err_contact_name: {
-    en: 'Please enter your name so we can reach out about additional training.',
-    es: 'Por favor ingrese su nombre para comunicarnos con usted sobre capacitación adicional.',
+  // The training section's notes box (2026-11-13) - it replaced the "need additional training?"
+  // Yes/No question. The form is anonymous, so a name is only there if they choose to leave one.
+  material_notes_placeholder: {
+    en: "Include your name if you'd like us to follow up with you.",
+    es: 'Incluya su nombre si desea que nos comuniquemos con usted.',
   },
 };
 
@@ -115,8 +115,7 @@ export default function PublicFeedback() {
   const [loadError, setLoadError] = useState('');
   const [couldAskQuestions, setCouldAskQuestions] = useState('');
   const [understoodMaterial, setUnderstoodMaterial] = useState('');
-  const [needsAdditionalTraining, setNeedsAdditionalTraining] = useState('');
-  const [contactName, setContactName] = useState('');
+  const [materialNotes, setMaterialNotes] = useState('');
   const [effectiveness, setEffectiveness] = useState(0);
   // A rating and optional comment for each trainer (Keeley's request, 2026-10-01) - co-trainers
   // and each day's trainer on a multi-day course are rated separately.
@@ -146,7 +145,6 @@ export default function PublicFeedback() {
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
-    if (needsAdditionalTraining === 'yes' && !contactName.trim()) return setFormError(t('err_contact_name'));
     if (multiDay && !chosenDays.length) return setFormError(t('err_days'));
     if (!effectiveness) return setFormError(t('err_effectiveness'));
     const unrated = trainers.find((tr) => !trainerAnswers[tr.key]?.rating);
@@ -156,9 +154,8 @@ export default function PublicFeedback() {
       await api.publicSubmitFeedback(token, {
         could_ask_questions: couldAskQuestions || null,
         understood_material: understoodMaterial || null,
-        needs_additional_training: needsAdditionalTraining || null,
-        contact_name: needsAdditionalTraining === 'yes' ? contactName.trim() : null,
         effectiveness_rating: effectiveness,
+        material_notes: materialNotes.trim() || null,
         ...(multiDay ? { days: chosenDays } : {}),
         trainer_ratings: trainers.map((tr) => ({
           key: tr.key,
@@ -239,22 +236,18 @@ export default function PublicFeedback() {
                 </select>
               </div>
               <div className="field">
-                <label>{labelText(info.labels, 'needs_additional_training', language)}</label>
-                <select value={needsAdditionalTraining} onChange={(e) => setNeedsAdditionalTraining(e.target.value)}>
-                  <option value="">{t('select_ellipsis')}</option>
-                  <option value="yes">{t('yes')}</option>
-                  <option value="no">{t('no')}</option>
-                </select>
-              </div>
-              {needsAdditionalTraining === 'yes' && (
-                <div className="field">
-                  <label>{t('contact_name')}</label>
-                  <input value={contactName} onChange={(e) => setContactName(e.target.value)} autoComplete="name" required />
-                </div>
-              )}
-              <div className="field">
                 <label>{labelText(info.labels, 'effectiveness', language)}</label>
                 <StarRating value={effectiveness} onChange={setEffectiveness} />
+              </div>
+              {/* Notes on the training itself, like the trainer section's comment box (2026-11-13). */}
+              <div className="field">
+                <label>{labelText(info.labels, 'material_notes', language)}</label>
+                <textarea
+                  rows={3}
+                  value={materialNotes}
+                  onChange={(e) => setMaterialNotes(e.target.value)}
+                  placeholder={t('material_notes_placeholder')}
+                />
               </div>
               {multiDay && (
                 <div className="field">

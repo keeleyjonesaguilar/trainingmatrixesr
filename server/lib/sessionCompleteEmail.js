@@ -76,15 +76,20 @@ function feedbackBlock(feedback, isToolbox) {
     tile('Effectiveness', `${feedback.avgEffectiveness.toFixed(1)} <span style="font-size:12px;color:${MUTED};font-weight:400;">/ 5</span>`),
     tile('Responses', String(feedback.count)),
   ].join('');
-  const questionRows = feedback.questions.map((q) => {
-    // "Needs additional training: yes" is the answer worth a second look, so it stands out.
-    const flag = q.label === 'Needs additional training' && q.yes > 0;
-    return `
+  const questionRows = feedback.questions.map((q) => `
               <tr>
                 <td style="${FONT}font-size:13px;color:${TEXT};padding:5px 0;">${esc(q.label)}</td>
-                <td align="right" style="${FONT}font-size:13px;padding:5px 0;white-space:nowrap;"><span style="color:${flag ? '#a15c00' : '#146c3a'};font-weight:600;">${q.yes} yes</span> <span style="color:${MUTED};">&nbsp;·&nbsp; ${q.no} no</span></td>
-              </tr>`;
-  }).join('');
+                <td align="right" style="${FONT}font-size:13px;padding:5px 0;white-space:nowrap;"><span style="color:#146c3a;font-weight:600;">${q.yes} yes</span> <span style="color:${MUTED};">&nbsp;·&nbsp; ${q.no} no</span></td>
+              </tr>`).join('');
+  // Notes on the training material (2026-11-13) - where trainees ask for more training now.
+  const materialNotes = feedback.materialNotes || [];
+  const materialNoteRows = materialNotes.map((n) => `
+              <tr><td style="padding:6px 0;">
+                <div style="border-left:3px solid ${GREEN};background:#f6fbf8;padding:10px 14px;border-radius:0 8px 8px 0;">
+                  <div style="${FONT}font-size:14px;line-height:1.5;color:${TEXT};font-style:italic;">&ldquo;${esc(n.text)}&rdquo;</div>
+                  <div style="${FONT}font-size:12px;color:${MUTED};margin-top:4px;">Effectiveness ${stars(n.effectiveness)}</div>
+                </div>
+              </td></tr>`).join('');
   // Each trainer's own average when more than one taught (per-trainer ratings, 2026-10-01).
   const perTrainer = (feedback.trainers || []).length > 1;
   const trainerRows = perTrainer ? feedback.trainers.map((t) => `
@@ -112,7 +117,9 @@ function feedbackBlock(feedback, isToolbox) {
           </table>` : ''}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">${questionRows}
           </table>
-          ${(feedback.followUps || []).length ? `<div style="${FONT}font-size:13px;color:#a15c00;margin-top:6px;"><strong>Asked for additional training:</strong> ${feedback.followUps.map(esc).join(', ')}</div>` : ''}
+          ${materialNotes.length ? `<div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Training Notes (${materialNotes.length})</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${materialNoteRows}
+          </table>` : ''}
           <div style="${FONT}font-size:12px;font-weight:700;color:${TEXT};text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px;">Comments (${feedback.comments.length})</div>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${commentRows}
           </table>

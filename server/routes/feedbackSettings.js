@@ -13,8 +13,9 @@ const router = express.Router();
 const FIELDS = [
   'could_ask_questions_label',
   'understood_material_label',
-  'needs_additional_training_label',
   'effectiveness_label',
+  // Replaced needs_additional_training_label on the form (2026-11-13, migration 094).
+  'material_notes_label',
   'trainer_rating_label',
   'comment_label',
 ];
@@ -50,25 +51,12 @@ router.put('/', requireAdmin, async (req, res) => {
 
   await dbRun(
     `UPDATE feedback_form_settings
-     SET could_ask_questions_label=?, understood_material_label=?, needs_additional_training_label=?,
-         effectiveness_label=?, trainer_rating_label=?, comment_label=?,
-         could_ask_questions_label_es=?, understood_material_label_es=?, needs_additional_training_label_es=?,
-         effectiveness_label_es=?, trainer_rating_label_es=?, comment_label_es=?
+     SET could_ask_questions_label=?, understood_material_label=?, effectiveness_label=?,
+         material_notes_label=?, trainer_rating_label=?, comment_label=?,
+         could_ask_questions_label_es=?, understood_material_label_es=?, effectiveness_label_es=?,
+         material_notes_label_es=?, trainer_rating_label_es=?, comment_label_es=?
      WHERE id = 'default'`,
-    [
-      merged.could_ask_questions_label.trim(),
-      merged.understood_material_label.trim(),
-      merged.needs_additional_training_label.trim(),
-      merged.effectiveness_label.trim(),
-      merged.trainer_rating_label.trim(),
-      merged.comment_label.trim(),
-      translated.could_ask_questions_label,
-      translated.understood_material_label,
-      translated.needs_additional_training_label,
-      translated.effectiveness_label,
-      translated.trainer_rating_label,
-      translated.comment_label,
-    ]
+    [...FIELDS.map((f) => merged[f].trim()), ...FIELDS.map((f) => translated[f])]
   );
   const updated = await dbGet('SELECT * FROM feedback_form_settings WHERE id = ?', ['default']);
   logActivity({ actor: req.user, action: 'feedback_settings_updated', entityType: 'settings', entityId: 'feedback_form', req });

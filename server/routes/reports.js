@@ -73,8 +73,8 @@ router.get('/completed-trainings', async (req, res) => {
   res.json({ rows });
 });
 
-// Follow-ups (Keeley's request, 2026-11-10: "I need to see those quickly"): everyone who answered
-// "Yes" to needing additional training on a feedback form, and every note a trainer left when
+// Follow-ups (Keeley's request, 2026-11-10: "I need to see those quickly"): trainees' feedback
+// notes on the training material (and old "need additional training: Yes" answers), and every note a trainer left when
 // closing out a class or signing off a day of a multi-day course. Newest class first; optional
 // client and class-date (From/To) filters. Read-only - each row links back to its session.
 router.get('/follow-ups', async (req, res) => {
@@ -89,14 +89,18 @@ router.get('/follow-ups', async (req, res) => {
   const trainingsSql = `(SELECT STRING_AGG(sat.training_type_label, ', ' ORDER BY sat.training_type_label)
                          FROM session_additional_trainings sat WHERE sat.session_id = ts.session_id)`;
 
+  // Trainees' notes on the training material (2026-11-13: where they ask for more training now),
+  // plus the "Yes" answers to the old "need additional training?" question from before it was
+  // removed, so those stay findable.
   const requests = await dbAll(
     `SELECT sf.feedback_id, TRIM(COALESCE(sf.contact_name, '')) AS name, sf.submitted_at,
+            TRIM(COALESCE(sf.material_notes, '')) AS note, sf.needs_additional_training,
             ts.session_id, ts.session_date, ts.training_type_label, ${trainingsSql} AS more_trainings,
             ts.trainer_name, c.client_id, c.client_name
      FROM session_feedback sf
      JOIN training_sessions ts ON ts.session_id = sf.session_id
      JOIN clients c ON c.client_id = ts.client_id
-     WHERE sf.needs_additional_training = 'yes'${where}
+     WHERE (sf.needs_additional_training = 'yes' OR TRIM(COALESCE(sf.material_notes, '')) <> '')${where}
      ORDER BY ts.session_date DESC, sf.submitted_at DESC`,
     params
   );

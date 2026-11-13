@@ -680,7 +680,6 @@ router.post('/:token/feedback', async (req, res) => {
   const {
     could_ask_questions = null,
     understood_material = null,
-    needs_additional_training = null,
     effectiveness_rating,
     trainer_ratings,
   } = req.body || {};
@@ -688,12 +687,11 @@ router.post('/:token/feedback', async (req, res) => {
   if (!Number.isInteger(effectiveness) || effectiveness < 1 || effectiveness > 5) {
     return res.status(400).json({ error: 'effectiveness_rating must be a whole number between 1 and 5.' });
   }
-  // Someone who says they need more training gives their name so the office can reach out
-  // (Keeley's request, 2026-10-05) - the only time the form asks who they are.
-  const contactName = needs_additional_training === 'yes' ? String(req.body?.contact_name || '').trim().slice(0, 200) : '';
-  if (needs_additional_training === 'yes' && !contactName) {
-    return res.status(400).json({ error: 'Please enter your name so we can reach out about additional training.' });
-  }
+  // Optional notes on the training material (2026-11-13) - where a trainee can ask for more
+  // training in their own words. It replaced the "need additional training?" Yes/No question and
+  // its name box, so needs_additional_training / contact_name are no longer saved (a page loaded
+  // before the change may still send them; they're ignored).
+  const materialNotes = String(req.body?.material_notes || '').trim().slice(0, 2000);
 
   // A rating (and optional comment) for each trainer on the session (Keeley's request,
   // 2026-10-01). A page loaded before this change sends one trainer_rating/trainer_comment instead,
@@ -723,6 +721,7 @@ router.post('/:token/feedback', async (req, res) => {
   if (!ratings.length) return res.status(400).json({ error: 'Please rate the trainer.' });
   // Spanish comments are saved in English, keeping the trainee's own words (lib/translate.js).
   await Promise.all(ratings.map(async (r) => Object.assign(r, await englishComment(r.comment))));
+  const notes = await englishComment(materialNotes || null);
 
   // The session-level columns keep working for anything that reads the session as a whole: the
   // average of the trainers' ratings, and the comment when there's only one trainer.
@@ -730,19 +729,19 @@ router.post('/:token/feedback', async (req, res) => {
   const feedbackId = uuidv4();
   await dbRun(
     `INSERT INTO session_feedback
-       (feedback_id, session_id, could_ask_questions, understood_material, needs_additional_training, effectiveness_rating, trainer_rating, trainer_comment, trainer_comment_original, contact_name)
+       (feedback_id, session_id, could_ask_questions, understood_material, effectiveness_rating, trainer_rating, trainer_comment, trainer_comment_original, material_notes, material_notes_original)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feedbackId,
       session.session_id,
       could_ask_questions,
       understood_material,
-      needs_additional_training,
       effectiveness,
       average,
       ratings.length === 1 ? ratings[0].comment : null,
       ratings.length === 1 ? ratings[0].original : null,
-      contactName || null,
+      notes.comment,
+      notes.original,
     ]
   );
   for (const r of ratings) {
@@ -752,12 +751,13 @@ router.post('/:token/feedback', async (req, res) => {
       [uuidv4(), feedbackId, r.trainer.name, r.trainer.employee_id, r.rating, r.comment, r.original]
     );
   }
-  // Flagged on the office's bell so someone can follow up.
-  if (contactName) {
+  // A note is flagged on the office's bell so someone can follow up.
+  if (notes.comment) {
+    const preview = notes.comment.length > 80 ? `${notes.comment.slice(0, 80)}…` : notes.comment;
     try {
       await notifyAllUsers({
         type: 'feedback_needs_training',
-        title: `${contactName} asked for additional training`,
+        title: `Feedback note: "${preview}"`,
         body: `${session.training_type_label} · ${session.client_name} · ${session.session_date}`,
         link_path: `/sessions/${session.session_id}`,
         email: false,

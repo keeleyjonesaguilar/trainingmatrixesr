@@ -16,28 +16,30 @@ const trainingsOf = (r) => [r.training_type_label, r.more_trainings].filter(Bool
 
 // The two lists, laid out once so the table, CSV and PDF always match.
 const VIEWS = {
+  // Trainees' notes on the training material - where they ask for more training since the Yes/No
+  // question came off the form (2026-11-13). Old "Yes" answers are listed too, with the name they gave.
   requests: {
-    tab: 'Asked for more training',
-    report: 'Asked for Additional Training',
-    blurb: 'Everyone who answered "Yes" to needing additional training on a class feedback form, newest class first.',
-    empty: 'No one has asked for additional training for these filters.',
+    tab: 'Feedback notes',
+    report: 'Trainee Feedback Notes',
+    blurb: 'Notes trainees left about the training material on class feedback forms (including requests for more training), newest class first.',
+    empty: 'No feedback notes for these filters.',
     columns: [
-      { key: 'name', label: 'Name', weight: 1.4, bold: true },
-      { key: 'training', label: 'Training', weight: 2.2 },
-      { key: 'client', label: 'Client', weight: 1.4 },
-      { key: 'class_date', label: 'Class Date', weight: 0.9 },
+      { key: 'note', label: 'Note', weight: 3 },
+      { key: 'training', label: 'Training', weight: 1.8 },
+      { key: 'client', label: 'Client', weight: 1.3 },
+      { key: 'class_date', label: 'Class Date', weight: 0.85 },
       { key: 'trainer', label: 'Trainer', weight: 1.1 },
-      { key: 'asked_on', label: 'Asked On', weight: 0.9 },
+      { key: 'asked_on', label: 'Left On', weight: 0.85 },
     ],
     row: (r) => ({
-      name: r.name || 'No name given',
+      note: r.note || `Asked for additional training${r.name ? ` - ${r.name}` : ''} (old Yes/No question)`,
       training: trainingsOf(r),
       client: r.client_name,
       class_date: formatDate(r.session_date),
       trainer: r.trainer_name || '',
       asked_on: formatDate(r.submitted_at),
     }),
-    search: (r) => [r.name, r.client_name, r.trainer_name, trainingsOf(r)].join(' '),
+    search: (r) => [r.note, r.name, r.client_name, r.trainer_name, trainingsOf(r)].join(' '),
   },
   notes: {
     tab: 'Trainer notes',
@@ -127,7 +129,7 @@ export default function FollowUpsReport({ clientId = '', clientName = '' }) {
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
         <div className="field-row" style={{ margin: 0 }}>
           <label>Search</label>
-          <LiveSearchInput placeholder={view === 'requests' ? 'Name, client, trainer...' : 'Trainer, client, words in the note...'} value={search} onSearch={setSearch} delay={150} />
+          <LiveSearchInput placeholder={view === 'requests' ? 'Words in the note, client, trainer...' :'Trainer, client, words in the note...'} value={search} onSearch={setSearch} delay={150} />
         </div>
         <div className="field-row" style={{ margin: 0 }}>
           <label>Class from</label>
@@ -158,7 +160,7 @@ export default function FollowUpsReport({ clientId = '', clientName = '' }) {
                 <tr key={r.feedback_id || r.note_id}>
                   {v.columns.map((c) => (
                     <td key={c.key} style={c.key === 'note' ? { whiteSpace: 'pre-wrap', minWidth: 260 } : undefined}>
-                      {c.key === 'name' && !r.name ? <span className="page-subtitle">No name given</span> : shown[c.key]}
+                      {shown[c.key]}
                     </td>
                   ))}
                   <td><Link to={`/sessions/${r.session_id}`}>Open</Link></td>

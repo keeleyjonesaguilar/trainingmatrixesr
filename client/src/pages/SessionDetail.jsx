@@ -19,8 +19,8 @@ import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCerti
 const FEEDBACK_LABEL_FIELDS = [
   { key: 'could_ask_questions_label', label: 'Could ask questions (Yes/No)' },
   { key: 'understood_material_label', label: 'Understood material (Yes/No)' },
-  { key: 'needs_additional_training_label', label: 'Needs additional training (Yes/No)' },
   { key: 'effectiveness_label', label: 'Training effectiveness (star rating)' },
+  { key: 'material_notes_label', label: 'Training material notes (free text)' },
   { key: 'trainer_rating_label', label: 'Trainer rating (star rating)' },
   { key: 'comment_label', label: 'Trainer comment (free text)' },
 ];
@@ -1834,12 +1834,21 @@ Their certificate and the training record it added to their employee file will b
                     : <div><strong>Trainer Rating:</strong> {'★'.repeat(f.trainer_rating)}{'☆'.repeat(5 - f.trainer_rating)}</div>}
                   <div><strong>Could Ask Questions:</strong> {f.could_ask_questions ? f.could_ask_questions[0].toUpperCase() + f.could_ask_questions.slice(1) : '—'}</div>
                   <div><strong>Understood Material:</strong> {f.understood_material ? f.understood_material[0].toUpperCase() + f.understood_material.slice(1) : '—'}</div>
-                  <div><strong>Needs Additional Training:</strong> {f.needs_additional_training ? f.needs_additional_training[0].toUpperCase() + f.needs_additional_training.slice(1) : '—'}</div>
+                  {/* The Yes/No question was removed 2026-11-13 - shown only on responses from before then. */}
+                  {f.needs_additional_training && (
+                    <div><strong>Needs Additional Training:</strong> {f.needs_additional_training[0].toUpperCase() + f.needs_additional_training.slice(1)}</div>
+                  )}
                 </div>
-                {/* Left by trainees who need more training, so the office can reach out (2026-10-05). */}
                 {f.contact_name && (
                   <p style={{ fontSize: 13, margin: '8px 0 0', color: 'var(--status-expiring-text, #a15c00)' }}>
                     <strong>Asked for additional training:</strong> {f.contact_name}
+                  </p>
+                )}
+                {/* Notes on the training material (2026-11-13). */}
+                {f.material_notes && (
+                  <p style={{ fontSize: 13, margin: '8px 0 0' }}>
+                    <strong>Training notes:</strong> <span style={{ fontStyle: 'italic' }}>&ldquo;{f.material_notes}&rdquo;</span>
+                    <TranslatedFrom original={f.material_notes_original} />
                   </p>
                 )}
                 {(f.trainer_ratings || []).some((r) => r.comment)

@@ -22,10 +22,10 @@ const TAUGHT_SESSIONS_SQL = `SELECT session_id FROM training_sessions WHERE trai
 // Feedback with no per-trainer rows - the old one-rating-per-session form.
 const NO_TRAINER_ROWS = 'NOT EXISTS (SELECT 1 FROM session_feedback_trainers x WHERE x.feedback_id = sf.feedback_id)';
 
+// "Needs additional training" came off the form 2026-11-13 - trainees ask in the training notes now.
 const YES_NO_QUESTIONS = [
   { key: 'could_ask_questions', label: 'Could ask questions' },
   { key: 'understood_material', label: 'Understood the material' },
-  { key: 'needs_additional_training', label: 'Needs additional training' },
 ];
 
 function average(rows, field) {
@@ -84,8 +84,10 @@ async function sessionFeedbackSummary(sessionId, { forTrainer = null } = {}) {
       no: rows.filter((r) => r[q.key] === 'no').length,
     })),
     comments,
-    // Names left by trainees who said they need additional training (2026-10-05).
-    followUps: rows.filter((r) => r.contact_name && r.contact_name.trim()).map((r) => r.contact_name.trim()),
+    // Notes on the training material (2026-11-13), oldest first.
+    materialNotes: rows
+      .filter((r) => r.material_notes && r.material_notes.trim())
+      .map((r) => ({ text: r.material_notes.trim(), effectiveness: r.effectiveness_rating, submittedAt: r.submitted_at })),
   };
 }
 
@@ -117,7 +119,7 @@ async function trainerRatingSummary(employeeId) {
 async function trainerFeedbackComments(employeeId) {
   return dbAll(
     `SELECT sft.id AS feedback_id, sft.comment AS trainer_comment, sft.comment_original AS trainer_comment_original, sft.rating AS trainer_rating, sf.effectiveness_rating,
-            sf.needs_additional_training, sf.submitted_at, ts.session_id, ts.training_type_label, ts.session_date, c.client_name
+            sf.submitted_at, ts.session_id, ts.training_type_label, ts.session_date, c.client_name
      FROM session_feedback_trainers sft
      JOIN session_feedback sf ON sf.feedback_id = sft.feedback_id
      JOIN training_sessions ts ON ts.session_id = sf.session_id
@@ -125,7 +127,7 @@ async function trainerFeedbackComments(employeeId) {
      WHERE sft.trainer_employee_id = $1 AND TRIM(COALESCE(sft.comment, '')) <> ''
      UNION ALL
      SELECT sf.feedback_id, sf.trainer_comment, sf.trainer_comment_original, sf.trainer_rating, sf.effectiveness_rating,
-            sf.needs_additional_training, sf.submitted_at, ts.session_id, ts.training_type_label, ts.session_date, c.client_name
+            sf.submitted_at, ts.session_id, ts.training_type_label, ts.session_date, c.client_name
      FROM session_feedback sf
      JOIN training_sessions ts ON ts.session_id = sf.session_id
      JOIN clients c ON c.client_id = ts.client_id
