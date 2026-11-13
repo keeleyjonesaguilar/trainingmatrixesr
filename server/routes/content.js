@@ -21,7 +21,9 @@ const router = express.Router();
 const DECKS_DIR = path.join(DATA_DIR, 'decks');
 const INCOMING_DIR = path.join(DECKS_DIR, 'incoming');
 fs.mkdirSync(INCOMING_DIR, { recursive: true });
-const MAX_MB = 300;
+// Raised from 300 MB (Keeley 2026-11-13). Uploads stream to disk and decks are read one zip entry
+// at a time, so size doesn't cost memory.
+const MAX_MB = 1024;
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -42,7 +44,7 @@ function receiveFile(req, res) {
     upload.single('file')(req, res, (err) => {
       if (!err) return resolve(true);
       const message = err.code === 'LIMIT_FILE_SIZE'
-        ? `This PowerPoint is over ${MAX_MB} MB. Compress its pictures and videos in PowerPoint (File > Compress Media / Compress Pictures) and try again.`
+        ? `This PowerPoint is over ${MAX_MB >= 1024 ? `${MAX_MB / 1024} GB` : `${MAX_MB} MB`}. Compress its pictures and videos in PowerPoint (File > Compress Media / Compress Pictures) and try again.`
         : err instanceof DeckError ? err.message : 'The upload didn\'t go through - please try again.';
       res.status(400).json({ error: message });
       return resolve(false);

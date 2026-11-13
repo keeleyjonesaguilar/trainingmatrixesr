@@ -159,7 +159,9 @@ export default function Sessions() {
     // When class starts (Keeley's request, 2026-10-14) - optional, shown in the trainer's email.
     start_time: '',
     location: '',
-    // Optional - the class files for the trainer (Keeley's request, 2026-10-07).
+    // Optional - the class files for the trainer (Keeley's request, 2026-10-07). Taken off 11/06 for
+    // the Content page's PowerPoints, back "for now" 2026-11-13.
+    wetransfer_link: '',
     duration: '',
     outline: '',
     language: 'english',
@@ -187,6 +189,9 @@ export default function Sessions() {
   // Each day's start time and its own length (Keeley's request, 2026-10-14).
   const [dayStartTimes, setDayStartTimes] = useState([]);
   const [dayDurations, setDayDurations] = useState([]);
+  // Each day's WeTransfer link (optional) - only that day's trainer is sent it (Keeley's request,
+  // 2026-10-14; back 2026-11-13).
+  const [dayLinks, setDayLinks] = useState([]);
   // The day whose trainer dropdown has "+ Add New Trainer" open, or null.
   const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   // Set when the picked Training Type is a multi-day course (OSHA 10/30) and filled the days in, so
@@ -208,6 +213,7 @@ export default function Sessions() {
     setDayTrainers((prev) => resizeDays(prev, count));
     setDayStartTimes((prev) => resizeDays(prev, count, () => form.start_time));
     setDayDurations((prev) => resizeDays(prev, count));
+    setDayLinks((prev) => resizeDays(prev, count));
   };
 
   const clearDays = () => {
@@ -217,6 +223,7 @@ export default function Sessions() {
     setDayTrainers([]);
     setDayStartTimes([]);
     setDayDurations([]);
+    setDayLinks([]);
   };
 
   const load = () => {
@@ -338,6 +345,8 @@ export default function Sessions() {
         start_time: isMultiDay ? (dayStartTimes[0] || '') : form.start_time,
         day_start_times: isMultiDay ? dayStartTimes : null,
         day_durations: isMultiDay ? dayDurations.map((x) => x.trim()) : null,
+        wetransfer_link: isMultiDay ? '' : form.wetransfer_link.trim(),
+        day_wetransfer_links: isMultiDay ? dayLinks.map((l) => (l || '').trim()) : null,
         trainer_name: form.trainer_name.trim(),
         // Left blank whenever there's no Employee ID to send - a brand-new trainer typed in on
         // the spot, or an existing trainer who was never given one yet. The server derives the
@@ -652,8 +661,19 @@ export default function Sessions() {
                     required
                   />
                 </div>
-                {/* No WeTransfer link any more (Keeley, 2026-11-06): the trainer's PowerPoints come
-                    from the Content page, set on each Training Type, with this class's QR slides. */}
+                {/* WeTransfer link back "for now" (Keeley, 2026-11-13) beside the Content page's
+                    PowerPoints. A multi-day course has one per day, below. */}
+                {!isToolbox && !isMultiDay && (
+                  <div className="field">
+                    <label>WeTransfer Link (optional)</label>
+                    <input
+                      type="text"
+                      value={form.wetransfer_link}
+                      onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })}
+                      placeholder="https://we.tl/..."
+                    />
+                  </div>
+                )}
                 {/* With 2+ trainings each one's duration is entered in the trainings list below (the
                     first training's is this same value) - a separate box up here read like the whole
                     day's length and got applied to the first training (Keeley's report, 2026-10-07). */}
@@ -826,6 +846,15 @@ export default function Sessions() {
                                     <option value="__new__">+ Add New Trainer</option>
                                   </select>
                                 </label>
+                                <label>
+                                  <span>WeTransfer link (optional)</span>
+                                  <input
+                                    type="text"
+                                    value={dayLinks[i] || ''}
+                                    onChange={(e) => setDayLinks((prev) => prev.map((x, xi) => (xi === i ? e.target.value : x)))}
+                                    placeholder="https://we.tl/..."
+                                  />
+                                </label>
                               </div>
                               {addingDayTrainer === i && (
                                 <NewTrainerForm
@@ -850,7 +879,7 @@ export default function Sessions() {
                             </div>
                           ))}
                           <p className="page-subtitle" style={{ margin: 0 }}>
-                            Each day&apos;s trainer gets only their own day - its date, start time, duration, outline and PowerPoints - when you press Email Class Summary on the session page, and again at 5:00 AM that morning.
+                            Each day&apos;s trainer gets only their own day - its date, start time, duration, outline, PowerPoints and WeTransfer link - when you press Email Class Summary on the session page, and again at 5:00 AM that morning.
                           </p>
                         </div>
                       )}

@@ -273,7 +273,7 @@ async function start() {
   });
 
   const PORT = process.env.PORT || 4000;
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`Training Matrix server listening on port ${PORT}`);
     // Slide pictures for any PowerPoint that doesn't have them yet (Content page, migration 093).
     const slidePictures = require('./lib/slidePictures');
@@ -283,6 +283,9 @@ async function start() {
       console.log('Slide pictures are off on this server (no SLIDE_CONVERTER_URL).');
     }
   });
+  // Node cuts off any request still arriving after 5 minutes - a 1 GB PowerPoint on office
+  // internet can take longer than that, so allow 30 minutes (2026-11-13).
+  server.requestTimeout = 30 * 60 * 1000;
 }
 
 start().catch((err) => {

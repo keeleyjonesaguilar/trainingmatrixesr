@@ -209,7 +209,8 @@ function teachesAnyDay(d, keys) {
 
 // The PowerPoints this recipient gets, grouped by day: [{ day, items: [{ label, url | null,
 // missing_reason }] }]. A one-day class has one group (day null); on a multi-day course, only the
-// recipient's days. Where no PowerPoint is set up, an old WeTransfer link on the class stands in.
+// recipient's days. A WeTransfer link typed on the class (back on the form "for now", 2026-11-13)
+// is always added - in place of the PowerPoints when none are set up, else after them.
 function powerpointGroups(d, days) {
   const groups = d.powerpoints ? d.powerpoints.groups : [];
   const legacy = (day) => (day ? d.dayLinks[day.day_number - 1] : null) || d.session.wetransfer_link || null;
@@ -218,8 +219,10 @@ function powerpointGroups(d, days) {
     : [{ day: null, group: groups[0] || { items: [] } }];
   return pick.map(({ day, group }) => {
     const items = group.items.map((it) => ({ label: it.label, url: it.url || null, missing_reason: it.available ? null : it.missing_reason }));
-    if (!items.some((it) => it.url) && legacy(day)) return { day, items: [{ label: 'PowerPoint (WeTransfer)', url: legacy(day), missing_reason: null }] };
-    return { day, items };
+    const link = legacy(day);
+    if (!link) return { day, items };
+    if (!items.some((it) => it.url)) return { day, items: [{ label: 'PowerPoint (WeTransfer)', url: link, missing_reason: null }] };
+    return { day, items: [...items, { label: 'WeTransfer files', url: link, missing_reason: null }] };
   }).filter((g) => g.items.length);
 }
 

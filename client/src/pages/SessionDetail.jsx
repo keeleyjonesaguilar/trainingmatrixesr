@@ -368,8 +368,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
   const [dayLinks, setDayLinks] = useState(
     Array.from({ length: session.total_days || 0 }, (_, i) => session.day_wetransfer_links?.[i] || '')
   );
-  // Only a class that already had per-day WeTransfer links still shows those boxes (2026-11-06).
-  const hasDayLinks = Boolean(session.day_wetransfer_links?.some(Boolean));
+  // Per-day WeTransfer boxes - hidden 2026-11-06 unless a class already had links, shown again
+  // "for now" 2026-11-13.
+  const hasDayLinks = true;
   const [trainerOptions, setTrainerOptions] = useState([]);
   const [addingDayTrainer, setAddingDayTrainer] = useState(null);
   useEffect(() => { api.listTrainers().then(setTrainerOptions).catch(() => {}); }, []);
@@ -541,9 +542,9 @@ function EditSessionForm({ session, clients, trainings, onSaved, onCancel, onDel
           <label>Location / Address</label>
           <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="123 Main St, Suite 4" required />
         </div>
-        {/* WeTransfer is retired (2026-11-06) - PowerPoints come from the Content page. The box only
-            stays on a class that already has a link, so it can still be changed or cleared. */}
-        {!isToolbox && session.wetransfer_link && (
+        {/* WeTransfer back "for now" (Keeley, 2026-11-13). A multi-day course has a link per day
+            (below); this one-link box stays for one that already has it. */}
+        {!isToolbox && (!form.total_days || isMultiTraining || session.wetransfer_link) && (
           <div className="field">
             <label>{form.total_days && !isMultiTraining ? 'WeTransfer Link (all days)' : 'WeTransfer Link (optional)'}</label>
             <input value={form.wetransfer_link} onChange={(e) => setForm({ ...form, wetransfer_link: e.target.value })} placeholder="https://we.tl/..." />
