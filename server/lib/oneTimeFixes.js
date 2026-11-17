@@ -214,6 +214,15 @@ async function runOneTimeFixes() {
       }
       console.log(`Feedback comments: ${translated} of ${trainerRows.length + sessionRows.length} translated to English.`);
     });
+
+    // Imported records written straight to the database (Z: drive sign-in check 11/5, Vairkko
+    // syncs 11/3 and 10/26) never got a certificate (Keeley's report, 2026-11-17) - same
+    // build-on-download certificate every other import gets.
+    await runOnce('fix_missing_import_certificates_v2', 'gave imported records without a certificate a build-on-download one', async () => {
+      const { markMissingRecordCertificates } = require('./recordCertificates'); // eslint-disable-line global-require
+      const { count } = await markMissingRecordCertificates();
+      console.log(`Imported record certificates: ${count} record(s) now get one on download.`);
+    });
   }
 }
 

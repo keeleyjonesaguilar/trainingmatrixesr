@@ -6,7 +6,7 @@
 // ones this module generated itself, so a real document is never silently replaced.
 const fs = require('fs');
 const path = require('path');
-const { dbGet, dbRun } = require('../db');
+const { dbGet, dbAll, dbRun } = require('../db');
 const repo = require('./repo');
 const { generateCertificateBuffer } = require('./pdfGen');
 const { buildCertificateFilename } = require('./certificateFilename');
@@ -58,6 +58,46 @@ async function maybeGenerateCertificate(recordId) {
      WHERE record_id = ?`,
     [filename, now, now, recordId]
   );
+}
+
+// The same as maybeGenerateCertificate, for every imported/hand-entered record that never got one
+// (Keeley's report, 2026-11-17: 7,747 records written straight to the database by the Z: drive
+// sign-in check and Vairkko syncs skipped the import page, so they had no certificate to
+// download). One read and a few batched updates instead of ~5 queries per record, since this runs
+// while the live server starts up. `dryRun` only counts and returns a few sample names.
+async function markMissingRecordCertificates({ dryRun = false } = {}) {
+  const rows = await dbAll(
+    `SELECT r.record_id, r.original_client_training_name, r.completion_date, mt.training_name, c.client_name,
+            e.first_name, e.last_name, e.full_name
+       FROM employee_training_records r
+       JOIN employees e ON e.employee_id = r.employee_id
+       JOIN clients c ON c.client_id = r.client_id
+       JOIN master_trainings mt ON mt.training_id = r.training_id
+      WHERE COALESCE(r.certificate_auto_generated, 0) = 0 AND r.certificate_path IS NULL
+        AND (r.source LIKE 'Import:%' OR r.source = 'Manual Entry')`
+  );
+  const named = rows.map((r) => ({
+    id: r.record_id,
+    filename: buildCertificateFilename(
+      { training_type_label: r.original_client_training_name || r.training_name, client_name: r.client_name, session_date: r.completion_date },
+      { trainee_name: displayFirstLast(r) }
+    ),
+  }));
+  if (dryRun) return { count: named.length, samples: named.slice(0, 5).map((n) => n.filename) };
+  const now = new Date().toISOString();
+  for (let i = 0; i < named.length; i += 500) {
+    const batch = named.slice(i, i + 500);
+    // eslint-disable-next-line no-await-in-loop
+    await dbRun(
+      `UPDATE employee_training_records AS r
+          SET certificate_filename = v.filename, certificate_auto_generated = 1,
+              certificate_uploaded_at = COALESCE(r.certificate_uploaded_at, ?)
+         FROM (VALUES ${batch.map(() => '(?, ?)').join(', ')}) AS v(record_id, filename)
+        WHERE r.record_id = v.record_id AND COALESCE(r.certificate_auto_generated, 0) = 0 AND r.certificate_path IS NULL`,
+      [now, ...batch.flatMap((n) => [n.id, n.filename])]
+    );
+  }
+  return { count: named.length };
 }
 
 // Builds an auto-generated certificate in memory from the record as it is right now.
@@ -115,4 +155,4 @@ async function sendRecordCertificate(res, record, { inline = false } = {}) {
   return res.send(pdf);
 }
 
-module.exports = { maybeGenerateCertificate, computeFilenameForRecord, buildRecordCertificate, recordHasCertificate, sendRecordCertificate, RECORD_CERT_DIR };
+module.exports = { maybeGenerateCertificate, markMissingRecordCertificates, computeFilenameForRecord, buildRecordCertificate, recordHasCertificate, sendRecordCertificate, RECORD_CERT_DIR };
