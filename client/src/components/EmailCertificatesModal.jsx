@@ -168,7 +168,8 @@ export function EmailCompanyModal({ session, onClose, onSent }) {
     api.getCertificateEmailOptions(session.session_id)
       .then((data) => {
         setInfo(data);
-        setEmails(data.client_certificate_emails || '');
+        // This class's roster email from Class Needs comes first, then the client's saved one.
+        setEmails(session.roster_emails || data.client_certificate_emails || '');
         setSaveAsDefault(!data.client_certificate_emails);
       })
       .catch((e) => setError(e.message));

@@ -43,6 +43,17 @@ export default function AdminUsers({ currentUsername }) {
       setTogglingEmailId(null);
     }
   };
+  const toggleClassNeedsRequests = async (u) => {
+    setTogglingEmailId(`needs:${u.user_id}`);
+    try {
+      await api.setUserClassNeedsRequests(u.user_id, !u.gets_class_needs_requests);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTogglingEmailId(null);
+    }
+  };
   // Loading only gates the very first fetch - a later refresh (after adding/removing someone)
   // updates the table in place rather than hiding it again, since it's no longer really "loading."
   useEffect(() => { load().finally(() => setLoading(false)); }, []);
@@ -196,6 +207,7 @@ export default function AdminUsers({ currentUsername }) {
               <th>Username</th>
               <th>Email</th>
               <th title="Gets the email with certificates and rosters when a session is closed out">Training Emails</th>
+              <th title="Emailed a link to fill in the class details whenever a new training is created">Class Details Requests</th>
               <th>Role</th>
               <th>2FA</th>
               <th>Added</th>
@@ -241,6 +253,20 @@ export default function AdminUsers({ currentUsername }) {
                       {' '}
                       <button className="link-button" disabled={togglingEmailId === u.user_id} onClick={() => toggleSessionEmails(u)}>
                         {u.gets_session_emails ? 'Turn off' : 'Turn on'}
+                      </button>
+                    </>
+                  )}
+                </td>
+                <td>
+                  {/* Class details request on/off per user (migration 096, 2026-11-16). */}
+                  <span className={`badge ${u.gets_class_needs_requests && u.email ? 'badge-current' : 'badge-notapplicable'}`}>
+                    {!u.email ? 'No email' : u.gets_class_needs_requests ? 'On' : 'Off'}
+                  </span>
+                  {isAdmin && u.email && (
+                    <>
+                      {' '}
+                      <button className="link-button" disabled={togglingEmailId === `needs:${u.user_id}`} onClick={() => toggleClassNeedsRequests(u)}>
+                        {u.gets_class_needs_requests ? 'Turn off' : 'Turn on'}
                       </button>
                     </>
                   )}

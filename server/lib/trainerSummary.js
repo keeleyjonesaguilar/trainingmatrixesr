@@ -282,6 +282,18 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
     ['Location', esc(s.location || 'To be confirmed by the office')],
   ];
 
+  // Class Needs from the session page (migration 095, Keeley 2026-11-16) - only what's filled in;
+  // the whole section is left out when nothing is.
+  const contact = [s.needs_site_contact_name, s.needs_site_contact_phone].filter(Boolean).map(esc).join(' · ');
+  const needsRows = [
+    s.needs_student_count != null ? ['Students', esc(s.needs_student_count)] : null,
+    s.needs_room_layout ? ['Room layout', esc(s.needs_room_layout)] : null,
+    contact ? ['Site contact', contact] : null,
+    s.needs_av_hookup ? ['AV hookup', s.needs_av_hookup === 'yes' ? 'Needed' : 'Not needed'] : null,
+    s.roster_emails ? ['Roster goes to', esc(s.roster_emails)] : null,
+    s.needs_notes ? ['Other needs', multiline(s.needs_notes)] : null,
+  ].filter(Boolean);
+
   // Expected duration - its own section (Keeley, 2026-10-14).
   // On a multi-day course, each of this trainer's days with its own length first (2026-10-14).
   const dayDurationRows = multiDay
@@ -348,6 +360,7 @@ function buildEmail(d, r, { added = false, morning = false, inPortal = false } =
       panels: [
         panel('Class details', classRows),
         panel('Logistics', logisticsRows),
+        needsRows.length ? panel('Class needs', needsRows) : '',
         durationRows ? panel('Expected duration', durationRows) : '',
         textPanel(downloads > 1 ? 'PowerPoints' : 'PowerPoint', powerpointHtml),
         listPanel('Instructions', instructions),
@@ -437,4 +450,8 @@ async function trainerSummaryHtml(sessionId, employeeIds, name) {
   return buildEmail(d, r, { inPortal: true }).html;
 }
 
-module.exports = { sendTrainerSummary, sendTrainerSummarySafely, buildEmail, summaryDetails, trainerRecipients, trainerSummaryHtml };
+module.exports = {
+  sendTrainerSummary, sendTrainerSummarySafely, buildEmail, summaryDetails, trainerRecipients, trainerSummaryHtml,
+  // The same email look, for the class details request (lib/classNeedsRequest.js).
+  emailShell, panel, listPanel, esc, longDate, clockTime, publicBaseUrl, sessionDatesText,
+};

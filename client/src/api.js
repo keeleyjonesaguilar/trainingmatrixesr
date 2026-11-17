@@ -241,6 +241,9 @@ export const api = {
   deleteTrainingSession: (id) => request(`/training-sessions/${id}`, { method: 'DELETE' }),
   updateSessionFulfillment: (id, payload) =>
     request(`/training-sessions/${id}/fulfillment`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  updateSessionNeeds: (id, payload) =>
+    request(`/training-sessions/${id}/needs`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  requestClassNeeds: (id) => request(`/training-sessions/${id}/needs/request`, { method: 'POST' }),
   logSessionLinkCopied: (id, linkType) => request(`/training-sessions/${id}/log-link-copied`, { method: 'POST', body: JSON.stringify({ link_type: linkType }) }),
   // Manually add a missed attendee - works whether the session is open or already closed
   // (Keeley's request, 2026-09-22); when closed, immediately generates their certificate/
@@ -338,6 +341,7 @@ export const api = {
   updateFeedbackSettings: (data) => request('/feedback-settings', { method: 'PUT', body: JSON.stringify(data) }),
   getTrainerClosePinSettings: () => request('/trainer-close-pin-settings'),
   setUserSessionEmails: (userId, enabled) => request(`/users/${userId}/session-emails`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  setUserClassNeedsRequests: (userId, enabled) => request(`/users/${userId}/class-needs-requests`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
   updateTrainerClosePinSettings: (data) => request('/trainer-close-pin-settings', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Notification bell (top bar) - broadcast to every account, e.g. when a training session closes.

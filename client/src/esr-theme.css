@@ -163,6 +163,19 @@ a { color: var(--esr-green); }
 }
 .topbar-user-menu a:hover, .topbar-user-menu button:hover { background: var(--esr-tint); text-decoration: none; }
 
+/* ---- Class Needs card on a session page (2026-11-16) ---- */
+.class-needs-row { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--color-border, #e5e5e5); font-size: 14px; }
+.class-needs-row:first-of-type { border-top: none; }
+.class-needs-label { flex: 0 0 140px; font-weight: 600; font-size: 13px; color: var(--color-text-muted); }
+.class-needs-value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.class-needs-form { display: flex; flex-direction: column; gap: 12px; }
+.class-needs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.class-needs-grid input, .class-needs-grid select { width: 100%; }
+@media (max-width: 640px) {
+  .class-needs-row { flex-direction: column; gap: 2px; }
+  .class-needs-label { flex: none; }
+}
+
 /* ---- Close-out steps on a session page (2026-11-03) ---- */
 .closeout-steps { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; margin: 0 0 18px; }
 .closeout-steps-title {

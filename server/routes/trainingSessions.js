@@ -19,6 +19,8 @@ const { insertManualAttendee, certifyAfterClose, certifyTrainingParts } = requir
 const { isMultiDay, isMultiTrainingDay, trainingParts } = require('../lib/sessionParts');
 const { totalDuration } = require('../lib/durations');
 const { sendTrainerSummary } = require('../lib/trainerSummary');
+const { sendClassNeedsRequest, sendClassNeedsRequestSafely } = require('../lib/classNeedsRequest');
+const { notifyAllUsers } = require('../lib/notifications');
 const { attendeeEmailOptions, sendAttendeeCertificates, sendCompanyCertificates } = require('../lib/certificateEmails');
 const { easternLocalToUtcText } = require('../lib/dates');
 const { labeledQrPng } = require('../lib/qrLabel');
@@ -175,7 +177,7 @@ function withParsedDayDates(session) {
 }
 
 const SESSION_WITH_CLIENT_SQL = `
-  SELECT ts.*, c.client_name
+  SELECT ts.*, c.client_name, c.certificate_emails AS client_certificate_emails
   FROM training_sessions ts
   JOIN clients c ON c.client_id = ts.client_id
 `;
@@ -513,6 +515,13 @@ router.post('/', async (req, res) => {
       : undefined,
     req,
   });
+  // Class details request to Guy/Jayna (whoever is ticked on Manage Users) - Keeley 2026-11-16.
+  // Not awaited, so the emails never slow down or fail the create; toolbox talks are skipped inside.
+  sendClassNeedsRequestSafely(session_id).then((r) => {
+    if (r.sent_to?.length) {
+      logActivity({ actor: req.user, action: 'class_needs_requested', entityType: 'training_session', entityId: session_id, details: `To ${r.sent_to.join(', ')}`, req });
+    }
+  });
   // Class summary to the trainer(s) - details, links, QR codes (2026-10-12). Not for toolbox talks.
   // The class summary is NOT emailed on create (Keeley's request, 2026-10-15: the office sends it
   // with "Email Class Summary" once the details are ready).
@@ -754,6 +763,83 @@ router.patch('/:id/fulfillment', requireAdmin, async (req, res) => {
      FROM training_sessions WHERE session_id = ?`,
     [req.params.id]
   ));
+});
+
+// Class Needs (migrations 095/096, Keeley 2026-11-16) - what the class needs: students, room layout,
+// site contact, AV hookup, the company's roster email(s), anything else. All optional. Its own small
+// endpoint like /fulfillment above, so it can be saved without the full Edit Session Details form.
+// Saving while a class details request is waiting (lib/classNeedsRequest.js) marks it done and
+// bells the office.
+const NEEDS_COLUMNS = [
+  'needs_student_count', 'needs_room_layout', 'needs_site_contact_name', 'needs_site_contact_phone',
+  'needs_av_hookup', 'roster_emails', 'needs_notes', 'needs_updated_at', 'needs_updated_by',
+  'needs_requested_at', 'needs_requested_to', 'needs_completed_at', 'needs_completed_by',
+];
+router.patch('/:id/needs', requireAdmin, async (req, res) => {
+  const existing = await dbGet(`${SESSION_WITH_CLIENT_SQL} WHERE ts.session_id = ?`, [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Session not found' });
+  const body = req.body || {};
+  const text = (v) => String(v ?? '').trim() || null;
+  const av = body.needs_av_hookup === 'yes' || body.needs_av_hookup === 'no' ? body.needs_av_hookup : null;
+  const emails = String(body.roster_emails || '').split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean);
+  const bad = emails.filter((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+  if (bad.length) return res.status(400).json({ error: `Not an email address: ${bad.join(', ')}` });
+  const countText = text(body.needs_student_count);
+  if (countText && !/^\d{1,4}$/.test(countText)) return res.status(400).json({ error: 'Number of students must be a whole number.' });
+  const fields = {
+    needs_student_count: countText ? Number(countText) : null,
+    needs_room_layout: text(body.needs_room_layout),
+    needs_site_contact_name: text(body.needs_site_contact_name),
+    needs_site_contact_phone: text(body.needs_site_contact_phone),
+    needs_av_hookup: av,
+    roster_emails: emails.length ? emails.join(', ') : null,
+    needs_notes: text(body.needs_notes),
+  };
+  const now = new Date().toISOString();
+  const who = String(req.user.full_name || '').trim() || req.user.username;
+  const completesRequest = Boolean(existing.needs_requested_at && !existing.needs_completed_at);
+  await dbRun(
+    `UPDATE training_sessions SET needs_student_count = ?, needs_room_layout = ?, needs_site_contact_name = ?,
+       needs_site_contact_phone = ?, needs_av_hookup = ?, roster_emails = ?, needs_notes = ?,
+       needs_updated_at = ?, needs_updated_by = ?
+       ${completesRequest ? ', needs_completed_at = ?, needs_completed_by = ?' : ''}
+     WHERE session_id = ?`,
+    [...Object.values(fields), now, who, ...(completesRequest ? [now, who] : []), req.params.id]
+  );
+  logActivity({
+    actor: req.user, action: 'session_needs_updated', entityType: 'training_session', entityId: req.params.id,
+    details: Object.entries(fields).filter(([, v]) => v != null).map(([k, v]) => `${k.replace(/^needs_/, '')}: ${v}`).join('; ') || 'Cleared',
+    req,
+  });
+  if (completesRequest) {
+    const extras = await dbAll('SELECT training_type_label FROM session_additional_trainings WHERE session_id = ? ORDER BY display_order', [req.params.id]);
+    const label = [existing.training_type_label, ...extras.map((e) => e.training_type_label)].join(' + ');
+    await notifyAllUsers({
+      type: 'class_needs_completed',
+      title: `Class details filled in: ${label} – ${existing.client_name} – ${existing.session_date}`,
+      body: `By ${who}.`,
+      link_path: `/sessions/${req.params.id}`,
+      email: false,
+    }).catch((err) => console.error('Class details bell failed:', err.message)); // eslint-disable-line no-console
+  }
+  res.json(await dbGet(`SELECT ${NEEDS_COLUMNS.join(', ')} FROM training_sessions WHERE session_id = ?`, [req.params.id]));
+});
+
+// Send (or re-send) the class details request by hand - for sessions created before it existed, or
+// after the people on Manage Users change. Starts the request over.
+router.post('/:id/needs/request', requireAdmin, async (req, res) => {
+  const result = await sendClassNeedsRequest(req.params.id);
+  if (result.error) return res.status(result.error === 'Session not found.' ? 404 : 400).json({ error: result.error });
+  if (result.skipped === 'toolbox_talk') return res.status(400).json({ error: "Toolbox talks don't get a class details request." });
+  if (result.skipped === 'no_recipients') {
+    return res.status(400).json({ error: 'Nobody is set to get class details requests - turn it on for someone on Manage Users.' });
+  }
+  if (!result.sent_to.length) return res.status(502).json({ error: 'The request email could not be sent. Please try again.' });
+  logActivity({
+    actor: req.user, action: 'class_needs_requested', entityType: 'training_session', entityId: req.params.id,
+    details: `To ${result.sent_to.join(', ')}`, req,
+  });
+  res.json({ ...result, ...(await dbGet(`SELECT ${NEEDS_COLUMNS.join(', ')} FROM training_sessions WHERE session_id = ?`, [req.params.id])) });
 });
 
 // The trainer/admin advances a multi-day session to the next day (Keeley's request, 2026-09-21) -

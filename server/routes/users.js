@@ -27,7 +27,7 @@ function isPendingUsername(username) {
 // anyone logged in (so a read-only user can at least see who has access).
 
 router.get('/', async (req, res) => {
-  const users = await dbAll('SELECT user_id, username, full_name, email, role, created_at, mfa_enabled, gets_session_emails FROM app_users ORDER BY created_at ASC', []);
+  const users = await dbAll('SELECT user_id, username, full_name, email, role, created_at, mfa_enabled, gets_session_emails, gets_class_needs_requests FROM app_users ORDER BY created_at ASC', []);
   res.json(users.map((u) => ({ ...u, pending: isPendingUsername(u.username) })));
 });
 
@@ -168,6 +168,20 @@ router.put('/:userId/session-emails', requireAdmin, async (req, res) => {
     details: `completed-training emails ${enabled ? 'on' : 'off'}`, req,
   });
   res.json({ ok: true, gets_session_emails: Boolean(enabled) });
+});
+
+// Whether this user is emailed the class details request when a training is created (migration 096,
+// Keeley 2026-11-16 - Guy and Jayna to start) - read by server/lib/classNeedsRequest.js.
+router.put('/:userId/class-needs-requests', requireAdmin, async (req, res) => {
+  const user = await dbGet('SELECT * FROM app_users WHERE user_id = ?', [req.params.userId]);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  const enabled = req.body?.enabled ? 1 : 0;
+  await dbRun('UPDATE app_users SET gets_class_needs_requests = ? WHERE user_id = ?', [enabled, user.user_id]);
+  await logAdminAction({
+    actor: req.user, action: 'class_needs_requests_changed', targetUserId: user.user_id, targetUsername: user.username,
+    details: `class details requests ${enabled ? 'on' : 'off'}`, req,
+  });
+  res.json({ ok: true, gets_class_needs_requests: Boolean(enabled) });
 });
 
 router.put('/:userId/password', requireAdmin, async (req, res) => {

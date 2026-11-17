@@ -14,6 +14,7 @@ import NewTrainerForm from '../components/NewTrainerForm.jsx';
 import AttendeeDocumentsUpload from '../components/AttendeeDocumentsUpload.jsx';
 import PublicSignupPanel from '../components/PublicSignupPanel.jsx';
 import ClassPowerpoints from '../components/ClassPowerpoints.jsx';
+import ClassNeeds from '../components/ClassNeeds.jsx';
 import { EmailEmployeesModal, EmailCompanyModal } from '../components/EmailCertificatesModal.jsx';
 
 const FEEDBACK_LABEL_FIELDS = [
@@ -1229,6 +1230,9 @@ Their certificate and the training record it added to their employee file will b
           })}
         </div>
       )}
+
+      {/* What the class needs - AV hookup, roster email, other (Keeley's list, 2026-11-16). */}
+      {isAdmin && <ClassNeeds session={session} onSaved={(updated) => setSession((prev) => (prev ? { ...prev, ...updated } : prev))} />}
 
       {/* The class's PowerPoints (2026-11-06) - what its trainers download. */}
       <ClassPowerpoints session={session} />
