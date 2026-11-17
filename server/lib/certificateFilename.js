@@ -92,4 +92,20 @@ function buildQrFilename(session, kind) {
   return `${parts.join('_')}.png`;
 }
 
-module.exports = { buildCertificateFilename, buildRosterFilename, buildQrFilename, stripTrainingIdPrefix, shortClientName };
+// An uploaded card/document (Keeley's request, 2026-11-17: scans were downloading as the scanner's
+// "Document_20261117_0001.pdf") - same convention as a certificate, with the document's label in
+// the training slot: "OSHA 10 Card_Client_Date_Trainee Name.pdf". A document filed under no
+// training has no completion date, so that field is left out.
+function buildDocumentFilename({ label, client_name, date, trainee_name }, ext) {
+  const parts = capTotalLength([
+    stripTrainingIdPrefix(label),
+    shortClientName(client_name),
+    date,
+    trainee_name,
+  ].filter(Boolean).map(sanitizeFilenamePart).filter(Boolean));
+  return `${parts.join('_')}${ext}`;
+}
+
+module.exports = {
+  buildCertificateFilename, buildRosterFilename, buildQrFilename, buildDocumentFilename, stripTrainingIdPrefix, shortClientName,
+};

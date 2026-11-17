@@ -8,6 +8,7 @@ const portal = require('../lib/portal');
 const { notifyAllUsers } = require('../lib/notifications');
 const { formatPhoneNumber, isValidPhoneNumber } = require('../lib/phone');
 const { displayFirstLast } = require('../lib/names');
+const { documentDownloadName } = require('../lib/documentFilename');
 const { recordHasCertificate, sendRecordCertificate } = require('../lib/recordCertificates');
 const { liveRoster } = require('../lib/liveRoster');
 const { trainerSummaryHtml } = require('../lib/trainerSummary');
@@ -130,7 +131,7 @@ router.get('/documents/:documentId', requirePortal, async (req, res) => {
   if (!doc || !ownProfile(req, doc.employee_id) || !fs.existsSync(doc.file_path)) {
     return res.status(404).json({ error: 'Document not found.' });
   }
-  res.download(doc.file_path, doc.filename);
+  res.download(doc.file_path, await documentDownloadName(doc));
 });
 
 // The live roster of a session the signed-in trainer is teaching today (Keeley's request,

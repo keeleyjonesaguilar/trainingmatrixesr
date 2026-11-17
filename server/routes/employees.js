@@ -21,6 +21,7 @@ const { sendInvite: sendPortalInvite, revokeInvite: revokePortalInvite } = requi
 const { sendEmployeeCertificates } = require('../lib/certificateEmails');
 const { TAUGHT_SESSIONS_SQL, trainerFeedbackComments, trainerRatingSummary } = require('../lib/sessionFeedback');
 const { nameSearchClause } = require('../lib/search');
+const { documentDownloadName } = require('../lib/documentFilename');
 const { exportData, fileBase, toCsv, writePdf } = require('../lib/employeeTrainingExport');
 
 const router = express.Router();
@@ -598,7 +599,7 @@ router.get('/:id/documents/:documentId', async (req, res) => {
   );
   if (!document) return res.status(404).json({ error: 'Document not found' });
   if (!fs.existsSync(document.file_path)) return res.status(404).json({ error: 'Document file is missing on disk' });
-  res.download(document.file_path, document.filename);
+  res.download(document.file_path, await documentDownloadName(document));
 });
 
 router.delete('/:id/documents/:documentId', requireAdmin, async (req, res) => {

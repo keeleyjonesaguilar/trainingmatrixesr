@@ -7,6 +7,7 @@ const path = require('path');
 const { dbGet } = require('../db');
 const { publicRecord, publicCertificateRecord, publicDocument } = require('../lib/employeeRecordCard');
 const { sendRecordCertificate } = require('../lib/recordCertificates');
+const { documentDownloadName } = require('../lib/documentFilename');
 
 const router = express.Router();
 const LOGO_PATTERN = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/;
@@ -43,7 +44,7 @@ router.get('/:token/documents/:documentId', async (req, res) => {
   const document = await publicDocument(req.params.token, req.params.documentId);
   if (!document || !fs.existsSync(document.file_path)) return res.status(404).json({ error: 'Document not found.' });
   res.set('Cache-Control', 'no-store');
-  res.attachment(document.filename);
+  res.attachment(await documentDownloadName(document));
   res.set('Content-Disposition', res.get('Content-Disposition').replace(/^attachment/, 'inline'));
   return res.sendFile(path.resolve(document.file_path));
 });
